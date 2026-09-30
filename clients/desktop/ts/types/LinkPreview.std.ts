@@ -70,8 +70,26 @@ export function shouldPreviewHref(href: string): boolean {
     url &&
     url.protocol === 'https:' &&
     !isDomainExcluded(url) &&
+    !isLocalOrLiteralAddressHost(url) &&
     isLinkSneaky(href) === false
   );
+}
+
+const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+// Link previews are fetched directly by the composing client. Never let a typed link
+// make the app connect to the local machine, a private network or a bare IP address:
+// there is no legitimate preview there and the request would leak into the LAN.
+export function isLocalOrLiteralAddressHost(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    return true;
+  }
+  // Bracketed IPv6 literal
+  if (host.startsWith('[') || host.includes(':')) {
+    return true;
+  }
+  return IPV4_LITERAL.test(host);
 }
 
 export function isValidLinkPreview(

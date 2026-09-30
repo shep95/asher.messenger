@@ -3,6 +3,8 @@
 
 import { ipcMain } from 'electron';
 
+import { assertPrivilegedSender } from './ipcSenderGuard.main.ts';
+
 import type { MainSQL } from '../ts/sql/main.main.ts';
 import { remove as removeUserConfig } from './user_config.main.ts';
 import { remove as removeEphemeralConfig } from './ephemeral_config.main.ts';
@@ -75,19 +77,22 @@ export function initialize(mainSQL: typeof sql): void {
     })
   );
 
-  ipcMain.handle(SQL_REMOVE_DB_KEY, () => {
+  ipcMain.handle(SQL_REMOVE_DB_KEY, event => {
+    assertPrivilegedSender(event, SQL_REMOVE_DB_KEY);
     if (!sql) {
       throw new Error(`${SQL_REMOVE_DB_KEY}: Not yet initialized!`);
     }
     return sql.removeDB();
   });
 
-  ipcMain.handle(ERASE_SQL_KEY, () => {
+  ipcMain.handle(ERASE_SQL_KEY, event => {
+    assertPrivilegedSender(event, ERASE_SQL_KEY);
     removeUserConfig();
     removeEphemeralConfig();
   });
 
-  ipcMain.handle(PAUSE_WRITE_ACCESS, () => {
+  ipcMain.handle(PAUSE_WRITE_ACCESS, event => {
+    assertPrivilegedSender(event, PAUSE_WRITE_ACCESS);
     if (!sql) {
       throw new Error(`${PAUSE_WRITE_ACCESS}: Not yet initialized!`);
     }

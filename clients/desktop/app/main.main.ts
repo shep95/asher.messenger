@@ -102,6 +102,10 @@ import * as ephemeralConfig from './ephemeral_config.main.ts';
 import * as mainProcessLogging from '../ts/logging/main_process_logging.main.ts';
 import { MainSQL } from '../ts/sql/main.main.ts';
 import * as sqlChannels from './sql_channel.main.ts';
+import {
+  assertPrivilegedSender,
+  setPrivilegedWebContents,
+} from './ipcSenderGuard.main.ts';
 import * as windowState from './window_state.std.ts';
 import type { CreateTemplateOptionsType } from './menu.std.ts';
 import { createTemplate } from './menu.std.ts';
@@ -220,8 +224,11 @@ const cliParser = createParser({
 const cliOptions = cliParser.parse(process.argv);
 
 const defaultWebPrefs = {
+  // DevTools stay available in development and pre-release builds. The former
+  // `--enable-dev-tools` command-line override for packaged production builds
+  // is gone: anyone who can pass an argument to the binary could otherwise open
+  // an inspector on the Node-enabled main-window realm.
   devTools:
-    process.argv.some(arg => arg === '--enable-dev-tools') ||
     getEnvironment() !== Environment.PackagedApp ||
     !isProduction(app.getVersion()),
   spellcheck: false,
@@ -776,6 +783,7 @@ async function createWindow() {
 
   // Create the browser window.
   mainWindow = new BrowserWindow(windowOptions);
+  setPrivilegedWebContents(mainWindow.webContents);
 
   mainWindow.webContents.on('preload-error', (_event, _preloadPath, error) => {
     log.error(Errors.toLogFormat(error));
@@ -3261,11 +3269,20 @@ ipc.handle('set-auto-launch', async (_event, value) => {
   });
 });
 
+const MESSAGE_BOX_TYPES = new Set(['none', 'info', 'error', 'question', 'warning']);
+
 ipc.on('show-message-box', (_event, { type, message }) => {
-  drop(dialog.showMessageBox({ type, message }));
+  const safeType = MESSAGE_BOX_TYPES.has(type) ? type : 'none';
+  drop(
+    dialog.showMessageBox({
+      type: safeType,
+      message: typeof message === 'string' ? message : '',
+    })
+  );
 });
 
-ipc.on('show-item-in-folder', (_event, folder) => {
+ipc.on('show-item-in-folder', (event, folder) => {
+  assertPrivilegedSender(event, 'show-item-in-folder');
   shell.showItemInFolder(folder);
 });
 
@@ -3445,7 +3462,8 @@ async function zoomReset() {
 
 ipc.handle(
   'net.resolveHost',
-  (_event, hostname: string, queryType?: 'A' | 'AAAA') => {
+  (event, hostname: string, queryType?: 'A' | 'AAAA') => {
+    assertPrivilegedSender(event, 'net.resolveHost');
     return net.resolveHost(hostname, {
       queryType,
     });

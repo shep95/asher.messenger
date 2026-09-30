@@ -8,6 +8,8 @@ import {
   inferChunkSize,
 } from '@signalapp/libsignal-client/dist/incremental_mac.js';
 import { ipcMain, protocol } from 'electron';
+
+import { assertPrivilegedSender } from './ipcSenderGuard.main.ts';
 import { LRUCache } from 'lru-cache';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
@@ -563,23 +565,28 @@ export function initialize({
   downloadsDir = getDownloadsPath(configDir);
   avatarDataDir = getAvatarsPath(configDir);
 
-  ipcMain.handle(ERASE_TEMP_KEY, () => {
+  ipcMain.handle(ERASE_TEMP_KEY, event => {
+    assertPrivilegedSender(event, ERASE_TEMP_KEY);
     strictAssert(tempDir != null, 'not initialized');
     rmSync(tempDir);
   });
-  ipcMain.handle(ERASE_ATTACHMENTS_KEY, () => {
+  ipcMain.handle(ERASE_ATTACHMENTS_KEY, event => {
+    assertPrivilegedSender(event, ERASE_ATTACHMENTS_KEY);
     strictAssert(attachmentsDir != null, 'not initialized');
     rmSync(attachmentsDir, { recursive: true, force: true });
   });
-  ipcMain.handle(ERASE_STICKERS_KEY, () => {
+  ipcMain.handle(ERASE_STICKERS_KEY, event => {
+    assertPrivilegedSender(event, ERASE_STICKERS_KEY);
     strictAssert(stickersDir != null, 'not initialized');
     rmSync(stickersDir, { recursive: true, force: true });
   });
-  ipcMain.handle(ERASE_DRAFTS_KEY, () => {
+  ipcMain.handle(ERASE_DRAFTS_KEY, event => {
+    assertPrivilegedSender(event, ERASE_DRAFTS_KEY);
     strictAssert(draftDir != null, 'not initialized');
     rmSync(draftDir, { recursive: true, force: true });
   });
-  ipcMain.handle(ERASE_DOWNLOADS_KEY, () => {
+  ipcMain.handle(ERASE_DOWNLOADS_KEY, event => {
+    assertPrivilegedSender(event, ERASE_DOWNLOADS_KEY);
     strictAssert(downloadsDir != null, 'not initialized');
     rmSync(downloadsDir, { recursive: true, force: true });
   });

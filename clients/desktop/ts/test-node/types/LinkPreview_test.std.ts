@@ -58,6 +58,17 @@ describe('Link previews', () => {
       assert.isFalse(shouldPreviewHref('https://aqu%C3%AD.signal'));
     });
 
+    it('returns false for local names and bare IP literals', () => {
+      assert.isFalse(shouldPreviewHref('https://localhost/secret'));
+      assert.isFalse(shouldPreviewHref('https://printer.local/'));
+      assert.isFalse(shouldPreviewHref('https://foo.localhost/'));
+      assert.isFalse(shouldPreviewHref('https://127.0.0.1/'));
+      assert.isFalse(shouldPreviewHref('https://10.0.0.5:8443/admin'));
+      assert.isFalse(shouldPreviewHref('https://169.254.169.254/latest/meta-data/'));
+      assert.isFalse(shouldPreviewHref('https://[::1]/'));
+      assert.isFalse(shouldPreviewHref('https://[fe80::1]/'));
+    });
+
     it('returns false for skipped domains', () => {
       assert.isFalse(shouldPreviewHref('https://debuglogs.org'));
       assert.isFalse(shouldPreviewHref('https://example.com'));

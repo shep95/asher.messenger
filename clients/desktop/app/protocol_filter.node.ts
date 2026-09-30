@@ -3,7 +3,7 @@
 
 import type { ProtocolRequest, ProtocolResponse, Session } from 'electron';
 
-import { isAbsolute, normalize } from 'node:path';
+import { isAbsolute, join, normalize } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import {
   getAvatarsPath,
@@ -80,6 +80,16 @@ export function _createFileHandler({
   const allowedRootsCased = allowedRoots.map(root =>
     isWindows ? root.toLowerCase() : root
   );
+  // userDataPath is an allowed root, which also covers the SQLCipher key (config.json),
+  // the database, the logs and window state. No renderer has a reason to read those over
+  // file://, so deny them explicitly regardless of the allow-list above.
+  const deniedPaths = [
+    join(userDataPath, 'config.json'),
+    join(userDataPath, 'ephemeral.json'),
+    join(userDataPath, 'sql'),
+    join(userDataPath, 'logs'),
+    join(userDataPath, 'crashes'),
+  ].map(deniedPath => (isWindows ? deniedPath.toLowerCase() : deniedPath));
   return (request: ProtocolRequest, callback: CallbackType): void => {
     let targetPath;
 
@@ -109,6 +119,14 @@ export function _createFileHandler({
         // [0]: https://source.chromium.org/chromium/chromium/src/+/master:net/base/net_error_list.h;l=57;drc=a836ee9868cf1b9673fce362a82c98aba3e195de
         callback({ error: -10 });
         return;
+      }
+
+      for (const denied of deniedPaths) {
+        if (properCasing === denied || isPathInside(properCasing, denied)) {
+          log.info(`Warning: denying request to protected path '${realPath}'`);
+          callback({ error: -10 });
+          return;
+        }
       }
 
       for (const root of allowedRootsCased) {
