@@ -34,18 +34,27 @@
 //! `docs/offline-mesh.md`.
 
 pub mod bundle;
+pub mod envelope;
 pub mod frame;
+pub mod group;
 pub mod identity;
 pub mod kiss;
+pub mod limits;
 pub mod node;
+pub mod persist;
 pub mod store;
+pub mod stores;
 pub mod transport;
 pub mod wire;
 
 pub use bundle::{BROADCAST, Bundle, BundleId, BundleKind, Fingerprint};
-pub use identity::{ContactCard, MeshIdentity};
-pub use node::{Event, LinkId, Node, NodeConfig};
+pub use group::{GroupId, MeshGroup};
+pub use identity::{ContactCard, MeshIdentity, safety_number};
+pub use node::{Event, LinkId, Node, NodeBuilder, NodeConfig, Stats};
+pub use persist::{FilePersistence, MeshPersistence, NoPersistence, Snapshot};
 pub use store::BundleStore;
+pub use stores::{ProtocolStores, SeparateStores, StoreParts};
+pub use transport::{LinkEndpoint, LinkOptions};
 
 /// Errors surfaced by meshlink.
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +95,14 @@ pub(crate) fn complete_now<F: std::future::Future>(fut: F) -> F::Output {
             std::task::Poll::Pending => std::thread::yield_now(),
         }
     }
+}
+
+/// Milliseconds since the Unix epoch.
+pub fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Seconds since the Unix epoch.

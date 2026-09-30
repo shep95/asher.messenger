@@ -57,7 +57,7 @@ impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
-    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+    pub fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.pos + n > self.data.len() {
             return Err(Error::Wire("truncated"));
         }

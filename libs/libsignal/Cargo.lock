@@ -3489,6 +3489,7 @@ dependencies = [
  "log",
  "rand 0.9.4",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
 ]

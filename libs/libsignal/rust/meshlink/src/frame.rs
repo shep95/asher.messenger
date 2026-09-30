@@ -158,11 +158,20 @@ pub fn chunk_ids(ids: &[BundleId], mtu: usize, want: bool) -> Vec<Frame> {
 struct Partial {
     total: u8,
     parts: Vec<Option<Vec<u8>>>,
+    bytes: usize,
     first_seen: u64,
 }
 
+/// Most bundles one link may have half-assembled at once.
+pub const MAX_PARTIALS: usize = 64;
+/// Largest single fragment body accepted (bigger than any sane MTU).
+pub const MAX_FRAGMENT_DATA: usize = 2048;
+
 /// Reassembles fragments per link. Incomplete bundles are dropped after
-/// `timeout_secs` so a lost fragment cannot pin memory forever.
+/// `timeout_secs` so a lost fragment cannot pin memory forever, the number
+/// of partial bundles is capped, and no partial may grow past the largest
+/// legal bundle. A link therefore cannot cost more than about
+/// `MAX_PARTIALS * MAX_WIRE_LEN` bytes however it misbehaves.
 pub struct Reassembler {
     partials: HashMap<BundleId, Partial>,
     timeout_secs: u64,
@@ -188,15 +197,46 @@ impl Reassembler {
         if total == 0 || index >= total {
             return Err(Error::Wire("fragment index out of range"));
         }
-        let partial = self.partials.entry(id).or_insert_with(|| Partial {
-            total,
-            parts: vec![None; total as usize],
-            first_seen: now,
-        });
+        if data.is_empty() || data.len() > MAX_FRAGMENT_DATA {
+            return Err(Error::Wire("fragment size out of range"));
+        }
+        if !self.partials.contains_key(&id) {
+            if self.partials.len() >= MAX_PARTIALS {
+                // Make room by dropping the oldest partial.
+                if let Some(oldest) = self
+                    .partials
+                    .iter()
+                    .min_by_key(|(_, p)| p.first_seen)
+                    .map(|(k, _)| *k)
+                {
+                    self.partials.remove(&oldest);
+                }
+            }
+            self.partials.insert(
+                id,
+                Partial {
+                    total,
+                    parts: vec![None; total as usize],
+                    bytes: 0,
+                    first_seen: now,
+                },
+            );
+        }
+        let partial = self.partials.get_mut(&id).expect("inserted above");
         if partial.total != total {
             return Err(Error::Wire("fragment total mismatch"));
         }
-        partial.parts[index as usize] = Some(data);
+        let slot = &mut partial.parts[index as usize];
+        if slot.is_some() {
+            // Duplicate fragment: harmless, costs nothing.
+            return Ok(None);
+        }
+        if partial.bytes + data.len() > crate::bundle::MAX_WIRE_LEN {
+            self.partials.remove(&id);
+            return Err(Error::Wire("fragments exceed the largest bundle"));
+        }
+        partial.bytes += data.len();
+        *slot = Some(data);
         if partial.parts.iter().all(Option::is_some) {
             let partial = self.partials.remove(&id).expect("present");
             let body: Vec<u8> = partial.parts.into_iter().flatten().flatten().collect();
@@ -227,7 +267,16 @@ mod test {
 
     #[test]
     fn frames_round_trip() {
-        let b = Bundle::new(BundleKind::Message, [1; 16], [2; 16], 60, 3, vec![1, 2, 3]).unwrap();
+        let b = Bundle::new(
+            BundleKind::Message,
+            [1; 16],
+            [2; 16],
+            60,
+            3,
+            [0; 16],
+            vec![1, 2, 3],
+        )
+        .unwrap();
         for f in [
             Frame::Hello {
                 fingerprint: [9; 16],
@@ -256,6 +305,7 @@ mod test {
             [2; 16],
             60,
             3,
+            [0; 16],
             vec![0xAB; 1500],
         )
         .unwrap();
@@ -291,6 +341,36 @@ mod test {
         r.expire(11);
         assert_eq!(r.pending(), 0);
         assert!(r.push([1; 16], 2, 2, vec![1], 0).is_err());
+    }
+
+    #[test]
+    fn reassembler_is_bounded_against_floods() {
+        let mut r = Reassembler::new(60);
+        // A flood of distinct half-finished bundles never exceeds the cap.
+        for i in 0..(MAX_PARTIALS as u64 * 4) {
+            let mut id = [0u8; 16];
+            id[..8].copy_from_slice(&i.to_be_bytes());
+            assert!(r.push(id, 0, 255, vec![1; 100], i).unwrap().is_none());
+            assert!(r.pending() <= MAX_PARTIALS);
+        }
+        // Oversized fragments and byte totals beyond a legal bundle are refused.
+        assert!(
+            r.push([9; 16], 0, 2, vec![0; MAX_FRAGMENT_DATA + 1], 0)
+                .is_err()
+        );
+        assert!(r.push([9; 16], 0, 2, vec![], 0).is_err());
+        let mut r = Reassembler::new(60);
+        for i in 0..3u8 {
+            let res = r.push([7; 16], i, 3, vec![0; MAX_FRAGMENT_DATA], 0);
+            if i == 2 {
+                assert!(res.is_err(), "3 x 2048 bytes exceeds MAX_WIRE_LEN");
+            }
+        }
+        // Duplicate fragment is a no-op, not an error.
+        let mut r = Reassembler::new(60);
+        assert!(r.push([3; 16], 0, 2, vec![1], 0).unwrap().is_none());
+        assert!(r.push([3; 16], 0, 2, vec![1], 0).unwrap().is_none());
+        assert_eq!(r.pending(), 1);
     }
 
     #[test]

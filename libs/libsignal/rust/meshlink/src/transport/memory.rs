@@ -23,8 +23,13 @@ impl MemoryLink {
     /// Connects `a` and `b` with a bidirectional pipe whose frames are limited
     /// to `mtu` bytes.
     pub fn connect(a: &Node, b: &Node, mtu: usize) -> Self {
-        let ea = a.attach_link(mtu);
-        let eb = b.attach_link(mtu);
+        Self::connect_with(a, b, crate::transport::LinkOptions::new(mtu))
+    }
+
+    /// Connects `a` and `b` with explicit link options (pacing, frame rate).
+    pub fn connect_with(a: &Node, b: &Node, options: crate::transport::LinkOptions) -> Self {
+        let ea = a.attach_link_with(options.clone());
+        let eb = b.attach_link_with(options);
         let (a_id, b_id) = (ea.id, eb.id);
         let (mut a_out, b_in) = (ea.outbound, eb.inbound);
         let (mut b_out, a_in) = (eb.outbound, ea.inbound);
