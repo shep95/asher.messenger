@@ -1,5 +1,6 @@
 package org.thoughtcrime.securesms.logsubmit;
 
+import org.thoughtcrime.securesms.BuildConfig;
 import android.app.Application;
 import android.content.Context;
 import android.net.Uri;
@@ -69,7 +70,7 @@ public class SubmitDebugLogRepository {
   private static final char   TITLE_DECORATION = '=';
   private static final int    MIN_DECORATIONS  = 5;
   private static final int    SECTION_SPACING  = 3;
-  private static final String API_ENDPOINT     = "https://debuglogs.org";
+  private static final String API_ENDPOINT     = BuildConfig.DEBUG_LOGS_URL;
 
   /** Ordered list of log sections. */
   private static final List<LogSection> SECTIONS = new ArrayList<LogSection>() {{

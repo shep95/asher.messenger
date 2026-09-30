@@ -297,6 +297,14 @@ class SignalServiceNetworkAccess(context: Context) {
       return uncensoredConfiguration
     }
 
+    // The domain-fronting configuration below terminates TLS at Google and Fastly reflectors that forward to
+    // Signal's servers. A build that talks to its own servers must not use it unless it operates its own
+    // reflectors, otherwise users in the default-censored countries would send their credentials to a third
+    // party and could never connect.
+    if (!BuildConfig.CENSORSHIP_CIRCUMVENTION_AVAILABLE) {
+      return uncensoredConfiguration
+    }
+
     val countryCode: Int = PhoneNumberUtil.getInstance().parse(e164, null).countryCode
 
     return when (SignalStore.settings.censorshipCircumventionEnabled) {
@@ -323,6 +331,10 @@ class SignalServiceNetworkAccess(context: Context) {
   }
 
   fun isCensored(number: String?): Boolean {
+    if (!BuildConfig.CENSORSHIP_CIRCUMVENTION_AVAILABLE) {
+      return false
+    }
+
     return getConfiguration(number) != uncensoredConfiguration
   }
 

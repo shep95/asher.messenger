@@ -76,6 +76,7 @@
         android:name=".ApplicationContext"
         android:allowBackup="true"
         android:backupAgent=".absbackup.SignalBackupAgent"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="false"
         android:fullBackupOnly="false"
         android:icon="@mipmap/ic_launcher"

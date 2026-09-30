@@ -88,7 +88,9 @@ import java.util.UUID
 object UsernameRepository {
   private val TAG = Log.tag(UsernameRepository::class.java)
 
-  private val URL_REGEX = """(https://)?signal.me/?#eu/([a-zA-Z0-9+\-_/]+)""".toRegex()
+  // Anchored and escaped: previously `signal.me` matched any character for the dot and the pattern could match
+  // in the middle of an arbitrary URL, so a link on another host could be treated as a username link.
+  private val URL_REGEX = """^(https://|sgnl://)?signal\.me/?#eu/([a-zA-Z0-9+\-_/]+)$""".toRegex()
 
   private const val BASE_URL = "https://signal.me/#eu/"
   private const val USERNAME_SYNC_ERROR_THRESHOLD = 3

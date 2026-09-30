@@ -37,6 +37,7 @@ import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
+import java.security.MessageDigest;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
@@ -357,8 +358,8 @@ public class MasterSecretUtil {
 
     byte[] localMac      = hmac.doFinal(encryptedData);
 
-    if (Arrays.equals(givenMac, localMac)) return encryptedData;
-    else                                   throw new InvalidPassphraseException("MAC Error");
+    if (MessageDigest.isEqual(givenMac, localMac)) return encryptedData;
+    else                                            throw new InvalidPassphraseException("MAC Error");
   }
 
   private static byte[] macWithPassphrase(byte[] macSalt, int iterations, byte[] data, String passphrase) throws GeneralSecurityException {

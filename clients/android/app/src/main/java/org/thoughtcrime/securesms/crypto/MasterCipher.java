@@ -30,6 +30,7 @@ import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.security.MessageDigest;
 import java.util.Arrays;
 
 import javax.crypto.BadPaddingException;
@@ -128,7 +129,7 @@ public class MasterCipher {
     byte[] ourMac = getMacFor(content);
     Log.i(TAG, "Our Mac: " + Hex.toString(ourMac));
     Log.i(TAG, "Thr Mac: " + Hex.toString(theirMac));
-    return Arrays.equals(ourMac, theirMac);
+    return MessageDigest.isEqual(ourMac, theirMac);
   }
 	
   public byte[] getMacFor(String content) {
@@ -168,7 +169,7 @@ public class MasterCipher {
 		
     byte[] localMac  = hmac.doFinal(encrypted);
 		
-    if (!Arrays.equals(remoteMac, localMac))
+    if (!MessageDigest.isEqual(remoteMac, localMac))
       throw new InvalidMessageException("MAC doesen't match.");
 		
     return encrypted;
