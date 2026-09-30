@@ -1,0 +1,19 @@
+<configuration>
+
+  <define name="instanceId" class="org.signal.registration.util.InstanceIdPropertyDefiner" />
+
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <!-- encoders are assigned the type
+         ch.qos.logback.classic.encoder.PatternLayoutEncoder by default -->
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="OTEL" class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender"/>
+
+  <root level="info">
+    <appender-ref ref="STDOUT"/>
+    <appender-ref ref="OTEL"/>
+  </root>
+</configuration>

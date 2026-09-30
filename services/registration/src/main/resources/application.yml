@@ -1,0 +1,33 @@
+micronaut:
+  application:
+    name: registrationService
+
+  metrics:
+    binders:
+      netty:
+        queues:
+          enabled: true
+
+    export:
+      otlp:
+        enabled: false
+        step: 20s
+
+    tags:
+      # Note that an `instance` tag is added at runtime in `Application.java`
+      service: registration
+
+  executors:
+    scheduled:
+      type: scheduled
+      core-pool-size: 16
+
+# Use SDK autoconfiguration (https://opentelemetry.io/docs/languages/java/configuration/#zero-code-sdk-autoconfigure)
+# and io.micronaut.tracing.opentelemetry.DefaultOpenTelemetryFactory
+#
+# There is no metrics exporter because micrometer submits OTLP directly.
+otel:
+  logs:
+    exporter: otlp
+  exporter:
+    otlp: {}
