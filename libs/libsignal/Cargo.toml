@@ -69,6 +69,7 @@ libsignal-core = { path = "rust/core" }
 libsignal-debug = { path = "rust/debug" }
 libsignal-keytrans = { path = "rust/keytrans" }
 libsignal-message-backup = { path = "rust/message-backup" }
+meshlink = { path = "rust/meshlink" }
 libsignal-net = { path = "rust/net" }
 libsignal-net-chat = { path = "rust/net/chat" }
 libsignal-net-grpc = { path = "rust/net/grpc" }

@@ -26,6 +26,7 @@ libsignal-message-backup = { workspace = true, features = ["json"] }
 libsignal-net = { workspace = true }
 libsignal-net-chat = { workspace = true }
 libsignal-protocol = { workspace = true }
+meshlink = { workspace = true }
 libsignal-svrb = { workspace = true }
 signal-crypto = { workspace = true }
 signal-media = { workspace = true, optional = true }
@@ -58,7 +59,7 @@ sha2 = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 uuid = { workspace = true }
 visibility = { workspace = true }
 zerocopy = { workspace = true }

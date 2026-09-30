@@ -50,7 +50,7 @@ pub mod wire;
 pub use bundle::{BROADCAST, Bundle, BundleId, BundleKind, Fingerprint};
 pub use group::{GroupId, MeshGroup};
 pub use identity::{ContactCard, MeshIdentity, safety_number};
-pub use node::{Event, LinkId, Node, NodeBuilder, NodeConfig, Stats};
+pub use node::{Crypto, Event, LinkId, Node, NodeBuilder, NodeConfig, Prepared, Stats};
 pub use persist::{FilePersistence, MeshPersistence, NoPersistence, Snapshot};
 pub use store::BundleStore;
 pub use stores::{ProtocolStores, SeparateStores, StoreParts};

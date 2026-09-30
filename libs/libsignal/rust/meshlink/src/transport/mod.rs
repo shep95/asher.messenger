@@ -9,6 +9,7 @@
 //! transport's business and lives in the platform code.
 
 pub mod memory;
+pub mod tcp;
 
 use tokio::sync::mpsc;
 

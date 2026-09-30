@@ -118,6 +118,17 @@ impl Default for NodeConfig {
 /// What a node reports to the application.
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// External-crypto mode only: a message for us arrived. The app decrypts
+    /// `ciphertext` with its own Signal session for `from` and calls
+    /// [`Node::deliver_plaintext`] (or [`Node::defer`] if it cannot yet).
+    Ciphertext {
+        from: Fingerprint,
+        bundle_id: BundleId,
+        ack_commit: AckCommitment,
+        /// libsignal `CiphertextMessageType` (3 = PreKey, 2 = Whisper).
+        message_type: u8,
+        ciphertext: Vec<u8>,
+    },
     /// A one-to-one message for us was decrypted.
     Message {
         from: Fingerprint,
@@ -147,6 +158,27 @@ pub enum Event {
     /// A link went away.
     LinkClosed { link: LinkId },
 }
+
+/// Who holds the Signal sessions.
+pub enum Crypto {
+    /// meshlink encrypts and decrypts with these stores.
+    Internal(Box<dyn ProtocolStores>),
+    /// The app does, through [`Node::prepare_text`] / [`Node::send_ciphertext`]
+    /// and [`Event::Ciphertext`] / [`Node::deliver_plaintext`].
+    External,
+}
+
+/// A plaintext the app must encrypt for `to` before calling
+/// [`Node::send_ciphertext`] with the same `commit`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prepared {
+    pub to: Fingerprint,
+    pub commit: AckCommitment,
+    pub plaintext: Vec<u8>,
+}
+
+/// External-crypto mode: messages handed to the app and not yet answered.
+const MAX_AWAITING_APP: usize = 512;
 
 /// Counters for diagnostics and the scene indicator.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -191,7 +223,7 @@ struct Contact {
 
 struct Inner {
     identity: MeshIdentity,
-    stores: Box<dyn ProtocolStores>,
+    crypto: Crypto,
     persistence: Box<dyn MeshPersistence>,
     dirty: bool,
     config: NodeConfig,
@@ -209,6 +241,8 @@ struct Inner {
     ticks: u64,
     /// Messages for us awaiting a retry, by sender.
     deferred: HashMap<Fingerprint, Vec<Bundle>>,
+    /// External-crypto mode: messages handed to the app, by bundle id.
+    awaiting_app: HashMap<BundleId, Bundle>,
 }
 
 /// Cheaply clonable handle to a running node.
@@ -223,6 +257,7 @@ pub struct NodeBuilder {
     identity: MeshIdentity,
     config: NodeConfig,
     stores: Option<Box<dyn ProtocolStores>>,
+    external: bool,
     persistence: Option<Box<dyn MeshPersistence>>,
 }
 
@@ -239,6 +274,15 @@ impl NodeBuilder {
         self
     }
 
+    /// The app keeps the Signal sessions and does the encryption itself (the
+    /// mode used through the Java/Swift/Node bridge, where the stores are
+    /// callback objects that cannot be held across calls).
+    pub fn external_crypto(mut self) -> Self {
+        self.external = true;
+        self.stores = None;
+        self
+    }
+
     /// Where carry store, contacts and groups survive a restart. Defaults to
     /// nowhere.
     pub fn persistence(mut self, persistence: Box<dyn MeshPersistence>) -> Self {
@@ -251,16 +295,22 @@ impl NodeBuilder {
             identity,
             config,
             stores,
+            external,
             persistence,
         } = self;
-        let mut stores = match stores {
-            Some(s) => s,
-            None => Box::new(InMemSignalProtocolStore::new(
-                *identity.identity_key_pair(),
-                identity.registration_id(),
-            )?),
+        let crypto = if external {
+            Crypto::External
+        } else {
+            let mut stores = match stores {
+                Some(s) => s,
+                None => Box::new(InMemSignalProtocolStore::new(
+                    *identity.identity_key_pair(),
+                    identity.registration_id(),
+                )?),
+            };
+            identity.install(stores.as_mut())?;
+            Crypto::Internal(stores)
         };
-        identity.install(stores.as_mut())?;
         let mut persistence = persistence.unwrap_or_else(|| Box::new(NoPersistence));
         let snapshot = persistence.load()?;
 
@@ -297,7 +347,7 @@ impl NodeBuilder {
         let interval = config.anti_entropy_interval;
         let inner = Inner {
             identity,
-            stores,
+            crypto,
             persistence,
             dirty: false,
             store,
@@ -320,6 +370,7 @@ impl NodeBuilder {
             stats: Stats::default(),
             ticks: 0,
             deferred,
+            awaiting_app: HashMap::new(),
             config,
         };
         let node = Node {
@@ -351,6 +402,7 @@ impl Node {
             identity,
             config: NodeConfig::default(),
             stores: None,
+            external: false,
             persistence: None,
         }
     }
@@ -529,72 +581,114 @@ impl Node {
 
     /// Encrypts `plaintext` for `to` and hands the bundle to the mesh.
     /// Returns the bundle id, which is echoed in [`Event::Delivered`].
+    /// Internal-crypto mode only; external-crypto apps use
+    /// [`Node::prepare_text`] and [`Node::send_ciphertext`].
     pub async fn send_text(&self, to: Fingerprint, plaintext: &[u8]) -> Result<BundleId> {
         let envelope = Envelope::new(EnvelopeKind::Text, plaintext.to_vec())?;
         let mut inner = self.inner.lock().await;
-        Self::send_envelope(&mut inner, to, &envelope)
+        let prepared = Self::prepare(&inner, to, &envelope)?;
+        Self::encrypt_and_send(&mut inner, &prepared)
+    }
+
+    /// External-crypto mode: the padded plaintext the app must encrypt for
+    /// `to`, with the commitment to pass back to [`Node::send_ciphertext`].
+    pub async fn prepare_text(&self, to: Fingerprint, plaintext: &[u8]) -> Result<Prepared> {
+        let envelope = Envelope::new(EnvelopeKind::Text, plaintext.to_vec())?;
+        let inner = self.inner.lock().await;
+        Self::prepare(&inner, to, &envelope)
+    }
+
+    /// External-crypto mode: hands an app-encrypted message to the mesh.
+    /// `message_type` is libsignal's `CiphertextMessageType` byte.
+    pub async fn send_ciphertext(
+        &self,
+        to: Fingerprint,
+        commit: AckCommitment,
+        message_type: u8,
+        ciphertext: &[u8],
+    ) -> Result<BundleId> {
+        if message_type != CiphertextMessageType::PreKey as u8
+            && message_type != CiphertextMessageType::Whisper as u8
+        {
+            return Err(Error::Wire("unsupported ciphertext type"));
+        }
+        let mut payload = Vec::with_capacity(ciphertext.len() + 1);
+        payload.push(message_type);
+        payload.extend_from_slice(ciphertext);
+        let mut inner = self.inner.lock().await;
+        Self::send_payload(&mut inner, to, commit, payload)
     }
 
     /// Creates a group and tells every member about it and about each other.
+    /// Internal-crypto mode; see [`Node::prepare_group_create`] otherwise.
     pub async fn create_group(&self, name: &str, members: Vec<Fingerprint>) -> Result<GroupId> {
         let mut inner = self.inner.lock().await;
-        let inner = &mut *inner;
-        let me = inner.identity.fingerprint();
-        let group = MeshGroup::new(name, me, members)?;
-        for m in group.members.iter().filter(|m| **m != me) {
-            if !inner.contacts.contains_key(m) {
-                return Err(Error::UnknownContact(fingerprint_hex(m)));
-            }
+        let (gid, prepared) = Self::plan_group_create(&mut inner, name, members)?;
+        for p in &prepared {
+            Self::encrypt_and_send(&mut inner, p)?;
         }
-        if inner.groups.len() >= inner.config.max_groups {
-            return Err(Error::Other("too many groups".into()));
-        }
-        let gid = group.id;
-        let others: Vec<Fingerprint> = group.members.iter().copied().filter(|m| *m != me).collect();
-        for to in &others {
-            let invite = Envelope::new(EnvelopeKind::GroupInvite, group.encode())?;
-            Self::send_envelope(inner, *to, &invite)?;
-            // Everyone needs everyone else's card (mine they get from the
-            // PreKey message's identity key plus my own card share).
-            let mut cards: Vec<ContactCard> = vec![inner.identity.card().clone()];
-            for other in others.iter().filter(|o| *o != to) {
-                cards.push(inner.contacts[other].card.clone());
-            }
-            for card in cards {
-                let share = Envelope::new(EnvelopeKind::CardShare, card.encode())?;
-                Self::send_envelope(inner, *to, &share)?;
-            }
-        }
-        inner.groups.insert(gid, group);
-        inner.dirty = true;
         Ok(gid)
     }
 
+    /// External-crypto mode: registers the group and returns every plaintext
+    /// the app must encrypt and send (invites and card shares).
+    pub async fn prepare_group_create(
+        &self,
+        name: &str,
+        members: Vec<Fingerprint>,
+    ) -> Result<(GroupId, Vec<Prepared>)> {
+        let mut inner = self.inner.lock().await;
+        Self::plan_group_create(&mut inner, name, members)
+    }
+
     /// Sends to every other member of a group; returns one bundle id per copy.
+    /// Internal-crypto mode; see [`Node::prepare_group_text`] otherwise.
     pub async fn send_group_text(&self, group: GroupId, plaintext: &[u8]) -> Result<Vec<BundleId>> {
         let mut inner = self.inner.lock().await;
-        let inner = &mut *inner;
-        let me = inner.identity.fingerprint();
-        let g = inner
-            .groups
-            .get(&group)
-            .ok_or_else(|| Error::Other("unknown group".into()))?
-            .clone();
-        let mut body = Vec::with_capacity(16 + plaintext.len());
-        body.extend_from_slice(&group);
-        body.extend_from_slice(plaintext);
-        let mut ids = Vec::new();
-        for m in g.members.iter().filter(|m| **m != me) {
-            let env = Envelope::new(EnvelopeKind::GroupText, body.clone())?;
-            match Self::send_envelope(inner, *m, &env) {
-                Ok(id) => ids.push(id),
-                Err(Error::UnknownContact(fp)) => {
-                    warn!("group {}: no card for {fp}; skipping", hex::encode(group))
-                }
-                Err(e) => return Err(e),
-            }
+        let prepared = Self::plan_group_text(&inner, group, plaintext)?;
+        let mut ids = Vec::with_capacity(prepared.len());
+        for p in &prepared {
+            ids.push(Self::encrypt_and_send(&mut inner, p)?);
         }
         Ok(ids)
+    }
+
+    /// External-crypto mode: one plaintext per other member of the group.
+    pub async fn prepare_group_text(
+        &self,
+        group: GroupId,
+        plaintext: &[u8],
+    ) -> Result<Vec<Prepared>> {
+        let inner = self.inner.lock().await;
+        Self::plan_group_text(&inner, group, plaintext)
+    }
+
+    /// External-crypto mode: the app decrypted the message announced by an
+    /// [`Event::Ciphertext`]; meshlink dispatches it and acknowledges it.
+    pub async fn deliver_plaintext(&self, bundle_id: BundleId, plaintext: &[u8]) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let inner = &mut *inner;
+        let bundle = inner
+            .awaiting_app
+            .remove(&bundle_id)
+            .ok_or_else(|| Error::Other("no such message awaiting the app".into()))?;
+        let now = crate::now_secs();
+        let src = bundle.src;
+        self.accept_plaintext(inner, &bundle, plaintext, now)?;
+        self.retry_deferred(inner, Some(src), now);
+        Ok(())
+    }
+
+    /// External-crypto mode: the app could not decrypt yet (no session);
+    /// the message is re-announced later.
+    pub async fn defer(&self, bundle_id: BundleId) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let bundle = inner
+            .awaiting_app
+            .remove(&bundle_id)
+            .ok_or_else(|| Error::Other("no such message awaiting the app".into()))?;
+        Self::defer_bundle(&mut inner, bundle);
+        Ok(())
     }
 
     /// Broadcasts our contact card so nearby nodes can message us without an
@@ -661,6 +755,7 @@ impl Node {
                 .iter()
                 .cloned()
                 .chain(inner.deferred.values().flatten().cloned())
+                .chain(inner.awaiting_app.values().cloned())
                 .collect(),
             contacts: inner
                 .contacts
@@ -675,18 +770,36 @@ impl Node {
         Ok(())
     }
 
-    fn send_envelope(inner: &mut Inner, to: Fingerprint, envelope: &Envelope) -> Result<BundleId> {
+    /// Builds the plaintext for `to` (checks we hold a card) and its commitment.
+    fn prepare(inner: &Inner, to: Fingerprint, envelope: &Envelope) -> Result<Prepared> {
+        if !inner.contacts.contains_key(&to) {
+            return Err(Error::UnknownContact(fingerprint_hex(&to)));
+        }
+        Ok(Prepared {
+            to,
+            commit: ack_commitment(&envelope.ack_token),
+            plaintext: envelope.encode(),
+        })
+    }
+
+    /// Internal-crypto mode: encrypts a prepared plaintext with our stores
+    /// (starting the session from the card if needed) and sends it.
+    fn encrypt_and_send(inner: &mut Inner, prepared: &Prepared) -> Result<BundleId> {
         let mut rng = rand::rngs::OsRng.unwrap_err();
         let card = inner
             .contacts
-            .get(&to)
-            .ok_or_else(|| Error::UnknownContact(fingerprint_hex(&to)))?
+            .get(&prepared.to)
+            .ok_or_else(|| Error::UnknownContact(fingerprint_hex(&prepared.to)))?
             .card
             .clone();
         let remote = card.address()?;
         let local = inner.identity.address();
-        let parts = inner.stores.parts();
-
+        let Crypto::Internal(stores) = &mut inner.crypto else {
+            return Err(Error::Other(
+                "node runs in external-crypto mode; use prepare_text/send_ciphertext".into(),
+            ));
+        };
+        let parts = stores.parts();
         if crate::complete_now(parts.session.load_session(&remote))?.is_none() {
             crate::complete_now(process_prekey_bundle(
                 &remote,
@@ -699,7 +812,7 @@ impl Node {
             ))?;
         }
         let ct = crate::complete_now(message_encrypt(
-            &envelope.encode(),
+            &prepared.plaintext,
             &remote,
             &local,
             parts.session,
@@ -710,8 +823,17 @@ impl Node {
         let mut payload = Vec::with_capacity(ct.serialize().len() + 1);
         payload.push(ct.message_type() as u8);
         payload.extend_from_slice(ct.serialize());
+        Self::send_payload(inner, prepared.to, prepared.commit, payload)
+    }
 
-        let commit = ack_commitment(&envelope.ack_token);
+    /// Wraps ciphertext in a message bundle, remembers it as outstanding and
+    /// pushes it to every link.
+    fn send_payload(
+        inner: &mut Inner,
+        to: Fingerprint,
+        commit: AckCommitment,
+        payload: Vec<u8>,
+    ) -> Result<BundleId> {
         let bundle = Bundle::new(
             BundleKind::Message,
             inner.identity.fingerprint(),
@@ -728,6 +850,65 @@ impl Node {
         Self::push_to_links(inner, &bundle, None);
         inner.dirty = true;
         Ok(id)
+    }
+
+    fn plan_group_create(
+        inner: &mut Inner,
+        name: &str,
+        members: Vec<Fingerprint>,
+    ) -> Result<(GroupId, Vec<Prepared>)> {
+        let me = inner.identity.fingerprint();
+        let group = MeshGroup::new(name, me, members)?;
+        for m in group.members.iter().filter(|m| **m != me) {
+            if !inner.contacts.contains_key(m) {
+                return Err(Error::UnknownContact(fingerprint_hex(m)));
+            }
+        }
+        if inner.groups.len() >= inner.config.max_groups {
+            return Err(Error::Other("too many groups".into()));
+        }
+        let gid = group.id;
+        let others: Vec<Fingerprint> = group.members.iter().copied().filter(|m| *m != me).collect();
+        let mut prepared = Vec::new();
+        for to in &others {
+            let invite = Envelope::new(EnvelopeKind::GroupInvite, group.encode())?;
+            prepared.push(Self::prepare(inner, *to, &invite)?);
+            // Everyone needs everyone else's card, mine included.
+            let mut cards: Vec<ContactCard> = vec![inner.identity.card().clone()];
+            for other in others.iter().filter(|o| *o != to) {
+                cards.push(inner.contacts[other].card.clone());
+            }
+            for card in cards {
+                let share = Envelope::new(EnvelopeKind::CardShare, card.encode())?;
+                prepared.push(Self::prepare(inner, *to, &share)?);
+            }
+        }
+        inner.groups.insert(gid, group);
+        inner.dirty = true;
+        Ok((gid, prepared))
+    }
+
+    fn plan_group_text(inner: &Inner, group: GroupId, plaintext: &[u8]) -> Result<Vec<Prepared>> {
+        let me = inner.identity.fingerprint();
+        let g = inner
+            .groups
+            .get(&group)
+            .ok_or_else(|| Error::Other("unknown group".into()))?;
+        let mut body = Vec::with_capacity(16 + plaintext.len());
+        body.extend_from_slice(&group);
+        body.extend_from_slice(plaintext);
+        let mut out = Vec::new();
+        for m in g.members.iter().filter(|m| **m != me) {
+            let env = Envelope::new(EnvelopeKind::GroupText, body.clone())?;
+            match Self::prepare(inner, *m, &env) {
+                Ok(p) => out.push(p),
+                Err(Error::UnknownContact(fp)) => {
+                    warn!("group {}: no card for {fp}; skipping", hex::encode(group))
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
     }
 
     async fn on_link_up(&self, id: LinkId) {
@@ -896,7 +1077,11 @@ impl Node {
             BundleKind::Message if bundle.dst == me => {
                 inner.store.mark_seen(id, now);
                 if !inner.decrypt_limit.take(&bundle.src, 1.0, now_ms) {
-                    Self::defer(inner, bundle);
+                    Self::defer_bundle(inner, bundle);
+                    return Ok(());
+                }
+                if matches!(inner.crypto, Crypto::External) {
+                    self.hand_to_app(inner, bundle);
                     return Ok(());
                 }
                 let src = bundle.src;
@@ -904,7 +1089,7 @@ impl Node {
                     Ok(()) => self.retry_deferred(inner, Some(src), now),
                     Err(e) => {
                         debug!("deferring {}: {e}", hex::encode(id));
-                        Self::defer(inner, bundle);
+                        Self::defer_bundle(inner, bundle);
                     }
                 }
                 return Ok(());
@@ -963,13 +1148,25 @@ impl Node {
         Ok(())
     }
 
-    /// Decrypts a message for us, hands it to the application and
-    /// acknowledges it. Errors mean "not yet": the caller defers the bundle.
+    /// Internal-crypto mode: decrypts a message for us and accepts it.
+    /// Errors mean "not yet": the caller defers the bundle.
     fn deliver(&self, inner: &mut Inner, bundle: &Bundle, now: u64) -> Result<()> {
+        let plaintext = Self::decrypt_message(inner, bundle)?;
+        self.accept_plaintext(inner, bundle, &plaintext, now)
+    }
+
+    /// Parses a decrypted envelope, dispatches it to the application and
+    /// broadcasts the acknowledgement that opens the bundle's commitment.
+    fn accept_plaintext(
+        &self,
+        inner: &mut Inner,
+        bundle: &Bundle,
+        plaintext: &[u8],
+        now: u64,
+    ) -> Result<()> {
         let id = bundle.id();
         let me = inner.identity.fingerprint();
-        let plaintext = Self::decrypt_message(inner, bundle)?;
-        let envelope = Envelope::decode(&plaintext)?;
+        let envelope = Envelope::decode(plaintext)?;
         if !ack_opens(&bundle.ack_commit, &envelope.ack_token) {
             warn!(
                 "{}: sender's ack commitment does not match; delivering anyway, but relays \
@@ -1000,10 +1197,40 @@ impl Node {
         Ok(())
     }
 
+    /// External-crypto mode: announces a message to the app and keeps the
+    /// bundle until the app answers with `deliver_plaintext` or `defer`.
+    fn hand_to_app(&self, inner: &mut Inner, bundle: Bundle) {
+        if inner.awaiting_app.len() >= MAX_AWAITING_APP {
+            if let Some(oldest) = inner
+                .awaiting_app
+                .iter()
+                .min_by_key(|(_, b)| b.created_at)
+                .map(|(k, _)| *k)
+            {
+                inner.awaiting_app.remove(&oldest);
+                inner.stats.messages_undecryptable += 1;
+            }
+        }
+        let (Some(&type_byte), ct) = (
+            bundle.payload.first(),
+            &bundle.payload[1.min(bundle.payload.len())..],
+        ) else {
+            return;
+        };
+        let _ = self.events.send(Event::Ciphertext {
+            from: bundle.src,
+            bundle_id: bundle.id(),
+            ack_commit: bundle.ack_commit,
+            message_type: type_byte,
+            ciphertext: ct.to_vec(),
+        });
+        inner.awaiting_app.insert(bundle.id(), bundle);
+    }
+
     /// Keeps a message for us that cannot be decrypted yet (most often a
     /// ratchet message that overtook the session-starting one on another
     /// path). Bounded per sender and in total; oldest dropped first.
-    fn defer(inner: &mut Inner, bundle: Bundle) {
+    fn defer_bundle(inner: &mut Inner, bundle: Bundle) {
         let total: usize = inner.deferred.values().map(Vec::len).sum();
         if total >= MAX_DEFERRED {
             if let Some(src) = inner
@@ -1050,6 +1277,13 @@ impl Node {
                     break;
                 }
                 let candidates = list.clone();
+                if matches!(inner.crypto, Crypto::External) {
+                    inner.deferred.remove(&src);
+                    for b in candidates {
+                        self.hand_to_app(inner, b);
+                    }
+                    break;
+                }
                 let mut progressed = false;
                 for b in candidates {
                     if self.deliver(inner, &b, now).is_ok() {
@@ -1225,7 +1459,10 @@ impl Node {
                 .map_err(|_| Error::Wire("invalid device id"))?,
         );
         let local = inner.identity.address();
-        let parts = inner.stores.parts();
+        let Crypto::Internal(stores) = &mut inner.crypto else {
+            return Err(Error::Other("external-crypto mode".into()));
+        };
+        let parts = stores.parts();
         let mut rng = rand::rngs::OsRng.unwrap_err();
         Ok(crate::complete_now(message_decrypt(
             &ciphertext,

@@ -2653,6 +2653,7 @@ dependencies = [
  "libsignal-protocol",
  "linkme",
  "log",
+ "meshlink",
  "neon",
  "nonzero_ext",
  "paste",
@@ -2765,6 +2766,7 @@ dependencies = [
  "linkme",
  "log",
  "mediasan-common",
+ "meshlink",
  "neon",
  "nonzero_ext",
  "partial-default",
@@ -5119,6 +5121,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "signal-media"
 version = "0.1.0"
 dependencies = [
@@ -5618,6 +5630,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -250,6 +250,8 @@ impl SimpleNodeError for device_transfer::Error {}
 
 impl SimpleNodeError for attest::hsm_enclave::Error {}
 
+impl SimpleNodeError for meshlink::Error {}
+
 impl SimpleNodeError for attest::enclave::Error {}
 
 impl SimpleNodeError for signal_crypto::Error {}

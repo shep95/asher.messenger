@@ -36,6 +36,7 @@ use libsignal_net_chat::grpc::devices::DeviceIdNotFoundInAccount;
 use libsignal_net_chat::grpc::login_purchase::ReceiptCredentialError;
 use libsignal_net_chat::grpc::usernames::UsernameNotAvailable;
 use libsignal_protocol::*;
+use meshlink::Error as MeshlinkError;
 use signal_crypto::Error as SignalCryptoError;
 use usernames::{UsernameError, UsernameLinkError};
 use zkgroup::{ZkGroupDeserializationFailure, ZkGroupVerificationFailure};
@@ -681,6 +682,31 @@ impl MessageOnlyExceptionJniError for DeviceTransferError {
             DeviceTransferError::InternalError(_) | DeviceTransferError::KeyDecodingFailed => {
                 ClassName("java.lang.RuntimeException")
             }
+        }
+    }
+}
+
+impl MessageOnlyExceptionJniError for MeshlinkError {
+    fn exception_class(&self) -> ClassName<'static> {
+        match self {
+            MeshlinkError::Wire(_) | MeshlinkError::TooLarge(_, _) => {
+                ClassName("java.lang.IllegalArgumentException")
+            }
+            MeshlinkError::BadCardSignature => {
+                ClassName("org.signal.libsignal.protocol.InvalidKeyException")
+            }
+            MeshlinkError::Curve(_) => {
+                ClassName("org.signal.libsignal.protocol.InvalidKeyException")
+            }
+            MeshlinkError::UnknownContact(_) => {
+                ClassName("org.signal.libsignal.protocol.NoSessionException")
+            }
+            MeshlinkError::Protocol(_) => {
+                ClassName("org.signal.libsignal.protocol.InvalidMessageException")
+            }
+            MeshlinkError::LinkClosed(_) => ClassName("java.lang.IllegalStateException"),
+            MeshlinkError::Io(_) => ClassName("java.io.IOException"),
+            MeshlinkError::Other(_) => ClassName("java.lang.RuntimeException"),
         }
     }
 }

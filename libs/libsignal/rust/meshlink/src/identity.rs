@@ -221,6 +221,7 @@ impl ContactCard {
 /// This device's identity and prekeys. Sessions live in the app's
 /// [`ProtocolStores`]; this struct only holds what must be persisted to
 /// remain the same node across restarts (see [`MeshIdentity::export`]).
+#[derive(Clone)]
 pub struct MeshIdentity {
     identity: IdentityKeyPair,
     registration_id: u32,
@@ -408,6 +409,17 @@ impl MeshIdentity {
 
     pub fn identity_key_pair(&self) -> &IdentityKeyPair {
         &self.identity
+    }
+
+    /// The signed prekey record peers' first messages will reference; apps
+    /// with their own stores must save it there.
+    pub fn signed_pre_key_record(&self) -> &SignedPreKeyRecord {
+        &self.signed_pre_key
+    }
+
+    /// The Kyber prekey record peers' first messages will reference.
+    pub fn kyber_pre_key_record(&self) -> &KyberPreKeyRecord {
+        &self.kyber_pre_key
     }
 
     pub fn registration_id(&self) -> u32 {

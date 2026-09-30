@@ -459,3 +459,183 @@ async fn floods_are_bounded_and_do_not_starve_real_traffic() {
     let (text, _) = wait_for_message(&mut c_events).await;
     assert_eq!(text, b"still works");
 }
+
+/// The bridge path: the app holds the Signal sessions and does the crypto;
+/// meshlink handles envelopes, routing, groups and acknowledgements.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn external_crypto_mode_round_trip_with_app_side_sessions() {
+    use libsignal_protocol::{
+        CiphertextMessage, CiphertextMessageType, InMemSignalProtocolStore, PreKeySignalMessage,
+        SignalMessage, message_decrypt, message_encrypt, process_prekey_bundle,
+    };
+    use meshlink::ProtocolStores as _;
+    use std::time::SystemTime;
+
+    let mut rng = rand::rngs::OsRng.unwrap_err();
+    // "App" A: its own store, its own identity; meshlink only sees the card.
+    let a_id = identity("app-a");
+    let mut a_store =
+        InMemSignalProtocolStore::new(*a_id.identity_key_pair(), a_id.registration_id()).unwrap();
+    a_id.install(&mut a_store).unwrap();
+    let a_addr = a_id.address();
+    let a = Node::builder(a_id)
+        .config(config())
+        .external_crypto()
+        .start()
+        .unwrap();
+    // B is an ordinary internal-crypto node.
+    let b = node().await;
+    let b_card = b.card().await;
+    a.add_contact(b_card.clone()).await.unwrap();
+    b.add_contact(a.card().await).await.unwrap();
+    let _link = MemoryLink::connect(&a, &b, 1500);
+    let mut a_events = a.subscribe();
+    let mut b_events = b.subscribe();
+
+    // A -> B: prepare, encrypt with the app's store, send the ciphertext.
+    let prepared = a
+        .prepare_text(b.fingerprint().await, b"from the app")
+        .await
+        .unwrap();
+    let parts = a_store.parts();
+    let remote = b_card.address().unwrap();
+    process_prekey_bundle(
+        &remote,
+        &a_addr,
+        parts.session,
+        parts.identity,
+        &b_card.to_pre_key_bundle().unwrap(),
+        SystemTime::now(),
+        &mut rng,
+    )
+    .await
+    .unwrap();
+    let ct = message_encrypt(
+        &prepared.plaintext,
+        &remote,
+        &a_addr,
+        parts.session,
+        parts.identity,
+        SystemTime::now(),
+        &mut rng,
+    )
+    .await
+    .unwrap();
+    let id = a
+        .send_ciphertext(
+            prepared.to,
+            prepared.commit,
+            ct.message_type() as u8,
+            ct.serialize(),
+        )
+        .await
+        .unwrap();
+    let (text, from) = wait_for_message(&mut b_events).await;
+    assert_eq!(text, b"from the app");
+    assert_eq!(from, a.fingerprint().await);
+    wait_for_delivered(&mut a_events, id).await;
+
+    // B -> A: A gets a Ciphertext event, decrypts with its store, hands the
+    // plaintext back; meshlink dispatches and acks.
+    let sent = b
+        .send_text(a.fingerprint().await, b"back to the app")
+        .await
+        .unwrap();
+    let (bundle_id, mtype, ciphertext, src) =
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Event::Ciphertext {
+                    bundle_id,
+                    message_type,
+                    ciphertext,
+                    from,
+                    ..
+                } = a_events.recv().await.unwrap()
+                {
+                    return (bundle_id, message_type, ciphertext, from);
+                }
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(src, b.fingerprint().await);
+    let msg = if mtype == CiphertextMessageType::PreKey as u8 {
+        CiphertextMessage::PreKeySignalMessage(
+            PreKeySignalMessage::try_from(&ciphertext[..]).unwrap(),
+        )
+    } else {
+        CiphertextMessage::SignalMessage(SignalMessage::try_from(&ciphertext[..]).unwrap())
+    };
+    let parts = a_store.parts();
+    let plaintext = message_decrypt(
+        &msg,
+        &remote,
+        &a_addr,
+        parts.session,
+        parts.identity,
+        parts.pre_key,
+        parts.signed_pre_key,
+        parts.kyber_pre_key,
+        &mut rng,
+    )
+    .await
+    .unwrap();
+    a.deliver_plaintext(bundle_id, &plaintext).await.unwrap();
+    let (text, _) = wait_for_message(&mut a_events).await;
+    assert_eq!(text, b"back to the app");
+    wait_for_delivered(&mut b_events, sent).await;
+
+    // Deferral: the app says "not yet"; the message is announced again on a tick.
+    let sent2 = b.send_text(a.fingerprint().await, b"again").await.unwrap();
+    let bundle_id = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Event::Ciphertext { bundle_id, .. } = a_events.recv().await.unwrap() {
+                return bundle_id;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    a.defer(bundle_id).await.unwrap();
+    let again = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Event::Ciphertext { bundle_id, .. } = a_events.recv().await.unwrap() {
+                return bundle_id;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(again, bundle_id);
+    assert_eq!(a.stats().await.messages_deferred, 0);
+    let _ = sent2;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tcp_transport_between_two_nodes() {
+    use meshlink::transport::tcp;
+    let (a, b) = (node().await, node().await);
+    a.add_contact(b.card().await).await.unwrap();
+    let mut b_events = b.subscribe();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(tcp::serve(
+        b.clone(),
+        listener,
+        meshlink::LinkOptions::new(1500),
+        4,
+    ));
+    let a2 = a.clone();
+    let client =
+        tokio::spawn(
+            async move { tcp::connect(&a2, addr, meshlink::LinkOptions::new(1500)).await },
+        );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    a.send_text(b.fingerprint().await, b"over tcp")
+        .await
+        .unwrap();
+    let (text, _) = wait_for_message(&mut b_events).await;
+    assert_eq!(text, b"over tcp");
+    client.abort();
+    server.abort();
+}

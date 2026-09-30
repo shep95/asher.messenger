@@ -43,6 +43,7 @@ mod pin {
 }
 
 pub mod incremental_mac;
+pub mod mesh;
 pub mod message_backup;
 
 pub mod io;

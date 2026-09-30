@@ -15,6 +15,11 @@ description = "Store-carry-forward transport that carries Signal Protocol cipher
 [lints]
 workspace = true
 
+[[bin]]
+name = "meshlinkd"
+path = "src/bin/meshlinkd.rs"
+doc = false
+
 [dependencies]
 libsignal-core = { workspace = true }
 libsignal-protocol = { workspace = true }
@@ -26,7 +31,7 @@ rand = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

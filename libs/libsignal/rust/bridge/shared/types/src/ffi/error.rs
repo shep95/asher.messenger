@@ -510,6 +510,21 @@ impl IntoFfiError for DeviceTransferError {
     }
 }
 
+impl IntoFfiError for meshlink::Error {
+    fn into_ffi_error(self) -> impl Into<SignalFfiError> {
+        let code = match &self {
+            Self::Wire(_) | Self::TooLarge(_, _) => SignalErrorCode::InvalidArgument,
+            Self::BadCardSignature => SignalErrorCode::InvalidSignature,
+            Self::Curve(_) => SignalErrorCode::InvalidKey,
+            Self::UnknownContact(_) => SignalErrorCode::SessionNotFound,
+            Self::Protocol(_) => SignalErrorCode::InvalidMessage,
+            Self::LinkClosed(_) => SignalErrorCode::InvalidState,
+            Self::Io(_) | Self::Other(_) => SignalErrorCode::InternalError,
+        };
+        SimpleError::new(code, format!("meshlink operation failed: {self}"))
+    }
+}
+
 impl IntoFfiError for HsmEnclaveError {
     fn into_ffi_error(self) -> impl Into<SignalFfiError> {
         let code = match self {
