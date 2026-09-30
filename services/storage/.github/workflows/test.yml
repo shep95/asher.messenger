@@ -1,0 +1,32 @@
+name: Build and test
+
+on: [push]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install APT packages
+        # Maven wrapper requires `unzip` to unpack the Maven distribution; see
+        # https://github.com/apache/maven-wrapper/issues/425
+        run: |
+          apt update
+          apt install -y unzip
+      - name: Set up JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+          cache: 'maven'
+        env:
+          # work around an issue with actions/runner setting an incorrect HOME in containers, which breaks maven caching
+          # https://github.com/actions/setup-java/issues/356
+          HOME: /root
+      - name: Build with Maven
+        run: ./mvnw -e -B verify

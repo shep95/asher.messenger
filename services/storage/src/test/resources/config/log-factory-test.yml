@@ -1,0 +1,4 @@
+logging:
+  level: INFO
+  appenders:
+    - type: otlp
