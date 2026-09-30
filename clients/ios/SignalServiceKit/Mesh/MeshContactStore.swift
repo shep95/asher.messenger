@@ -192,7 +192,16 @@ public final class MeshContactStore {
         }
 
         // Surface the contact through the normal recipient/thread machinery.
-        let recipient = DependenciesBridge.shared.recipientFetcher.fetchOrCreate(serviceId: aci, tx: tx)
+        var recipient = DependenciesBridge.shared.recipientFetcher.fetchOrCreate(serviceId: aci, tx: tx)
+        // Adding a card is an explicit act of trust: whitelist the recipient
+        // so calls from it are not rejected as message requests
+        // (CallOfferHandler.allowsInboundCalls). `.metadataUpdate` keeps the
+        // storage service out of it; nothing about a mesh contact lives on a server.
+        SSKEnvironment.shared.profileManagerRef.addRecipientToProfileWhitelist(
+            &recipient,
+            userProfileWriter: .metadataUpdate,
+            tx: tx,
+        )
         let displayName = name.isEmpty ? "Mesh \(fingerprint.prefix(4).meshHex)" : name
         DependenciesBridge.shared.nicknameManager.createOrUpdate(
             nicknameRecord: NicknameRecord(recipient: recipient, givenName: displayName, familyName: nil, note: "Mesh contact"),

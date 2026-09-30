@@ -11,9 +11,16 @@ source 'https://cdn.cocoapods.org/'
 pod 'blurhash', podspec: './ThirdParty/blurhash.podspec'
 pod 'SwiftProtobuf', "1.38.1"
 
-ENV['LIBSIGNAL_FFI_PREBUILD_CHECKSUM'] = 'db25764598c9171a2c8eac3199a0d881611e493bbae3ab1355e5fb88927271cf'
-pod 'LibSignalClient', git: 'https://github.com/signalapp/libsignal.git', tag: 'v0.103.1', testspecs: ["Tests"]
-# pod 'LibSignalClient', path: '../libsignal', testspecs: ["Tests"]
+# Asher: LibSignalClient comes from the vendored tree at libs/libsignal, which
+# carries the meshlink bridge (`signal_mesh_*`, docs/offline-mesh.md). The
+# podspec detects a source checkout (swift/build_ffi.sh present), skips the
+# prebuilt-archive download (so no LIBSIGNAL_FFI_PREBUILD_CHECKSUM is needed)
+# and links `target/<triple>/release/libsignal_ffi.a` from that tree, which you
+# build yourself first: see clients/ios/MESH_BUILD.md.
+pod 'LibSignalClient', path: '../../libs/libsignal', testspecs: ["Tests"]
+# Upstream prebuilt (no mesh symbols):
+# ENV['LIBSIGNAL_FFI_PREBUILD_CHECKSUM'] = 'db25764598c9171a2c8eac3199a0d881611e493bbae3ab1355e5fb88927271cf'
+# pod 'LibSignalClient', git: 'https://github.com/signalapp/libsignal.git', tag: 'v0.103.1', testspecs: ["Tests"]
 
 ENV['RINGRTC_PREBUILD_CHECKSUM'] = 'dc1826c6d1f0faf3dbdc380ff7b57f4858f245bc731fd876d023ed66e9f628e4'
 # ENV['RINGRTC_USE_FILE_BASED_CAMERA'] = '1'
@@ -99,7 +106,32 @@ post_install do |installer|
   disable_non_development_pod_warnings(installer)
   fix_ringrtc_project_symlink(installer)
   fetch_ringrtc
-  copy_acknowledgements
+  add_signal_ffi_module_to_app_targets(installer)
+  copy_acknowledgements(installer)
+end
+
+# Asher: SignalServiceKit/Mesh/MeshFfi.swift does `import SignalFfi`, the clang
+# module wrapping libsignal_ffi's generated header (module map at
+# libs/libsignal/swift/Sources/SignalFfi). LibSignalClient's podspec puts that
+# directory on its own SWIFT_INCLUDE_PATHS only, so append it to every app
+# target's generated xcconfig (they all link SignalServiceKit, whose
+# swiftmodule refers to SignalFfi types). Existing definitions are extended,
+# not redefined: a second `KEY = ...` line in one xcconfig would replace the
+# first instead of adding to it.
+def add_signal_ffi_module_to_app_targets(installer)
+  ffi_dir = '"$(SRCROOT)/../../libs/libsignal/swift/Sources/SignalFfi"'
+  Dir.glob('Pods/Target Support Files/Pods-*/Pods-*.xcconfig') do |xcconfig_path|
+    xcconfig = File.read(xcconfig_path)
+    next if xcconfig.include?('libsignal/swift/Sources/SignalFfi')
+    ['SWIFT_INCLUDE_PATHS', 'HEADER_SEARCH_PATHS'].each do |key|
+      if xcconfig =~ /^#{key} = .*$/
+        xcconfig = xcconfig.sub(/^#{key} = .*$/) { |line| "#{line} #{ffi_dir}" }
+      else
+        xcconfig << "\n#{key} = $(inherited) #{ffi_dir}\n"
+      end
+    end
+    File.open(xcconfig_path, "w") { |file| file << xcconfig }
+  end
 end
 
 # Works around CocoaPods behavior designed for static libraries.
@@ -247,7 +279,7 @@ def fetch_ringrtc
   `make fetch-ringrtc`
 end
 
-def copy_acknowledgements
+def copy_acknowledgements(installer)
   targets = [
     'Signal',
     'SignalNSE',
@@ -261,7 +293,8 @@ def copy_acknowledgements
   acknowledgements_files = targets.map do |target|
     "Pods/Target Support Files/Pods-#{target}/Pods-#{target}-acknowledgements.plist"
   end
-  acknowledgements_files << "Pods/LibSignalClient/acknowledgments/acknowledgments-ios.plist"
+  # A path (development) pod is not copied under Pods/; ask the sandbox where it lives.
+  acknowledgements_files << File.join(installer.sandbox.pod_dir('LibSignalClient').to_s, 'acknowledgments/acknowledgments-ios.plist')
   acknowledgements_files << "Pods/SignalRingRTC/acknowledgments/acknowledgments.plist"
   acknowledgements_files << "Pods/SignalRingRTC/out/release/acknowledgments-webrtc-ios.plist"
 

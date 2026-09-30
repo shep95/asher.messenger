@@ -421,8 +421,19 @@ final class IndividualCallService: CallServiceStateObserver {
         // Start the call, asynchronously.
         Task { @MainActor in
             do {
-                var iceServers = try await RTCIceServerFetcher(networkManager: networkManager)
-                    .getIceServers()
+                // Asher mesh: a mesh contact is reached over the LAN with host
+                // candidates only. There may be no internet at all, so do not
+                // wait on the relay-server request; ICE negotiates directly
+                // (no TURN, no STUN). See docs/offline-mesh.md.
+                let isMeshCall = FeatureFlags.meshTransport && MeshContactStore.shared.isMeshThread(call.individualCall.thread)
+                var iceServers: [RTCIceServer]
+                if isMeshCall {
+                    Logger.info("Mesh call: skipping relay servers, using host candidates")
+                    iceServers = []
+                } else {
+                    iceServers = try await RTCIceServerFetcher(networkManager: networkManager)
+                        .getIceServers()
+                }
                 guard self.callServiceState.currentCall === call else {
                     Logger.debug("call has since ended")
                     return
@@ -435,7 +446,8 @@ final class IndividualCallService: CallServiceStateObserver {
                     Logger.warn("Using relay server because remote user is not a Signal Connection")
                 }
 
-                let useTurnOnly = !isSignalConnection || self.preferences.doCallsHideIPAddress
+                // A mesh call has no relay to hide behind; host candidates are the whole point.
+                let useTurnOnly = isMeshCall ? false : (!isSignalConnection || self.preferences.doCallsHideIPAddress)
 
                 let useLowData = self.callService.shouldUseLowDataWithSneakyTransaction(for: NetworkRoute(localAdapterType: .unknown))
                 Logger.info("Configuring call for \(useLowData ? "low" : "standard") data")

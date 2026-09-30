@@ -16,11 +16,14 @@ public enum MeshLinkPreset {
     case ble
     /// `LinkOptions::lora`: 200 B/s, 20 frames/s.
     case lora
+    /// LAN over TCP (v3 contract): 256 KiB/s, 500 frames/s, MTU 1500.
+    case lan
 
     var maxBytesPerSec: UInt32 {
         switch self {
         case .ble: return 16 * 1024
         case .lora: return 200
+        case .lan: return 262_144
         }
     }
 
@@ -28,6 +31,7 @@ public enum MeshLinkPreset {
         switch self {
         case .ble: return 200
         case .lora: return 20
+        case .lan: return 500
         }
     }
 }

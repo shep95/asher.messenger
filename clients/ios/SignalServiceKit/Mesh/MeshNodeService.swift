@@ -11,6 +11,14 @@
 //! (`MeshNodeService.isEnabled`, persisted). Runs while the app is in the
 //! foreground and keeps its BLE links alive in the background under the
 //! `bluetooth-central` / `bluetooth-peripheral` background modes.
+//!
+//! v3 (MESH_CONTRACT_V3): LAN link over Wi-Fi (`LanLink`), attachments and
+//! call signalling over the mesh, nearby discovery, encrypted backup and the
+//! loopback self-test. Hook points into the app:
+//! * outgoing: `MeshOutbox.route` (texts, attachments, `OutgoingCallMessage`),
+//! * incoming text: `handleMessage` -> `TSIncomingMessage`,
+//! * incoming attachment (tag 10): `handleAttachment` -> `AttachmentManager.createAttachmentStream`,
+//! * incoming call signal (tag 11): `handleCallSignal` -> `MessageReceiver.handleMeshCallMessage`.
 
 import Foundation
 public import LibSignalClient
@@ -43,7 +51,7 @@ extension Notification.Name {
 
 // MARK: - Links
 
-/// A byte pipe attached to the node. Concrete links: `BleLink`, `RNodeBleLink`.
+/// A byte pipe attached to the node. Concrete links: `BleLink`, `RNodeBleLink`, `LanLink`.
 public protocol MeshLink: AnyObject {
     var name: String { get }
     func start(node: MeshNode)
@@ -59,6 +67,7 @@ public final class MeshNodeService {
     private enum Keys {
         static let enabled = "enabled"
         static let rnodeEnabled = "rnodeEnabled"
+        static let lanEnabled = "lanEnabled"
     }
 
     private let lock = NSLock()
@@ -116,6 +125,24 @@ public final class MeshNodeService {
     public func setRNodeEnabled(_ enabled: Bool) {
         SSKEnvironment.shared.databaseStorageRef.write { tx in
             kvStore.setBool(enabled, key: Keys.rnodeEnabled, transaction: tx)
+        }
+        if isRunning {
+            stop()
+            startIfEnabled()
+        }
+    }
+
+    /// Whether to mesh over the local network (Bonjour + TCP, `LanLink`).
+    /// On by default: it is the zero-hardware path and the end-to-end test path.
+    public var isLanEnabled: Bool {
+        SSKEnvironment.shared.databaseStorageRef.read { tx in
+            kvStore.getBool(Keys.lanEnabled, defaultValue: true, transaction: tx)
+        }
+    }
+
+    public func setLanEnabled(_ enabled: Bool) {
+        SSKEnvironment.shared.databaseStorageRef.write { tx in
+            kvStore.setBool(enabled, key: Keys.lanEnabled, transaction: tx)
         }
         if isRunning {
             stop()
@@ -284,6 +311,9 @@ public final class MeshNodeService {
 
     private func startLinks(node: MeshNode) {
         var newLinks: [MeshLink] = [BleLink()]
+        if isLanEnabled {
+            newLinks.append(LanLink())
+        }
         if isRNodeEnabled {
             newLinks.append(RNodeBleLink(radioConfig: .euLongRange, configureRadio: false))
         }
@@ -323,6 +353,106 @@ public final class MeshNodeService {
             return nil
         }
         return try? node.stats()
+    }
+
+    // MARK: - Nearby (v3)
+
+    /// Cards seen on the mesh in the last 24 h (`MeshNode_Nearby`), most
+    /// recent first; empty when the node is not running.
+    public func nearby() -> [MeshNearbyPeer] {
+        guard let node = nodeIfRunning else {
+            return []
+        }
+        do {
+            return try node.nearby()
+        } catch {
+            Logger.warn("nearby() failed: \(error)")
+            return []
+        }
+    }
+
+    /// Adds a nearby peer as a contact. The nearby list only carries
+    /// fingerprint + name; the card comes from the node, which keeps every
+    /// card it learned (`MeshNode_Contact`). Throws `notMeshRecipient` when
+    /// the node no longer holds that card (it expired; wait for the next beacon).
+    public func addNearbyContact(fingerprint: Data) throws {
+        guard let node = nodeIfRunning else {
+            throw MeshError.notRunning
+        }
+        guard let cardBytes = try node.contactCardBytes(fingerprint: fingerprint) else {
+            throw MeshError.notMeshRecipient
+        }
+        try addContact(card: try MeshContactCard(bytes: cardBytes))
+    }
+
+    // MARK: - Self-test (v3)
+
+    /// `MeshNode_SelfTest`: blocks up to `timeoutMs`; call from a background queue.
+    public func runSelfTest(timeoutMs: UInt32 = 15_000) throws -> String {
+        guard let node = nodeIfRunning else {
+            throw MeshError.notRunning
+        }
+        return try node.selfTest(timeoutMs: timeoutMs)
+    }
+
+    // MARK: - Encrypted backup (v3)
+
+    /// `MeshNode_ExportBackup`: the ".asherbackup" blob for the share sheet.
+    public func exportBackup(passphrase: String) throws -> Data {
+        guard let node = nodeIfRunning else {
+            throw MeshError.notRunning
+        }
+        try node.flush()
+        return try node.exportBackup(passphrase: passphrase)
+    }
+
+    /// Restores a backup. With a running node (an identity already exists)
+    /// this is `MeshNode_ImportBackup`, which merges contacts, groups and
+    /// carried bundles and requires the backup's identity to be ours. Without
+    /// an identity yet, the identity is recovered first
+    /// (`MeshIdentity_FromBackup`), installed, the node started, and the rest
+    /// imported. Returns a one-line summary for the UI.
+    public func restoreBackup(passphrase: String, blob: Data) throws -> String {
+        let databaseStorage = SSKEnvironment.shared.databaseStorageRef
+        let hadIdentity = databaseStorage.read { tx in
+            MeshIdentityManager.shared.fingerprint(tx: tx) != nil
+        }
+        if !hadIdentity {
+            if isRunning {
+                stop()
+            }
+            let identity = try MeshIdentity.fromBackup(passphrase: passphrase, blob: blob)
+            try databaseStorage.write { tx in
+                try MeshIdentityManager.shared.install(identity, tx: tx)
+            }
+        }
+        if !isRunning {
+            if isEnabled {
+                try start()
+            } else {
+                setEnabled(true)
+            }
+        }
+        guard let node = nodeIfRunning else {
+            throw MeshError.notRunning
+        }
+        try node.importBackup(passphrase: passphrase, blob: blob)
+
+        // Mirror the node's contacts into the app's table so threads exist.
+        var restoredContacts = 0
+        let fingerprints = try node.contacts()
+        try databaseStorage.write { tx in
+            for fingerprint in fingerprints {
+                guard let cardBytes = try node.contactCardBytes(fingerprint: fingerprint) else {
+                    continue
+                }
+                try MeshContactStore.shared.upsert(card: try MeshContactCard(bytes: cardBytes), tx: tx)
+                restoredContacts += 1
+            }
+        }
+        try node.flush()
+        publishStatusChanged()
+        return "Restored \(restoredContacts) mesh contact\(restoredContacts == 1 ? "" : "s")" + (hadIdentity ? "." : " and the mesh identity.")
     }
 
     // MARK: - Event loop
@@ -396,6 +526,16 @@ public final class MeshNodeService {
             lock.unlock()
             Logger.info("Mesh link \(link) closed")
             publishStatusChanged()
+
+        case .attachmentProgress(let from, let transfer, let received, let total):
+            // No per-transfer UI yet: the message appears when the transfer completes.
+            Logger.info("Mesh attachment \(transfer.meshHex) from \(from.meshHex): \(received)/\(total) chunks")
+
+        case .attachment(let from, let transfer, let kind, let name, let mime, let data):
+            handleAttachment(from: from, transfer: transfer, kind: kind, name: name, mime: mime, data: data)
+
+        case .callSignal(let from, let bundleId, let data):
+            handleCallSignal(from: from, bundleId: bundleId, data: data)
         }
     }
 
@@ -474,6 +614,117 @@ public final class MeshNodeService {
                 transaction: tx,
             )
             Logger.info("Inserted mesh message \(bundleId.meshHex) from \(from.meshHex)")
+        }
+    }
+
+    /// `Event::Attachment` (tag 10): a complete, hash-verified attachment from
+    /// a mesh contact. Goes through the app's normal local-attachment path:
+    /// `AttachmentContentValidator.validateDataContents` (content type, blur
+    /// hash, waveform, encryption to the attachment store) and then
+    /// `AttachmentManager.createAttachmentStream` owned by a new
+    /// `TSIncomingMessage` in the contact's thread, exactly what an incoming
+    /// server message with a downloaded body attachment ends up as.
+    private func handleAttachment(from: Data, transfer: Data, kind: UInt8, name: String, mime: String, data: Data) {
+        guard let aci = MeshContactStore.aci(forFingerprint: from) else {
+            return
+        }
+        let renderingFlag: AttachmentReference.RenderingFlag =
+            kind == MeshAttachmentKind.voiceNote.rawValue ? .voiceMessage : .default
+        let mimeType = mime.isEmpty ? "application/octet-stream" : mime
+        let sourceFilename: String? = name.isEmpty ? nil : name
+        Task {
+            do {
+                let pending = try await DependenciesBridge.shared.attachmentContentValidator.validateDataContents(
+                    data,
+                    mimeType: mimeType,
+                    renderingFlag: renderingFlag,
+                    sourceFilename: sourceFilename,
+                )
+                try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+                    try self.insertIncomingAttachmentMessage(from: aci, pending: pending, tx: tx)
+                }
+                Logger.info("Inserted mesh attachment \(transfer.meshHex) (\(mimeType), \(data.count) bytes) from \(from.meshHex)")
+            } catch {
+                Logger.error("Could not store mesh attachment \(transfer.meshHex) from \(from.meshHex): \(error)")
+            }
+        }
+    }
+
+    private func insertIncomingAttachmentMessage(from aci: Aci, pending: PendingAttachment, tx: DBWriteTransaction) throws {
+        let address = SignalServiceAddress(aci)
+        let thread = TSContactThread.getOrCreateThread(withContactAddress: address, transaction: tx)
+        let now = Date.ows_millisecondTimestamp()
+        let builder = TSIncomingMessageBuilder.withDefaultValues(
+            thread: thread,
+            timestamp: now,
+            receivedAtTimestamp: now,
+            authorAci: aci,
+            messageBody: nil,
+            serverTimestamp: now,
+            serverDeliveryTimestamp: now,
+            serverGuid: nil,
+            wasReceivedByUD: false,
+        )
+        let message = builder.build()
+        message.insertOrReplacePlaceholder(from: address, transaction: tx)
+        guard let messageRowId = message.sqliteRowId, let threadRowId = thread.sqliteRowId else {
+            throw OWSAssertionError("Mesh attachment message was not inserted")
+        }
+        _ = try DependenciesBridge.shared.attachmentManager.createAttachmentStream(
+            from: OwnedAttachmentDataSource(
+                dataSource: .pendingAttachment(pending),
+                owner: .messageBodyAttachment(.init(
+                    messageRowId: messageRowId,
+                    receivedAtTimestamp: now,
+                    threadRowId: threadRowId,
+                    isViewOnce: false,
+                    isPastEditRevision: false,
+                    orderInMessage: 0,
+                )),
+            ),
+            tx: tx,
+        )
+        SSKEnvironment.shared.notificationPresenterRef.notifyUser(
+            forIncomingMessage: message,
+            thread: thread,
+            transaction: tx,
+        )
+    }
+
+    /// `Event::CallSignal` (tag 11): the bytes are a serialized
+    /// `SSKProtoCallMessage` (what `MeshOutbox` sends for an
+    /// `OutgoingCallMessage`). They go to `MessageReceiver.handleMeshCallMessage`,
+    /// which dispatches to the app's `CallMessageHandler` like a server-delivered
+    /// call message from that ACI (device id from the contact's card, else 1).
+    private func handleCallSignal(from: Data, bundleId: Data, data: Data) {
+        guard let aci = MeshContactStore.aci(forFingerprint: from) else {
+            return
+        }
+        let callMessage: SSKProtoCallMessage
+        do {
+            callMessage = try SSKProtoCallMessage(serializedData: data)
+        } catch {
+            Logger.warn("Mesh call signal \(bundleId.meshHex) from \(from.meshHex) is not a call message: \(error)")
+            return
+        }
+        SSKEnvironment.shared.databaseStorageRef.write { tx in
+            var rawDeviceId: UInt32 = 1
+            if let record = MeshContactStore.shared.fetch(fingerprint: from, tx: tx),
+               let card = try? MeshContactCard(bytes: record.card),
+               let cardDeviceId = try? card.deviceId() {
+                rawDeviceId = cardDeviceId
+            }
+            guard let deviceId = DeviceId(validating: rawDeviceId) else {
+                Logger.warn("Mesh call signal from \(from.meshHex) has an invalid device id \(rawDeviceId)")
+                return
+            }
+            Logger.info("Mesh call signal \(bundleId.meshHex) from \(from.meshHex)")
+            SSKEnvironment.shared.messageReceiverRef.handleMeshCallMessage(
+                callMessage,
+                from: aci,
+                senderDeviceId: deviceId,
+                tx: tx,
+            )
         }
     }
 

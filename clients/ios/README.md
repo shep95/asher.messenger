@@ -6,6 +6,15 @@ Signal is a free and open source messaging app for simple private communication 
 
 Also available on [Android](https://github.com/signalapp/signal-android) and [Desktop](https://github.com/signalapp/signal-desktop).
 
+## Asher: offline mesh transport
+
+This fork carries the `meshlink` offline transport (`docs/offline-mesh.md`):
+texts, small attachments and call signalling over Bluetooth, LoRa radios and
+the local Wi-Fi when there is no internet. It needs LibSignalClient built from
+the vendored `libs/libsignal` tree; the exact steps (Rust targets,
+`swift/build_ffi.sh`, `pod install`, the feature flag and how to test two
+phones on one Wi-Fi) are in [MESH_BUILD.md](MESH_BUILD.md).
+
 ## Questions?
 
 For troubleshooting and questions, please visit our [support center](https://support.signal.org/) or [unofficial community forum](https://community.signalusers.org/).

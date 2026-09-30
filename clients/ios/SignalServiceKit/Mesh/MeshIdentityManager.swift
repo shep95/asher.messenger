@@ -125,6 +125,46 @@ public final class MeshIdentityManager {
         kvStore.setData(try identity.fingerprint(), key: Keys.fingerprint, transaction: tx)
     }
 
+    // MARK: - Restore from an encrypted backup
+
+    /// The fingerprint this account would derive on its own, or nil before
+    /// registration. Used to refuse a backup made by a different identity.
+    public func accountDerivedFingerprint(tx: DBReadTransaction) -> Data? {
+        let identityManager = DependenciesBridge.shared.identityManager
+        let tsAccountManager = DependenciesBridge.shared.tsAccountManager
+        guard
+            let keyPair = identityManager.identityKeyPair(for: .aci, tx: tx),
+            let registrationId = tsAccountManager.getRegistrationId(for: .aci, tx: tx)
+        else {
+            return nil
+        }
+        return try? MeshIdentity.fromIdentityKeyPair(
+            keyPair.identityKeyPair.serialize(),
+            registrationId: registrationId,
+            name: "probe",
+        ).fingerprint()
+    }
+
+    /// Installs an identity recovered with `MeshIdentity.fromBackup` as this
+    /// device's mesh identity (export blob, prekeys, card metadata, cache).
+    /// The node must be stopped. Throws when the account is registered and
+    /// its own identity key would give a different fingerprint: the mesh
+    /// fingerprint *is* the account identity, and a session with a foreign
+    /// key could never decrypt with the app's ACI stores.
+    public func install(_ identity: MeshIdentity, tx: DBWriteTransaction) throws {
+        let fingerprint = try identity.fingerprint()
+        if let derived = accountDerivedFingerprint(tx: tx), derived != fingerprint {
+            throw MeshError.ffi("This backup belongs to a different identity (\(fingerprint.meshHex.prefix(16))…); this account's mesh fingerprint is \(derived.meshHex.prefix(16))…")
+        }
+        kvStore.setData(try identity.export(), key: Keys.identityExport, transaction: tx)
+        try storePreKeys(of: identity, tx: tx)
+        try cacheCardMetadata(of: identity, tx: tx)
+        lock.lock()
+        cachedIdentity = identity
+        lock.unlock()
+        Logger.info("Installed mesh identity \(fingerprint.meshHex) from backup")
+    }
+
     // MARK: - Card for QR
 
     /// Our card as URL-safe base64 (what goes in the QR code). Prefers the

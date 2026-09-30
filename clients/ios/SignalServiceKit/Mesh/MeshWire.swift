@@ -70,6 +70,17 @@ struct MeshWireReader {
         let length = Int(try u16())
         return try fixed(length)
     }
+
+    /// A u32 length-prefixed byte string (attachment bodies, v3 contract).
+    mutating func bytes32() throws -> Data {
+        let length = Int(try u32())
+        return try fixed(length)
+    }
+
+    /// A u16 length-prefixed UTF-8 string (lossy on bad bytes).
+    mutating func string() throws -> String {
+        String(decoding: try bytes(), as: UTF8.self)
+    }
 }
 
 // MARK: - Events
@@ -93,6 +104,13 @@ public enum MeshEvent: Equatable {
     case neighbour(link: UInt64, fingerprint: Data)
     /// A link went away.
     case linkClosed(link: UInt64)
+    /// v3: a chunk of an inbound attachment arrived (`received`/`total` are chunk counts).
+    case attachmentProgress(from: Data, transfer: Data, received: UInt32, total: UInt32)
+    /// v3: a complete, hash-verified attachment. `kind`: 1 file, 2 image, 3 voice note.
+    case attachment(from: Data, transfer: Data, kind: UInt8, name: String, mime: String, data: Data)
+    /// v3: opaque call-signalling bytes from a mesh contact (a serialized
+    /// `SSKProtoCallMessage` on every Asher platform).
+    case callSignal(from: Data, bundleId: Data, data: Data)
 
     public enum Tag: UInt8 {
         case ciphertext = 1
@@ -103,6 +121,9 @@ public enum MeshEvent: Equatable {
         case delivered = 6
         case neighbour = 7
         case linkClosed = 8
+        case attachmentProgress = 9
+        case attachment = 10
+        case callSignal = 11
     }
 
     /// Decodes one event; empty input (the poll timed out) returns nil.
@@ -149,7 +170,80 @@ public enum MeshEvent: Equatable {
             return .neighbour(link: link, fingerprint: fingerprint)
         case .linkClosed:
             return .linkClosed(link: try reader.u64())
+        case .attachmentProgress:
+            // `[from 16][transfer 16][received u32][total u32]`
+            let from = try reader.fixed(16)
+            let transfer = try reader.fixed(16)
+            let received = try reader.u32()
+            let total = try reader.u32()
+            return .attachmentProgress(from: from, transfer: transfer, received: received, total: total)
+        case .attachment:
+            // `[from 16][transfer 16][kind u8][name u16-len][mime u16-len][data u32-len]`
+            let from = try reader.fixed(16)
+            let transfer = try reader.fixed(16)
+            let kind = try reader.u8()
+            let name = try reader.string()
+            let mime = try reader.string()
+            let data = try reader.bytes32()
+            return .attachment(from: from, transfer: transfer, kind: kind, name: name, mime: mime, data: data)
+        case .callSignal:
+            // `[from 16][bundle 16][data u16-len]`
+            let from = try reader.fixed(16)
+            let bundleId = try reader.fixed(16)
+            let data = try reader.bytes()
+            return .callSignal(from: from, bundleId: bundleId, data: data)
         }
+    }
+}
+
+// MARK: - Attachment kinds
+
+/// `kind` byte of `MeshNode_PrepareAttachment` / `Event::Attachment`.
+public enum MeshAttachmentKind: UInt8 {
+    case file = 1
+    case image = 2
+    case voiceNote = 3
+
+    /// The kind an outgoing attachment travels as: images by MIME type, audio
+    /// flagged as a voice message as a voice note, everything else a file.
+    public static func forOutgoing(mimeType: String, isVoiceMessage: Bool) -> MeshAttachmentKind {
+        let lower = mimeType.lowercased()
+        if lower.hasPrefix("image/") {
+            return .image
+        }
+        if lower.hasPrefix("audio/"), isVoiceMessage {
+            return .voiceNote
+        }
+        return .file
+    }
+}
+
+// MARK: - Nearby
+
+/// One entry of `MeshNode_Nearby`: a card seen on the mesh in the last 24 h.
+public struct MeshNearbyPeer: Equatable {
+    public let fingerprint: Data
+    public let name: String
+    /// Seconds since the epoch when the card was last seen.
+    public let lastSeenSecs: UInt64
+    /// True when the peer is a current neighbour (one hop away right now).
+    public let isDirect: Bool
+
+    /// `u16 count` then per entry `[fingerprint 16][name u16-len][lastSeenSecs u64][direct u8]`,
+    /// most recent first.
+    public static func decodeList(_ data: Data) throws -> [MeshNearbyPeer] {
+        var reader = MeshWireReader(data)
+        let count = Int(try reader.u16())
+        var items: [MeshNearbyPeer] = []
+        items.reserveCapacity(count)
+        for _ in 0..<count {
+            let fingerprint = try reader.fixed(16)
+            let name = try reader.string()
+            let lastSeen = try reader.u64()
+            let direct = try reader.u8() != 0
+            items.append(MeshNearbyPeer(fingerprint: fingerprint, name: name, lastSeenSecs: lastSeen, isDirect: direct))
+        }
+        return items
     }
 }
 

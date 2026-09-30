@@ -18,6 +18,7 @@
 		A5DCDD7F4563F007E0F8300F /* MeshLinkPump.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */; };
 		A5FA098AEEE98DF313E7DAF7 /* BleLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CD0E88483579749E236AF1 /* BleLink.swift */; };
 		A5117B361D581AB177888231 /* RNodeBleLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */; };
+		A5C4E2A17B1D4F0E9A63B7D3 /* LanLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5C4E2A17B1D4F0E9A63B7D2 /* LanLink.swift */; };
 		A5CECCF3B95D2EC1A832040A /* MeshSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56437B153B0CB0D623F2D4F /* MeshSettingsViewController.swift */; };
 		040277FA303DCFA6009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */; };
 		040277FE303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */; };
@@ -4291,6 +4292,7 @@
 		A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshLinkPump.swift; sourceTree = "<group>"; };
 		A5CD0E88483579749E236AF1 /* BleLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BleLink.swift; sourceTree = "<group>"; };
 		A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeBleLink.swift; sourceTree = "<group>"; };
+		A5C4E2A17B1D4F0E9A63B7D2 /* LanLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanLink.swift; sourceTree = "<group>"; };
 		A56437B153B0CB0D623F2D4F /* MeshSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshSettingsViewController.swift; sourceTree = "<group>"; };
 		040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileBackupAttachmentRestoreProgress.swift; sourceTree = "<group>"; };
 		040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatListViewController+LocalFileBackupRestoreProgressView.swift"; sourceTree = "<group>"; };
@@ -8722,6 +8724,7 @@
 				A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */,
 				A5CD0E88483579749E236AF1 /* BleLink.swift */,
 				A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */,
+				A5C4E2A17B1D4F0E9A63B7D2 /* LanLink.swift */,
 			);
 			path = Mesh;
 			sourceTree = "<group>";
@@ -19657,6 +19660,7 @@
 				A5DCDD7F4563F007E0F8300F /* MeshLinkPump.swift in Sources */,
 				A5FA098AEEE98DF313E7DAF7 /* BleLink.swift in Sources */,
 				A5117B361D581AB177888231 /* RNodeBleLink.swift in Sources */,
+				A5C4E2A17B1D4F0E9A63B7D3 /* LanLink.swift in Sources */,
 				D9F9A63B2BFFFCC400EF13EC /* BulkDeleteInteractionJobQueue.swift in Sources */,
 				D9F9A6392BFFC84300EF13EC /* BulkDeleteInteractionJobRecord.swift in Sources */,
 				E7D7C93F28B580AC003F043B /* Bundle+OWS.swift in Sources */,

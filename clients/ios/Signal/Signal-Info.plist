@@ -70,6 +70,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_sgnl-new-device._tcp</string>
+		<string>_asher-mesh._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Signal uses your camera to take photos, start or join a video call and to scan QR codes.</string>
@@ -78,7 +79,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>Signal uses Face ID to confirm it's you.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Signal uses the local network to allow you to directly transfer your account to a new phone. It will not be used unless you explicitly choose to initiate a transfer to a new device.</string>
+	<string>Asher uses the local network to transfer your account to a new phone, and, when the mesh transport is on, to exchange messages and calls with nearby Asher users on the same Wi-Fi when there is no internet connection.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Signal needs access to your location in order to share your current location.</string>
 	<key>NSMicrophoneUsageDescription</key>

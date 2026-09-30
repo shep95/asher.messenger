@@ -24,7 +24,7 @@ import SignalFfi
 
 // MARK: - Errors
 
-public enum MeshError: Error, CustomStringConvertible {
+public enum MeshError: LocalizedError, CustomStringConvertible {
     /// libsignal_ffi returned an error (message from `signal_error_get_message`).
     case ffi(String)
     /// A bridge byte string did not decode.
@@ -39,6 +39,8 @@ public enum MeshError: Error, CustomStringConvertible {
     case notRegistered
     /// A field had the wrong length (e.g. a fingerprint that is not 16 bytes).
     case invalidLength(String)
+    /// An attachment is over the mesh's 4 MiB limit (or is not downloaded yet).
+    case attachmentNotSendable(String)
 
     public var description: String {
         switch self {
@@ -49,9 +51,27 @@ public enum MeshError: Error, CustomStringConvertible {
         case .noSession: return "MeshError.noSession"
         case .notRegistered: return "MeshError.notRegistered"
         case .invalidLength(let what): return "MeshError.invalidLength(\(what))"
+        case .attachmentNotSendable(let why): return "MeshError.attachmentNotSendable(\(why))"
+        }
+    }
+
+    /// Text for an alert or a failed-message tooltip.
+    public var errorDescription: String? {
+        switch self {
+        case .ffi(let message): return "Mesh: \(message)"
+        case .wire(let message): return "Mesh: bad bridge data (\(message))"
+        case .notRunning: return "The mesh transport is not running."
+        case .notMeshRecipient: return "This person is not a mesh contact."
+        case .noSession: return "No mesh session with this contact yet."
+        case .notRegistered: return "Register this device before using the mesh."
+        case .invalidLength(let what): return "Mesh: invalid \(what)."
+        case .attachmentNotSendable(let why): return why
         }
     }
 }
+
+/// The v3 contract's size limit for one attachment over the mesh.
+public let meshAttachmentByteLimit = 4 * 1024 * 1024
 
 // MARK: - Raw helpers (private copies of LibSignalClient's internal utilities)
 
@@ -228,6 +248,19 @@ public final class MeshIdentity {
         var out = SignalMutPointerMeshIdentity()
         try data.withMeshBorrowedBuffer { blob in
             try meshCheckError(signal_mesh_identity_import(&out, blob))
+        }
+        return MeshIdentity(handle: out)
+    }
+
+    /// `MeshIdentity_FromBackup` (v3): recovers the identity from an encrypted
+    /// backup blob (`MeshNode.exportBackup`) so a node can be created before
+    /// `MeshNode.importBackup` merges the rest.
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_identity_from_backup(SignalMutPointerMeshIdentity* out, const int8_t* passphrase, SignalBorrowedBuffer blob);
+    public static func fromBackup(passphrase: String, blob: Data) throws -> MeshIdentity {
+        var out = SignalMutPointerMeshIdentity()
+        try blob.withMeshBorrowedBuffer { buffer in
+            try meshCheckError(signal_mesh_identity_from_backup(&out, passphrase, buffer))
         }
         return MeshIdentity(handle: out)
     }
@@ -616,6 +649,78 @@ public final class MeshNode {
         try bundleId.withMeshBorrowedBuffer { id in
             try meshCheckError(signal_mesh_node_defer(constHandle, id))
         }
+    }
+
+    // MARK: Attachments and call signalling (v3 contract)
+
+    /// `MeshNode_PrepareAttachment`: a manifest plaintext followed by the chunk
+    /// plaintexts (each <= 3 KiB body), all for `to`, each with its own commit.
+    /// The app encrypts and sends every entry in order. Throws `MeshError.ffi`
+    /// (`MeshError::TooLarge`) beyond 4 MiB; callers check
+    /// `meshAttachmentByteLimit` first for a friendlier message.
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_prepare_attachment(SignalOwnedBuffer* out, SignalConstPointerMeshNode node, SignalBorrowedBuffer to, uint8_t kind, const int8_t* name, const int8_t* mime, SignalBorrowedBuffer data);
+    public func prepareAttachment(to fingerprint: Data, kind: MeshAttachmentKind, name: String, mime: String, data: Data) throws -> [MeshPrepared] {
+        try Self.requireLength(fingerprint, 16, "fingerprint")
+        let encoded = try fingerprint.withMeshBorrowedBuffer { to in
+            try data.withMeshBorrowedBuffer { body in
+                try meshInvokeReturningData {
+                    signal_mesh_node_prepare_attachment($0, constHandle, to, kind.rawValue, name, mime, body)
+                }
+            }
+        }
+        return try MeshPrepared.decodeList(encoded)
+    }
+
+    /// `MeshNode_PrepareCallSignal`: one prepared entry carrying opaque call
+    /// signalling bytes (TTL 90 s, high priority in the core).
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_prepare_call_signal(SignalOwnedBuffer* out, SignalConstPointerMeshNode node, SignalBorrowedBuffer to, SignalBorrowedBuffer data);
+    public func prepareCallSignal(to fingerprint: Data, data: Data) throws -> [MeshPrepared] {
+        try Self.requireLength(fingerprint, 16, "fingerprint")
+        let encoded = try fingerprint.withMeshBorrowedBuffer { to in
+            try data.withMeshBorrowedBuffer { body in
+                try meshInvokeReturningData { signal_mesh_node_prepare_call_signal($0, constHandle, to, body) }
+            }
+        }
+        return try MeshPrepared.decodeList(encoded)
+    }
+
+    // MARK: Nearby, backup, self-test (v3 contract)
+
+    /// `MeshNode_Nearby`: every card seen in the last 24 h, most recent first.
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_nearby(SignalOwnedBuffer* out, SignalConstPointerMeshNode node);
+    public func nearby() throws -> [MeshNearbyPeer] {
+        try MeshNearbyPeer.decodeList(try meshInvokeReturningData { signal_mesh_node_nearby($0, constHandle) })
+    }
+
+    /// `MeshNode_ExportBackup`: identity + full snapshot, encrypted with a key
+    /// derived from `passphrase` (format "ASHB" v1, see the v3 contract).
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_export_backup(SignalOwnedBuffer* out, SignalConstPointerMeshNode node, const int8_t* passphrase);
+    public func exportBackup(passphrase: String) throws -> Data {
+        try meshInvokeReturningData { signal_mesh_node_export_backup($0, constHandle, passphrase) }
+    }
+
+    /// `MeshNode_ImportBackup`: merges contacts, groups and carried bundles into
+    /// this node. The backup's identity must be this node's
+    /// (`MeshError::IdentityMismatch` otherwise, surfaced as `MeshError.ffi`).
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_import_backup(SignalConstPointerMeshNode node, const int8_t* passphrase, SignalBorrowedBuffer blob);
+    public func importBackup(passphrase: String, blob: Data) throws {
+        try blob.withMeshBorrowedBuffer { buffer in
+            try meshCheckError(signal_mesh_node_import_backup(constHandle, passphrase, buffer))
+        }
+    }
+
+    /// `MeshNode_SelfTest`: an in-process loopback test of the link machinery;
+    /// returns a multi-line "PASS ..." / "FAIL ..." report and does not throw
+    /// for a failed test. Blocks up to `timeoutMs`; call off the main thread.
+    // verify against generated signal_ffi.h:
+    //   SignalFfiError* signal_mesh_node_self_test(SignalCStringPtr* out, SignalConstPointerMeshNode node, uint32_t timeout_ms);
+    public func selfTest(timeoutMs: UInt32) throws -> String {
+        try meshInvokeReturningString { signal_mesh_node_self_test($0, constHandle, timeoutMs) }
     }
 
     // MARK: Groups (no UI yet; kept for completeness)

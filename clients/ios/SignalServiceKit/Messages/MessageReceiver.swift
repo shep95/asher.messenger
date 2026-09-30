@@ -1798,6 +1798,79 @@ public final class MessageReceiver {
         )
     }
 
+    // MARK: - Asher mesh call signalling
+
+    /// Feeds a call message that arrived over the offline mesh transport
+    /// (`MeshEvent.callSignal`, docs/offline-mesh.md) into the same
+    /// `CallMessageHandler` the server path uses, so offers, answers, ICE
+    /// candidates, hangups and busy signals from a mesh contact drive RingRTC
+    /// exactly like ones delivered by the chat server. The envelope is
+    /// synthesized: the mesh has no server timestamps, so "now" stands in for
+    /// sent/received/delivered and the message age is zero.
+    public func handleMeshCallMessage(
+        _ callMessage: SSKProtoCallMessage,
+        from senderAci: Aci,
+        senderDeviceId: DeviceId,
+        tx: DBWriteTransaction,
+    ) {
+        let tsAccountManager = DependenciesBridge.shared.tsAccountManager
+        let localDeviceId = tsAccountManager.storedDeviceId(tx: tx)
+        if callMessage.hasDestinationDeviceID {
+            guard localDeviceId.equals(DeviceId(validating: callMessage.destinationDeviceID)) else {
+                Logger.info("Ignoring mesh call message for other device #\(callMessage.destinationDeviceID)")
+                return
+            }
+        }
+
+        let callEnvelope: CallEnvelopeType
+        if let offer = callMessage.offer {
+            callEnvelope = .offer(offer)
+        } else if let answer = callMessage.answer {
+            callEnvelope = .answer(answer)
+        } else if !callMessage.iceUpdate.isEmpty {
+            callEnvelope = .iceUpdate(callMessage.iceUpdate)
+        } else if let hangup = callMessage.hangup {
+            callEnvelope = .hangup(hangup)
+        } else if let busy = callMessage.busy {
+            callEnvelope = .busy(busy)
+        } else if let opaque = callMessage.opaque {
+            callEnvelope = .opaque(opaque)
+        } else {
+            Logger.warn("Dropping mesh call message with no actionable payload.")
+            return
+        }
+
+        let now = Date.ows_millisecondTimestamp()
+        let envelopeBuilder = SSKProtoEnvelope.builder(timestamp: now)
+        envelopeBuilder.setType(.ciphertext)
+        envelopeBuilder.setSourceServiceID(senderAci.serviceIdString)
+        envelopeBuilder.setSourceDevice(senderDeviceId.uint32Value)
+        envelopeBuilder.setServerTimestamp(now)
+        let envelope: SSKProtoEnvelope
+        do {
+            envelope = try envelopeBuilder.build()
+        } catch {
+            owsFailDebug("Could not build a mesh call envelope: \(error)")
+            return
+        }
+        let contentBuilder = SSKProtoContent.builder()
+        contentBuilder.setCallMessage(callMessage)
+        let plaintextData = (try? contentBuilder.build().serializedData()) ?? Data()
+
+        callMessageHandler.receivedEnvelope(
+            envelope,
+            callEnvelope: callEnvelope,
+            from: (senderAci, senderDeviceId),
+            toLocalIdentity: .aci,
+            plaintextData: plaintextData,
+            wasReceivedByUD: false,
+            sentAtTimestamp: now,
+            serverReceivedTimestamp: now,
+            serverDeliveryTimestamp: now,
+            tx: tx,
+        )
+    }
+
     private func handleIncomingEnvelope(
         request: MessageReceiverRequest,
         callMessage: SSKProtoCallMessage,
