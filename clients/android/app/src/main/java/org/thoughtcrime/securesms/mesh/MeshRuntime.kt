@@ -8,6 +8,8 @@ package org.thoughtcrime.securesms.mesh
 import android.content.Context
 import androidx.annotation.WorkerThread
 import org.signal.core.util.logging.Log
+import org.thoughtcrime.securesms.attachments.UriAttachment
+import org.thoughtcrime.securesms.database.AttachmentTable
 import org.thoughtcrime.securesms.database.MessageType
 import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.dependencies.AppDependencies
@@ -16,6 +18,7 @@ import org.thoughtcrime.securesms.mesh.jni.MeshContactCard
 import org.thoughtcrime.securesms.mesh.jni.MeshEvent
 import org.thoughtcrime.securesms.mesh.jni.MeshNode
 import org.thoughtcrime.securesms.mesh.link.BleLink
+import org.thoughtcrime.securesms.mesh.link.LanLink
 import org.thoughtcrime.securesms.mesh.link.UsbSerialLink
 import org.thoughtcrime.securesms.mms.IncomingMessage
 import org.thoughtcrime.securesms.notifications.v2.ConversationId
@@ -33,7 +36,11 @@ import kotlin.concurrent.thread
  *  * `GroupMessage` / `GroupInvite` -> logged only (see the TODO in [dispatch]);
  *  * `Contact` -> [MeshContacts.upsert];
  *  * `Delivered` -> [MeshOutbox.onDelivered];
- *  * `Neighbour` / `LinkClosed` -> [MeshStatus].
+ *  * `Neighbour` / `LinkClosed` -> [MeshStatus];
+ *  * `AttachmentProgress` (tag 9) -> logged;
+ *  * `Attachment` (tag 10) -> an incoming media message in the sender's thread, the data going
+ *    through a `BlobProvider` uri and a [UriAttachment] like any locally produced attachment;
+ *  * `CallSignal` (tag 11) -> [MeshCallSignalling.onReceived].
  */
 object MeshRuntime {
 
@@ -47,6 +54,7 @@ object MeshRuntime {
   private var eventThread: Thread? = null
   private var ble: BleLink? = null
   private var usb: UsbSerialLink? = null
+  private var lan: LanLink? = null
 
   @Volatile
   private var running = false
@@ -90,6 +98,9 @@ object MeshRuntime {
     if (SignalStore.mesh.usbEnabled) {
       usb = UsbSerialLink(appContext, created).also { it.start() }
     }
+    if (SignalStore.mesh.lanEnabled) {
+      lan = LanLink(appContext, created).also { it.start() }
+    }
 
     try {
       created.broadcastCard()
@@ -108,6 +119,8 @@ object MeshRuntime {
     ble = null
     usb?.stop()
     usb = null
+    lan?.stop()
+    lan = null
 
     eventThread?.let { t ->
       t.interrupt()
@@ -126,6 +139,24 @@ object MeshRuntime {
   fun broadcastCard(): Boolean {
     val current = node ?: return false
     return runCatching { current.broadcastCard() }.isSuccess
+  }
+
+  /**
+   * Waits up to [timeoutMs] for the node to be up (the foreground service starts it on a worker
+   * thread), for callers that just switched the mesh on and need the node right away (restore).
+   */
+  @WorkerThread
+  fun awaitNode(timeoutMs: Long): MeshNode? {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+      MeshTransport.node?.let { return it }
+      try {
+        Thread.sleep(200)
+      } catch (e: InterruptedException) {
+        return null
+      }
+    }
+    return MeshTransport.node
   }
 
   private fun eventLoop(context: Context, node: MeshNode) {
@@ -199,6 +230,84 @@ object MeshRuntime {
       }
 
       is MeshEvent.LinkClosed -> MeshStatus.onLinkDetached(event.link)
+
+      is MeshEvent.AttachmentProgress -> {
+        Log.i(TAG, "Attachment ${MeshContacts.hex(event.transfer)} from ${MeshContacts.hex(event.from)}: ${event.received}/${event.total} chunks")
+      }
+
+      is MeshEvent.Attachment -> insertIncomingAttachment(context, event)
+
+      is MeshEvent.CallSignal -> MeshCallSignalling.onReceived(event.from, event.data)
+    }
+  }
+
+  /**
+   * A complete attachment (already verified against its manifest by the core). The bytes are
+   * parked in an in-memory blob so `MessageTable.insertMessageInbox` can pull them through
+   * `PartAuthority` exactly as it does for any attachment that already has local data.
+   */
+  @WorkerThread
+  private fun insertIncomingAttachment(context: Context, event: MeshEvent.Attachment) {
+    val senderId = MeshContacts.recipientIdFor(event.from) ?: MeshContacts.ensureRecipient(event.from, null)
+    val now = System.currentTimeMillis()
+    val mime = event.mime.ifBlank { "application/octet-stream" }
+    val fileName = event.name.ifBlank { defaultFileName(event.kind, mime) }
+    val voiceNote = event.kind == MeshEvent.ATTACHMENT_KIND_VOICE_NOTE
+
+    val blobs = AppDependencies.blobs
+    val uri = blobs.forData(event.data)
+      .withMimeType(mime)
+      .withFileName(fileName)
+      .createForSingleSessionInMemory()
+
+    try {
+      val attachment = UriAttachment(
+        uri,
+        mime,
+        AttachmentTable.TRANSFER_PROGRESS_DONE,
+        event.data.size.toLong(),
+        fileName,
+        voiceNote,
+        false,
+        false,
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      )
+
+      val incoming = IncomingMessage(
+        type = MessageType.NORMAL,
+        from = senderId,
+        sentTimeMillis = now,
+        serverTimeMillis = -1,
+        receivedTimeMillis = now,
+        body = null,
+        attachments = listOf(attachment)
+      )
+
+      val result = SignalDatabase.messages.insertMessageInbox(incoming).orElse(null)
+      if (result == null) {
+        Log.w(TAG, "Incoming mesh attachment from ${MeshContacts.hex(event.from)} was not inserted")
+        return
+      }
+
+      AppDependencies.messageNotifier.updateNotification(context, ConversationId.forConversation(result.threadId))
+      Log.i(TAG, "Inserted mesh attachment ${MeshContacts.hex(event.transfer)} ($mime, ${event.data.size} bytes, kind ${event.kind}) as message ${result.messageId}")
+    } finally {
+      runCatching { blobs.delete(context, uri) }
+    }
+  }
+
+  private fun defaultFileName(kind: Int, mime: String): String {
+    val ext = mime.substringAfter('/', "bin").substringBefore(';').ifBlank { "bin" }
+    return when (kind) {
+      MeshEvent.ATTACHMENT_KIND_IMAGE -> "image.$ext"
+      MeshEvent.ATTACHMENT_KIND_VOICE_NOTE -> "voice-note.$ext"
+      else -> "file.$ext"
     }
   }
 

@@ -17,9 +17,17 @@ private class WireReader(bytes: ByteArray) {
 
   fun u8(): Int = buf.get().toInt() and 0xFF
   fun u16(): Int = buf.short.toInt() and 0xFFFF
+  fun u32(): Long = buf.int.toLong() and 0xFFFFFFFFL
   fun u64(): Long = buf.long
   fun fixed(n: Int): ByteArray = ByteArray(n).also { buf.get(it) }
   fun bytes(): ByteArray = fixed(u16())
+  /** A `u32`-length-prefixed field (attachment data). */
+  fun bytes32(): ByteArray {
+    val n = u32()
+    require(n <= buf.remaining()) { "u32 field of $n bytes exceeds the buffer" }
+    return fixed(n.toInt())
+  }
+  fun string(): String = String(bytes(), Charsets.UTF_8)
   val remaining: Int get() = buf.remaining()
 }
 
@@ -53,6 +61,15 @@ sealed class MeshEvent {
 
   data class LinkClosed(val link: Long) : MeshEvent()
 
+  /** v3: one more chunk of an incoming attachment arrived ([received] of [total] chunks). */
+  data class AttachmentProgress(val from: ByteArray, val transfer: ByteArray, val received: Long, val total: Long) : MeshEvent()
+
+  /** v3: a complete attachment, verified against its manifest's SHA-256. [kind]: 1 file, 2 image, 3 voice note. */
+  data class Attachment(val from: ByteArray, val transfer: ByteArray, val kind: Int, val name: String, val mime: String, val data: ByteArray) : MeshEvent()
+
+  /** v3: opaque call signalling from [from]; [data] is whatever the peer app put in `MeshNode_PrepareCallSignal`. */
+  data class CallSignal(val from: ByteArray, val bundleId: ByteArray, val data: ByteArray) : MeshEvent()
+
   companion object {
     const val TAG_CIPHERTEXT = 1
     const val TAG_MESSAGE = 2
@@ -62,6 +79,13 @@ sealed class MeshEvent {
     const val TAG_DELIVERED = 6
     const val TAG_NEIGHBOUR = 7
     const val TAG_LINK_CLOSED = 8
+    const val TAG_ATTACHMENT_PROGRESS = 9
+    const val TAG_ATTACHMENT = 10
+    const val TAG_CALL_SIGNAL = 11
+
+    const val ATTACHMENT_KIND_FILE = 1
+    const val ATTACHMENT_KIND_IMAGE = 2
+    const val ATTACHMENT_KIND_VOICE_NOTE = 3
 
     /** Returns null for an empty buffer (timeout) or an unknown tag. */
     fun decode(bytes: ByteArray): MeshEvent? {
@@ -76,6 +100,9 @@ sealed class MeshEvent {
         TAG_DELIVERED -> Delivered(bundleId = r.fixed(16))
         TAG_NEIGHBOUR -> Neighbour(link = r.u64(), fingerprint = r.fixed(16))
         TAG_LINK_CLOSED -> LinkClosed(link = r.u64())
+        TAG_ATTACHMENT_PROGRESS -> AttachmentProgress(from = r.fixed(16), transfer = r.fixed(16), received = r.u32(), total = r.u32())
+        TAG_ATTACHMENT -> Attachment(from = r.fixed(16), transfer = r.fixed(16), kind = r.u8(), name = r.string(), mime = r.string(), data = r.bytes32())
+        TAG_CALL_SIGNAL -> CallSignal(from = r.fixed(16), bundleId = r.fixed(16), data = r.bytes())
         else -> null
       }
     }
@@ -90,6 +117,19 @@ data class MeshPrepared(val to: ByteArray, val commit: ByteArray, val plaintext:
       val r = WireReader(bytes)
       val count = r.u16()
       return List(count) { MeshPrepared(to = r.fixed(16), commit = r.fixed(16), plaintext = r.bytes()) }
+    }
+  }
+}
+
+/** One entry of `MeshNode_Nearby`: a card seen on the mesh in the last 24 h, saved contact or not. */
+data class MeshNearbyEntry(val fingerprint: ByteArray, val name: String, val lastSeenSecs: Long, val direct: Boolean) {
+  companion object {
+    /** `u16 count` then `[fingerprint 16][name u16-len][lastSeenSecs u64][direct u8]`, most recent first. */
+    fun decodeList(bytes: ByteArray): List<MeshNearbyEntry> {
+      if (bytes.size < 2) return emptyList()
+      val r = WireReader(bytes)
+      val count = r.u16()
+      return List(count) { MeshNearbyEntry(fingerprint = r.fixed(16), name = r.string(), lastSeenSecs = r.u64(), direct = r.u8() != 0) }
     }
   }
 }
@@ -136,5 +176,8 @@ data class MeshLinkOptions(val mtu: Int, val maxBytesPerSec: Int, val maxFramesP
     fun ble(mtu: Int): MeshLinkOptions = MeshLinkOptions(mtu = maxOf(mtu, MIN_MTU), maxBytesPerSec = 16 * 1024, maxFramesPerSec = 200)
 
     fun lora(mtu: Int = 200): MeshLinkOptions = MeshLinkOptions(mtu = maxOf(mtu, MIN_MTU), maxBytesPerSec = 200, maxFramesPerSec = 20)
+
+    /** TCP over the LAN, the same numbers as meshlinkd and Desktop (`AttachLink(1500, 262144, 500)`). */
+    fun lan(): MeshLinkOptions = MeshLinkOptions(mtu = 1500, maxBytesPerSec = 256 * 1024, maxFramesPerSec = 500)
   }
 }

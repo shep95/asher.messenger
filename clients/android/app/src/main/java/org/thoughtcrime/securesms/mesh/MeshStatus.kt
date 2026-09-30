@@ -19,7 +19,7 @@ import org.thoughtcrime.securesms.recipients.RecipientId
  */
 object MeshStatus {
 
-  enum class LinkKind { BLE, USB_SERIAL }
+  enum class LinkKind { BLE, USB_SERIAL, LAN }
 
   data class LinkInfo(val id: Long, val kind: LinkKind, val label: String, val mtu: Int, val since: Long = System.currentTimeMillis())
 

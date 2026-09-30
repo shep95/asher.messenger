@@ -50,5 +50,8 @@ class MeshIdentity private constructor(handle: Long) : NativeHandleGuard.SimpleO
     }
 
     fun import(data: ByteArray): MeshIdentity = MeshIdentity(Native.MeshIdentity_Import(data))
+
+    /** Recovers the identity inside an "ASHB" backup blob (the node is created from it, then `MeshNode.importBackup` merges the rest). */
+    fun fromBackup(passphrase: String, blob: ByteArray): MeshIdentity = MeshIdentity(Native.MeshIdentity_FromBackup(passphrase, blob))
   }
 }

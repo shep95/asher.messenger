@@ -59,6 +59,7 @@ import org.thoughtcrime.securesms.jobs.CallSyncEventJob;
 import org.thoughtcrime.securesms.jobs.GroupCallUpdateSendJob;
 import org.thoughtcrime.securesms.jobs.RetrieveProfileJob;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.mesh.MeshCallSignalling;
 import org.thoughtcrime.securesms.messages.GroupSendUtil;
 import org.thoughtcrime.securesms.net.SignalNetwork;
 import org.thoughtcrime.securesms.notifications.v2.ConversationId;
@@ -1190,6 +1191,13 @@ public final class SignalCallManager implements CallManager.Observer, GroupCall.
         processTurnServers(remotePeer, iceServers);
       } catch (IOException e) {
         Log.w(TAG, "Unable to retrieve turn servers: ", e);
+        // Asher offline mesh: with no server there are no TURN servers, but a call to a mesh contact
+        // on the same LAN only needs host candidates, so proceed with an empty ICE server list.
+        if (MeshCallSignalling.shouldRoute(Recipient.resolved(remotePeer.getId()))) {
+          Log.i(TAG, "Mesh callee; proceeding without TURN servers (host candidates only).");
+          processTurnServers(remotePeer, Collections.emptyList());
+          return;
+        }
         process((s, p) -> p.handleSetupFailure(s, remotePeer.getCallId()));
       }
     });
@@ -1318,6 +1326,21 @@ public final class SignalCallManager implements CallManager.Observer, GroupCall.
     SignalExecutors.BOUNDED_IO.execute(() -> {
       Recipient recipient = Recipient.resolved(remotePeer.getId());
       if (recipient.isBlocked()) {
+        return;
+      }
+
+      // Asher offline mesh: a mesh contact that is offline-only (or unreachable through the server)
+      // gets the same CallMessage proto over meshlink; media then negotiates over the LAN via ICE.
+      if (MeshCallSignalling.shouldRoute(recipient)) {
+        if (MeshCallSignalling.send(recipient, callMessage)) {
+          process((s, p) -> p.handleMessageSentSuccess(s, remotePeer.getCallId()));
+        } else {
+          processSendMessageFailureWithChangeDetection(remotePeer,
+                                                       (s, p) -> p.handleMessageSentError(s,
+                                                                                          remotePeer.getCallId(),
+                                                                                          NETWORK_FAILURE,
+                                                                                          Optional.empty()));
+        }
         return;
       }
 

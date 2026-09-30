@@ -2,12 +2,14 @@
 <!-- Asher offline mesh transport (meshlink). See docs/offline-mesh.md. -->
 <resources>
     <string name="MeshTransport__notification_title">Offline mesh is on</string>
-    <string name="MeshTransport__notification_text">Carrying messages over Bluetooth and radio</string>
+    <string name="MeshTransport__notification_text">Carrying messages over Wi-Fi, Bluetooth and radio</string>
 
     <string name="MeshSettings__title">Offline mesh</string>
     <string name="MeshSettings__navigate_up">Navigate up</string>
     <string name="MeshSettings__enable">Offline mesh</string>
-    <string name="MeshSettings__enable_summary">Reach mesh contacts over Bluetooth and LoRa radios when there is no internet</string>
+    <string name="MeshSettings__enable_summary">Reach mesh contacts over Wi-Fi, Bluetooth and LoRa radios when there is no internet</string>
+    <string name="MeshSettings__lan">Mesh over Wi-Fi</string>
+    <string name="MeshSettings__lan_summary">Link with other phones and computers on the same Wi-Fi or hotspot (no internet needed)</string>
     <string name="MeshSettings__ble">Bluetooth LE</string>
     <string name="MeshSettings__ble_summary">Link directly with nearby phones running the mesh</string>
     <string name="MeshSettings__usb">USB radio</string>
@@ -29,6 +31,32 @@
     <string name="MeshSettings__running">Mesh running</string>
     <string name="MeshSettings__stopped">Mesh stopped</string>
     <string name="MeshSettings__no_links">No links right now</string>
+    <string name="MeshSettings__self_test">Run self-test</string>
+    <string name="MeshSettings__self_test_summary">Sends a card and a text between in-app test nodes over a loopback link (about 15 seconds)</string>
+    <string name="MeshSettings__self_test_running">Running…</string>
+    <string name="MeshSettings__self_test_title">Mesh self-test</string>
+
+    <string name="MeshSettings__nearby">Nearby</string>
+    <string name="MeshSettings__no_nearby">Nobody seen on the mesh in the last 24 hours</string>
+    <string name="MeshSettings__nearby_needs_mesh">Turn the mesh on to see who is nearby</string>
+    <!-- Badge on a nearby node that is directly linked to this device right now -->
+    <string name="MeshSettings__nearby_direct">direct</string>
+    <string name="MeshSettings__nearby_add">Add</string>
+    <!-- Shown in place of the Add button when the nearby node is already a saved contact -->
+    <string name="MeshSettings__nearby_added">Added</string>
+    <!-- How long ago the node was last seen, e.g. "seen 30s ago", "seen 5m ago" -->
+    <string name="MeshSettings__nearby_seen">seen %1$s ago</string>
+
+    <string name="MeshSettings__backup">Backup</string>
+    <string name="MeshSettings__export_backup">Export encrypted mesh backup</string>
+    <string name="MeshSettings__export_backup_summary">Contacts, groups and carried messages in an .asherbackup file, encrypted with a passphrase</string>
+    <string name="MeshSettings__restore_backup">Restore mesh backup</string>
+    <string name="MeshSettings__restore_backup_summary">Merge an .asherbackup file made by this identity into the running mesh</string>
+    <string name="MeshSettings__export_backup_title">Choose a backup passphrase</string>
+    <string name="MeshSettings__restore_backup_title">Enter the backup passphrase</string>
+    <string name="MeshSettings__passphrase">Passphrase</string>
+    <string name="MeshSettings__passphrase_hint">The file is useless without it. There is no way to recover a forgotten passphrase.</string>
+
     <!-- Counters from the node: frames received, bundles received, bundles forwarded, messages delivered, messages awaiting an ack, bundles carried, kilobytes carried -->
     <string name="MeshSettings__stats">Frames in %1$d · bundles in %2$d · forwarded %3$d · delivered %4$d · awaiting ack %5$d · carrying %6$d bundles (%7$d KiB)</string>
 </resources>

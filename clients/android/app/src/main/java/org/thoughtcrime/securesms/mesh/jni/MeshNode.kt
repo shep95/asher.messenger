@@ -91,6 +91,39 @@ class MeshNode private constructor(handle: Long) : NativeHandleGuard.CloseableOw
     guardedRun { Native.MeshNode_Defer(it, bundleId) }
   }
 
+  // ---- attachments and call signalling (v3, external crypto) ---------------
+
+  /**
+   * The manifest plaintext followed by the chunk plaintexts for one attachment; the app encrypts
+   * and sends every entry in order. [kind]: 1 file, 2 image, 3 voice note (`MeshEvent.ATTACHMENT_KIND_*`).
+   * Fails with `TooLarge` beyond 4 MiB of [data]. The first entry is the manifest; when its bundle
+   * is delivered the attachment counts as delivered.
+   */
+  fun prepareAttachment(to: ByteArray, kind: Int, name: String, mime: String, data: ByteArray): List<MeshPrepared> {
+    return MeshPrepared.decodeList(guardedMap { Native.MeshNode_PrepareAttachment(it, to, kind, name, mime, data) })
+  }
+
+  /** One prepared entry carrying opaque call signalling [data] (TTL 90 s, high priority). */
+  fun prepareCallSignal(to: ByteArray, data: ByteArray): MeshPrepared {
+    return MeshPrepared.decodeList(guardedMap { Native.MeshNode_PrepareCallSignal(it, to, data) }).first()
+  }
+
+  // ---- discovery, backup, self-test (v3) -----------------------------------
+
+  /** Cards seen on the mesh in the last 24 h, most recent first. */
+  fun nearby(): List<MeshNearbyEntry> = MeshNearbyEntry.decodeList(guardedMap { Native.MeshNode_Nearby(it) })
+
+  /** "ASHB" v1 blob: identity export + full snapshot, encrypted under [passphrase]. */
+  fun exportBackup(passphrase: String): ByteArray = guardedMap { Native.MeshNode_ExportBackup(it, passphrase) }
+
+  /** Merges contacts, groups and carried bundles from a backup made by this same identity (`IdentityMismatch` otherwise). */
+  fun importBackup(passphrase: String, blob: ByteArray) {
+    guardedRun { Native.MeshNode_ImportBackup(it, passphrase, blob) }
+  }
+
+  /** Loopback end-to-end test with in-process nodes; returns a multi-line "PASS/FAIL" report and never throws for a test failure. */
+  fun selfTest(timeoutMs: Int): String = guardedMap { Native.MeshNode_SelfTest(it, timeoutMs) }
+
   // ---- groups (not wired to UI yet; see MeshRuntime) -----------------------
 
   /** `[group id 16][prepared list]`. */

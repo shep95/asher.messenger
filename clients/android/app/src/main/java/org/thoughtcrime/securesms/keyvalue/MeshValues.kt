@@ -21,6 +21,7 @@ class MeshValues internal constructor(store: KeyValueStore) : SignalStoreValues(
     private const val KEY_BLE_ENABLED = "mesh.ble_enabled"
     private const val KEY_USB_ENABLED = "mesh.usb_enabled"
     private const val KEY_CONFIGURE_RADIO = "mesh.configure_radio"
+    private const val KEY_LAN_ENABLED = "mesh.lan_enabled"
   }
 
   public override fun onFirstEverAppLaunch() = Unit
@@ -39,6 +40,9 @@ class MeshValues internal constructor(store: KeyValueStore) : SignalStoreValues(
 
   /** Phone-to-phone Bluetooth LE link. */
   var bleEnabled: Boolean by booleanValue(KEY_BLE_ENABLED, true)
+
+  /** TCP links to other nodes on the same Wi-Fi, found through DNS-SD (`_asher-mesh._tcp`). */
+  var lanEnabled: Boolean by booleanValue(KEY_LAN_ENABLED, true)
 
   /** RNode-class LoRa board over USB serial. */
   var usbEnabled: Boolean by booleanValue(KEY_USB_ENABLED, true)
