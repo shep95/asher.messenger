@@ -64,7 +64,7 @@
     <httpclient.version>4.5.14</httpclient.version>
     <jackson.version>2.22.2</jackson.version>
     <java-otp.version>1.0.0</java-otp.version>
-    <jetty.version>12.1.9</jetty.version>
+    <jetty.version>12.1.10</jetty.version>
     <junit-pioneer.version>2.3.0</junit-pioneer.version>
     <jsr305.version>3.0.2</jsr305.version>
     <kotlin.version>2.4.10</kotlin.version>
