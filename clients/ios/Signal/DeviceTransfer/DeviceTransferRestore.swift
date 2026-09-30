@@ -197,6 +197,22 @@ class DeviceTransferRestoreImpl: DeviceTransferRestore {
         }
     }
 
+    static func isSafeRelativePath(_ path: String) -> Bool {
+        if path.isEmpty || path.hasPrefix("/") || path.hasPrefix("~") || path.contains("\0") {
+            return false
+        }
+        return !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0 == ".." }
+    }
+
+    static func isContained(_ url: URL, in directory: URL) -> Bool {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
+        var base = directory.standardizedFileURL.resolvingSymlinksInPath().path
+        if !base.hasSuffix("/") {
+            base += "/"
+        }
+        return resolved.hasPrefix(base)
+    }
+
     private func moveManifestFiles(manifest: DeviceTransferProtoManifest?) throws {
         guard let manifest else {
             throw OWSAssertionError("No manifest available")
@@ -205,8 +221,16 @@ class DeviceTransferRestoreImpl: DeviceTransferRestore {
         let destDir = DeviceTransfer.Constants.appSharedDataDirectory
 
         try manifest.files.forEach { file in
+            // The manifest comes from the peer device. Never let an identifier or relative path
+            // escape the transfer directory or the app container.
+            guard Self.isSafeRelativePath(file.identifier), Self.isSafeRelativePath(file.relativePath) else {
+                throw OWSAssertionError("Refusing manifest entry with unsafe path")
+            }
             let sourceUrl = URL(fileURLWithPath: file.identifier, relativeTo: sourceDir)
             let destUrl = URL(fileURLWithPath: file.relativePath, relativeTo: destDir)
+            guard Self.isContained(sourceUrl, in: sourceDir), Self.isContained(destUrl, in: destDir) else {
+                throw OWSAssertionError("Refusing manifest entry that resolves outside its directory")
+            }
 
             do {
                 try move(pendingFilePath: sourceUrl.path, to: destUrl.path)
