@@ -167,7 +167,7 @@ Nothing here is hidden; each item is a documented dependency. "Brand" says what 
 | Rust lockfile bumps (ringrtc, svr2 rustclient) | `cargo check`, `cargo audit` clean |
 | SVR2 Go module bumps | `go build`/`go vet`/`go test` for the packages that do not need the Open Enclave host library (rate, util, web, web/handlers pass); the enclave-linked packages need the SGX SDK |
 | registration-service pins + shared-secret interceptor | JDK 26 compile; 4298 unit tests pass (4 need Docker) |
-| Signal-Server Jetty bump + S1/S2/S4 + shared-secret client | dependency resolution clean; compilation requires `org.signal:libsignal-server`, which Signal publishes only to its private repository (see `docs/self-hosting.md`); see the commit message for whether the local build succeeded |
+| Signal-Server Jetty bump + S1/S2/S4 + shared-secret client | `mvn compile` of the `service` module succeeds (JDK 26) against a locally published `libsignal-server` built from the vendored libsignal (published under the 0.101.2 coordinate the pom pins; bump the pom or vendor the matching tag for a real deployment). Tests: ExternalRequestPathFilterTest 11/11, OmnibusH2ServerTest 71/71, JwtGeneratorTest 5/5 (its clock-pinned tests were updated for the new `exp` claim). One compile fix: the S1 filter registration moved after the websocket environment is created. |
 | libsignal brand fixes (L1-L3) | `cargo test` for `libsignal-net`, `attest`, `libsignal-keytrans` in the default and brand configurations; the two misconfigurations fail at build time as intended |
 | Desktop D1-D5 | `tsc --noEmit` and the `LinkPreview` unit tests (see commit message) |
 | Android A1-A5, iOS I1-I3 | Inspection only; no Android SDK or Xcode in this environment |

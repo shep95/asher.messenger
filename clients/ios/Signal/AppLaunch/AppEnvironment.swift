@@ -363,6 +363,10 @@ public class AppEnvironment: NSObject {
         }
 
         appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
+            // Asher offline mesh transport: no-op unless FeatureFlags.meshTransport
+            // and the user's toggle are both on.
+            MeshNodeService.shared.startIfEnabled()
+
             let accountEntropyPoolManager = DependenciesBridge.shared.accountEntropyPoolManager
             let attachmentBackfillManager = DependenciesBridge.shared.attachmentBackfillManager
             let backupExportJobRunner = DependenciesBridge.shared.backupExportJobRunner

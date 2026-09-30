@@ -65,6 +65,8 @@
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Signal needs to use Apple Music to play media attachments.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Asher uses Bluetooth to exchange messages with nearby phones and LoRa radios when there is no internet connection (mesh transport).</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_sgnl-new-device._tcp</string>
@@ -116,6 +118,8 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>processing</string>
 		<string>remote-notification</string>

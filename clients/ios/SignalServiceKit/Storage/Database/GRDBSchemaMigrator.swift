@@ -365,6 +365,7 @@ public class GRDBSchemaMigrator {
         case removeInteractionConversationLoadCountIndex
         case removeObsoleteThreadReferences
         case removeInteractionConversationLoadDistanceIndex
+        case addMeshContactTable
 
         // NOTE: Every time we add a migration id, consider
         // incrementing grdbSchemaVersionLatest.
@@ -5649,6 +5650,12 @@ public class GRDBSchemaMigrator {
 
         migrator.registerMigration(.removeInteractionConversationLoadDistanceIndex) { tx in
             try removeInteractionConversationLoadDistanceIndex(tx: tx)
+            return .success(())
+        }
+
+        // Asher: contact cards for the offline mesh transport (docs/offline-mesh.md).
+        migrator.registerMigration(.addMeshContactTable) { tx in
+            try MeshContactStore.createTable(tx: tx)
             return .success(())
         }
 

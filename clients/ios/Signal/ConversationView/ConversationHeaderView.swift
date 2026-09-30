@@ -173,6 +173,12 @@ class ConversationHeaderView: UIView {
             name: OWSChatConnection.chatConnectionStateDidChange,
             object: nil,
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(connectivityDidChange),
+            name: .meshStatusDidChange,
+            object: nil,
+        )
         updateSceneIndicator()
     }
 
@@ -185,6 +191,10 @@ class ConversationHeaderView: UIView {
     /// A state set by the mesh transport (`.mesh(hops:)`, `.carrying`) wins over
     /// the connectivity-derived state until cleared with `nil`.
     private var transportStateOverride: SceneIndicatorView.State?
+
+    /// The contact thread's address, so the mesh transport can report
+    /// `.mesh(hops:)` / `.carrying` for it (FeatureFlags.meshTransport).
+    private var meshThreadAddress: SignalServiceAddress?
 
     /// For the mesh transport: report `.mesh(hops:)` / `.carrying`, or `nil` to
     /// fall back to reachability (Orbit / Out of range).
@@ -206,11 +216,33 @@ class ConversationHeaderView: UIView {
             sceneIndicatorView.state = transportStateOverride
             return
         }
+        if let meshState = meshTransportState() {
+            sceneIndicatorView.state = meshState
+            return
+        }
         let isReachable = SSKEnvironment.shared.reachabilityManagerRef.isReachable
         sceneIndicatorView.state = isReachable ? .orbit : .offline
     }
 
+    /// Mesh transport state for this thread's contact, or nil when the
+    /// recipient is not a mesh contact / nothing mesh-related applies.
+    private func meshTransportState() -> SceneIndicatorView.State? {
+        guard FeatureFlags.meshTransport, let aci = meshThreadAddress?.aci else {
+            return nil
+        }
+        switch MeshNodeService.shared.transportState(forContactAci: aci) {
+        case .mesh(let hops)?:
+            return .mesh(hops: hops)
+        case .carrying?:
+            return .carrying
+        case nil:
+            return nil
+        }
+    }
+
     func configure(threadViewModel: ThreadViewModel) {
+        meshThreadAddress = (threadViewModel.threadRecord as? TSContactThread)?.contactAddress
+        updateSceneIndicator()
         avatarView.updateWithSneakyTransactionIfNecessary { config in
             if threadViewModel.threadRecord.isReleaseNotesThread {
                 config.dataSource = .asset(avatar: AvatarBuilder.releaseNotesIcon(), badge: nil)

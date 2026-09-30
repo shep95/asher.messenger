@@ -382,6 +382,21 @@ class AppSettingsViewController: OWSTableViewController2 {
             contents.add(paymentsSection)
         }
 
+        if FeatureFlags.meshTransport {
+            // Asher offline mesh transport (docs/offline-mesh.md).
+            let meshSection = OWSTableSection()
+            meshSection.add(.disclosureItem(
+                icon: .settingsAdvanced,
+                withText: LocalizationNotNeeded("Mesh"),
+                accessoryText: MeshNodeService.shared.isRunning ? LocalizationNotNeeded("On") : nil,
+                actionBlock: { [weak self] in
+                    let vc = MeshSettingsViewController()
+                    self?.navigationController?.pushViewController(vc, animated: true)
+                },
+            ))
+            contents.add(meshSection)
+        }
+
         let section3 = OWSTableSection()
         section3.add(.disclosureItem(
             icon: .settingsHelp,

@@ -376,6 +376,11 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
     // MARK: - Constructing Message Sends
 
     public func sendMessage(_ preparedOutgoingMessage: PreparedOutgoingMessage) async -> SendMessageResult {
+        // Asher mesh transport: a text for a mesh contact goes over the radio
+        // links and never touches the chat server (FeatureFlags.meshTransport).
+        if FeatureFlags.meshTransport, let meshResult = await MeshOutbox.shared.sendIfMeshRecipient(preparedOutgoingMessage) {
+            return meshResult
+        }
         let sendFailure: SendMessageFailure?
         do {
             Logger.info("Sending \(preparedOutgoingMessage)")

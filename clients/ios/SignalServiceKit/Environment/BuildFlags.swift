@@ -89,6 +89,17 @@ public enum BuildFlags {
 
 // MARK: -
 
+/// Feature flags for Asher additions, kept apart from upstream's `BuildFlags`
+/// so merges stay clean.
+public enum FeatureFlags {
+    /// Offline mesh transport: meshlink over BLE/LoRa (docs/offline-mesh.md).
+    /// Build-level gate, off by default. The user's own on/off switch lives in
+    /// `MeshNodeService.isEnabled`; nothing mesh-related runs while this is false.
+    public static let meshTransport = false
+}
+
+// MARK: -
+
 extension BuildFlags {
     public static var buildVariantString: String? {
         // Leaving this internal only for now. If we ever move this to

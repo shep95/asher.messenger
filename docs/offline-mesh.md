@@ -238,8 +238,18 @@ own prekey stores so first messages decrypt.
 | Scene indicator states Mesh/Carrying | wired | wired | wired |
 | Settings (toggle, my QR, scan/paste card, contacts, stats) | written | written | written |
 
+Two conventions the platform code settled on, both local to a device and
+invisible on the wire: (1) the app's Signal session for a mesh contact is
+keyed by the contact's fingerprint-derived service id (Android, iOS) or that
+id with the UUID version/variant bits forced to v4 (Desktop, whose
+conversation validator demands it), not by the bare hex name; (2) the
+fingerprint-to-contact mapping always goes through the mesh contacts table,
+never by parsing the id back. Desktop's Web Bluetooth is central-only, so a
+Desktop and a phone connect with the phone as peripheral.
+
 None of the platform code could be compiled in this environment (no Android
-SDK, no Xcode, no Desktop dependency install). It is written against the
+SDK, no Xcode, no Desktop dependency install beyond a standalone type-check of
+the new TypeScript, which passed, and 16 unit tests for its decoders). It is written against the
 bridge names above and must be built and run on real devices; the first
 build will surface mismatches. See `docs/patches.md` for the file lists.
 

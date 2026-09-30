@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A55D5E914B2CCD00AB4E90DB /* MeshFfi.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FE8347E87FD4456659528A /* MeshFfi.swift */; };
+		A5597ED0087888160C8F47FF /* MeshWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51ECD5E83E3A69E7097F50D /* MeshWire.swift */; };
+		A5B62E32917723D6E8011352 /* MeshKiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = A506F4DF6067819B69D50004 /* MeshKiss.swift */; };
+		A5B79D23D9459C79CCCAF99E /* MeshContactStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A512EE0F77FADEB40B7A33D4 /* MeshContactStore.swift */; };
+		A556CAB3AFBA29B53B1B2AED /* MeshIdentityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57327846E6889660A29671A /* MeshIdentityManager.swift */; };
+		A5B42EABF0827A6927100439 /* MeshCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FB9536B9248C2A78448AA6 /* MeshCrypto.swift */; };
+		A5A8266675ECDC6B4AA84DCB /* MeshOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5538E4B0303CF5A78434A86 /* MeshOutbox.swift */; };
+		A541AEB33B173D7685639F40 /* MeshNodeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55431907C5794C64503D269 /* MeshNodeService.swift */; };
+		A5DCDD7F4563F007E0F8300F /* MeshLinkPump.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */; };
+		A5FA098AEEE98DF313E7DAF7 /* BleLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CD0E88483579749E236AF1 /* BleLink.swift */; };
+		A5117B361D581AB177888231 /* RNodeBleLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */; };
+		A5CECCF3B95D2EC1A832040A /* MeshSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56437B153B0CB0D623F2D4F /* MeshSettingsViewController.swift */; };
 		040277FA303DCFA6009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */; };
 		040277FE303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */; };
 		040506F82F7EEF3B0078B769 /* RemoteReleaseNotesFetchingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040506F72F7EEF290078B769 /* RemoteReleaseNotesFetchingManager.swift */; };
@@ -4268,6 +4280,18 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A5FE8347E87FD4456659528A /* MeshFfi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshFfi.swift; sourceTree = "<group>"; };
+		A51ECD5E83E3A69E7097F50D /* MeshWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshWire.swift; sourceTree = "<group>"; };
+		A506F4DF6067819B69D50004 /* MeshKiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshKiss.swift; sourceTree = "<group>"; };
+		A512EE0F77FADEB40B7A33D4 /* MeshContactStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshContactStore.swift; sourceTree = "<group>"; };
+		A57327846E6889660A29671A /* MeshIdentityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshIdentityManager.swift; sourceTree = "<group>"; };
+		A5FB9536B9248C2A78448AA6 /* MeshCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshCrypto.swift; sourceTree = "<group>"; };
+		A5538E4B0303CF5A78434A86 /* MeshOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshOutbox.swift; sourceTree = "<group>"; };
+		A55431907C5794C64503D269 /* MeshNodeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshNodeService.swift; sourceTree = "<group>"; };
+		A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshLinkPump.swift; sourceTree = "<group>"; };
+		A5CD0E88483579749E236AF1 /* BleLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BleLink.swift; sourceTree = "<group>"; };
+		A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeBleLink.swift; sourceTree = "<group>"; };
+		A56437B153B0CB0D623F2D4F /* MeshSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshSettingsViewController.swift; sourceTree = "<group>"; };
 		040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileBackupAttachmentRestoreProgress.swift; sourceTree = "<group>"; };
 		040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatListViewController+LocalFileBackupRestoreProgressView.swift"; sourceTree = "<group>"; };
 		040506F72F7EEF290078B769 /* RemoteReleaseNotesFetchingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteReleaseNotesFetchingManager.swift; sourceTree = "<group>"; };
@@ -8684,6 +8708,24 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A5F3687FFC2FF2DF8416FC5D /* Mesh */ = {
+			isa = PBXGroup;
+			children = (
+				A5FE8347E87FD4456659528A /* MeshFfi.swift */,
+				A51ECD5E83E3A69E7097F50D /* MeshWire.swift */,
+				A506F4DF6067819B69D50004 /* MeshKiss.swift */,
+				A512EE0F77FADEB40B7A33D4 /* MeshContactStore.swift */,
+				A57327846E6889660A29671A /* MeshIdentityManager.swift */,
+				A5FB9536B9248C2A78448AA6 /* MeshCrypto.swift */,
+				A5538E4B0303CF5A78434A86 /* MeshOutbox.swift */,
+				A55431907C5794C64503D269 /* MeshNodeService.swift */,
+				A5A7B4F80977C772FD1BA2D4 /* MeshLinkPump.swift */,
+				A5CD0E88483579749E236AF1 /* BleLink.swift */,
+				A5754F4923D25DCF675AA0AC /* RNodeBleLink.swift */,
+			);
+			path = Mesh;
+			sourceTree = "<group>";
+		};
 		040507132F80639B0078B769 /* RemoteReleaseNotes */ = {
 			isa = PBXGroup;
 			children = (
@@ -8949,6 +8991,7 @@
 				887B381425F0681B00685845 /* Privacy */,
 				8871B16D25F007CE00D4E070 /* Profile */,
 				88F58A1625EEE5B9008CDA24 /* AppSettingsViewController.swift */,
+				A56437B153B0CB0D623F2D4F /* MeshSettingsViewController.swift */,
 				F9BC0A2427FB8E730085B23D /* AppSettingsViewsUtil.swift */,
 				887B380725F0355700685845 /* ChatsSettingsViewController.swift */,
 				3414896825C9B6490098E3ED /* CurrencyPickerViewController.swift */,
@@ -15043,6 +15086,7 @@
 				F9C5CA09289453B100548EEE /* Devices */,
 				D9E5203E2C3F321C004D3D45 /* DisappearingMessages */,
 				72C905882B9A275C00E586B8 /* Environment */,
+				A5F3687FFC2FF2DF8416FC5D /* Mesh */,
 				D98BC5302EE387360052A81F /* Expiration */,
 				F9C5CBA3289453B200548EEE /* Groups */,
 				D9668B30291B033800665298 /* Jobs */,
@@ -18493,6 +18537,7 @@
 				F941B17028412D5F00498CCD /* ApplePayButton.swift in Sources */,
 				F92074762888648A00B7F087 /* AppLifecycleManager.swift in Sources */,
 				88F58A1725EEE5B9008CDA24 /* AppSettingsViewController.swift in Sources */,
+				A5CECCF3B95D2EC1A832040A /* MeshSettingsViewController.swift in Sources */,
 				F9BC0A2527FB8E730085B23D /* AppSettingsViewsUtil.swift in Sources */,
 				1489ED0227A3D70200C7043A /* ArchivedConversationsCell.swift in Sources */,
 				C1661A1A2C3D939300AB887F /* ArchivedPaymentHistoryItem.swift in Sources */,
@@ -19601,6 +19646,17 @@
 				F9C5CC74289453B300548EEE /* BlurHash.swift in Sources */,
 				505F76332BC45C0700B1B51C /* BuildFlags+Generated.swift in Sources */,
 				F9C5CE2B289453B400548EEE /* BuildFlags.swift in Sources */,
+				A55D5E914B2CCD00AB4E90DB /* MeshFfi.swift in Sources */,
+				A5597ED0087888160C8F47FF /* MeshWire.swift in Sources */,
+				A5B62E32917723D6E8011352 /* MeshKiss.swift in Sources */,
+				A5B79D23D9459C79CCCAF99E /* MeshContactStore.swift in Sources */,
+				A556CAB3AFBA29B53B1B2AED /* MeshIdentityManager.swift in Sources */,
+				A5B42EABF0827A6927100439 /* MeshCrypto.swift in Sources */,
+				A5A8266675ECDC6B4AA84DCB /* MeshOutbox.swift in Sources */,
+				A541AEB33B173D7685639F40 /* MeshNodeService.swift in Sources */,
+				A5DCDD7F4563F007E0F8300F /* MeshLinkPump.swift in Sources */,
+				A5FA098AEEE98DF313E7DAF7 /* BleLink.swift in Sources */,
+				A5117B361D581AB177888231 /* RNodeBleLink.swift in Sources */,
 				D9F9A63B2BFFFCC400EF13EC /* BulkDeleteInteractionJobQueue.swift in Sources */,
 				D9F9A6392BFFC84300EF13EC /* BulkDeleteInteractionJobRecord.swift in Sources */,
 				E7D7C93F28B580AC003F043B /* Bundle+OWS.swift in Sources */,
