@@ -70,6 +70,7 @@ public class OmnibusH2Server implements Managed {
   private final DefaultEventLoopGroup localEventLoopGroup;
   private final NioEventLoopGroup nioEventLoopGroup;
   private final SocketAddress bindAddress;
+  private final boolean acceptProxyProtocol;
 
   private Channel serverChannel;
 
@@ -91,6 +92,22 @@ public class OmnibusH2Server implements Managed {
       final OmnibusRouter router,
       final Supplier<DynamicOmnibusConfiguration> configurationSupplier,
       final Duration idleTimeout) {
+    this(sslContextBySni, nioEventLoopGroup, localEventLoopGroup, bindAddress, router, configurationSupplier,
+        idleTimeout, true);
+  }
+
+  /// @param acceptProxyProtocol whether to honour a PROXY protocol header from the peer; see
+  ///                            `GrpcConfiguration#acceptProxyProtocol()`
+  public OmnibusH2Server(
+      final @Nullable Mapping<String, SslContext> sslContextBySni,
+      final NioEventLoopGroup nioEventLoopGroup,
+      final DefaultEventLoopGroup localEventLoopGroup,
+      final SocketAddress bindAddress,
+      final OmnibusRouter router,
+      final Supplier<DynamicOmnibusConfiguration> configurationSupplier,
+      final Duration idleTimeout,
+      final boolean acceptProxyProtocol) {
+    this.acceptProxyProtocol = acceptProxyProtocol;
     this.sslContextBySni = sslContextBySni;
     this.configurationSupplier = configurationSupplier;
     this.nioEventLoopGroup = nioEventLoopGroup;
@@ -122,8 +139,10 @@ public class OmnibusH2Server implements Managed {
               }
             });
             ch.pipeline().addLast(CONNECT_COUNTER);
-            ch.pipeline().addLast(new ProxyProtocolHandler());
-            ch.pipeline().addLast(new ProxyMessageAttributeSetterHandler());
+            if (acceptProxyProtocol) {
+              ch.pipeline().addLast(new ProxyProtocolHandler());
+              ch.pipeline().addLast(new ProxyMessageAttributeSetterHandler());
+            }
             if (sslContextBySni == null) {
               // Defer setting up the H2 pipeline until the channel is active, so we know we can immediately write
               // to it if we need to.

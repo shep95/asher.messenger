@@ -15,13 +15,19 @@ import java.time.Duration;
 /// @param websocketPort    The port of a listening websocket server for handling legacy requests
 /// @param idleTimeout      The duration after which an idle connection may be disconnected
 /// @param h2c              If true, listen for plaintext h2c with prior-knowledge
+/// @param acceptProxyProtocol If true, honour a PROXY protocol (v1/v2) header at the start of each connection and use
+///                            the address it carries as the client address for rate limiting and internal-network
+///                            checks. Only enable this when the omnibus port is reachable exclusively from a trusted
+///                            load balancer, because any peer that can connect directly could otherwise claim an
+///                            arbitrary source address. Defaults to false.
 public record GrpcConfiguration(
     @NotNull String bindAddress,
     @NotNull Integer port,
     @NotNull String websocketAddress,
     @NotNull Integer websocketPort,
     @NotNull Duration idleTimeout,
-    boolean h2c) {
+    boolean h2c,
+    boolean acceptProxyProtocol) {
 
   public GrpcConfiguration {
     if (bindAddress == null || bindAddress.isEmpty()) {

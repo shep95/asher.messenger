@@ -150,6 +150,7 @@ import org.whispersystems.textsecuregcm.currency.CurrencyConversionManager;
 import org.whispersystems.textsecuregcm.currency.FixerClient;
 import org.whispersystems.textsecuregcm.experiment.ExperimentEnrollmentManager;
 import org.whispersystems.textsecuregcm.filters.ExternalRequestFilter;
+import org.whispersystems.textsecuregcm.filters.ExternalRequestPathFilter;
 import org.whispersystems.textsecuregcm.filters.PriorityFilter;
 import org.whispersystems.textsecuregcm.filters.RemoteAddressFilter;
 import org.whispersystems.textsecuregcm.filters.RemoteDeprecationFilter;
@@ -1225,7 +1226,8 @@ public class WhisperServerService extends Application<WhisperServerConfiguration
         omnibusLocalEventLoopGroup.getEventLoopGroup(),
         new InetSocketAddress(config.getGrpc().bindAddress(), config.getGrpc().port()), omnibusRouter,
         () -> dynamicConfigurationManager.getConfiguration().getOmnibus(),
-        config.getGrpc().idleTimeout());
+        config.getGrpc().idleTimeout(),
+        config.getGrpc().acceptProxyProtocol());
 
     environment.lifecycle().manage(omnibusLocalEventLoopGroup);
     environment.lifecycle().manage(omnibusNioEventLoopGroup);
@@ -1262,6 +1264,13 @@ public class WhisperServerService extends Application<WhisperServerConfiguration
     environment.jersey().register(new AuthDynamicFeature(accountAuthFilter));
     environment.jersey().register(new AuthValueFactoryProvider.Binder<>(AuthenticatedDevice.class));
     environment.jersey().register(new TimestampResponseFilter());
+
+    if (!config.getExternalRequestFilterConfiguration().paths().isEmpty()) {
+      // The servlet filter above never sees requests tunnelled over the authenticated websocket
+      webSocketEnvironment.jersey().register(new ExternalRequestPathFilter(
+          config.getExternalRequestFilterConfiguration().permittedInternalRanges(),
+          config.getExternalRequestFilterConfiguration().paths()));
+    }
 
     ///
     WebSocketEnvironment<AuthenticatedDevice> webSocketEnvironment = new WebSocketEnvironment<>(environment,

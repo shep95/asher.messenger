@@ -10,6 +10,7 @@ import com.auth0.jwt.JWT;
 import com.auth0.jwt.JWTCreator;
 import com.auth0.jwt.algorithms.Algorithm;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.function.Consumer;
 
@@ -18,6 +19,10 @@ public class JwtGenerator {
 
   public static final String MAX_LENGTH_CLAIM_KEY = "maxLen";
   public static final String SCOPE_CLAIM_KEY = "scope";
+
+  /// Lifetime of generated tokens. Upload credentials for the other CDNs expire after 25 hours (GCS) and 30 minutes
+  /// (S3); without an `exp` claim a TUS token would be valid indefinitely.
+  public static final Duration TOKEN_LIFETIME = Duration.ofHours(24);
 
   private final Algorithm algorithm;
   private final Clock clock;
@@ -32,7 +37,8 @@ public class JwtGenerator {
     JWTCreator.Builder builder = JWT.create()
         .withAudience(audience)
         .withSubject(subject)
-        .withIssuedAt(now);
+        .withIssuedAt(now)
+        .withExpiresAt(now.plus(TOKEN_LIFETIME));
     claimCustomizer.accept(builder);
     return builder.sign(algorithm);
   }
