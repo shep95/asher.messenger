@@ -1,0 +1,18 @@
+#
+# Copyright 2023 Signal Messenger, LLC
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+
+[package]
+name = "bootstrap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aws-config = "1.8.12"
+# The default "rustls" feature adds a legacy hyper 0.14 / rustls 0.21 client we don't use.
+aws-sdk-dynamodb = { version = "1.101.0", default-features = false, features = [
+  "default-https-client",
+  "rt-tokio",
+] }
+tokio = { version = "1.48.0", features = ["full"] }

@@ -1,0 +1,3573 @@
+//
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+use std::{fmt::Debug, num::ParseIntError, sync::Arc, time::SystemTime};
+
+use anyhow::Result;
+use axum::{Extension, Json, extract::State, response::IntoResponse};
+use axum_extra::{
+    TypedHeader,
+    headers::{self, Header, HeaderName, HeaderValue},
+    typed_header::TypedHeaderRejection,
+};
+use http::StatusCode;
+use log::*;
+use metrics::event;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use zkgroup::call_links::{
+    CallLinkAuthCredentialPresentation, CallLinkPublicParams, CreateCallLinkCredentialPresentation,
+};
+
+use crate::{
+    frontend::Frontend,
+    storage::{self, CallLinkDeleteError, CallLinkRestrictions, CallLinkUpdateError},
+};
+
+static X_ROOM_ID: HeaderName = HeaderName::from_static("x-room-id");
+static X_EPOCH: HeaderName = HeaderName::from_static("x-epoch");
+const ADMIN_PASSKEY_LIMIT: usize = 32;
+const CALL_LINK_NAME_LIMIT: usize = 256;
+
+#[inline(always)]
+fn empty_json_object() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+/// Implementations of CallLinkeEpochGenerator are used to generete CallLinkEpoch instances.
+pub trait CallLinkEpochGenerator: Sync + Send {
+    fn new_epoch(&self) -> Option<calling_common::CallLinkEpoch>;
+}
+
+/// Default implementation of [`CallLinkEpochGenerator`]. Generates [`CallLinkEpoch`] instances
+/// that are based on pseudo-randomly generated 32-bit unsigned integers.
+#[derive(Default)]
+pub struct DefaultCallLinkEpochGenerator;
+
+impl CallLinkEpochGenerator for DefaultCallLinkEpochGenerator {
+    fn new_epoch(&self) -> Option<calling_common::CallLinkEpoch> {
+        Some(rand::random::<u32>().into())
+    }
+}
+
+/// Implementation of [`CallLinkEpochGenerator`] that does not produce any epoch values. This variant
+/// is used if epoch support is disabled.
+#[derive(Default)]
+pub struct NullCallLinkEpochGenerator;
+
+impl CallLinkEpochGenerator for NullCallLinkEpochGenerator {
+    fn new_epoch(&self) -> Option<calling_common::CallLinkEpoch> {
+        None
+    }
+}
+
+#[serde_as]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+pub struct CallLinkState {
+    pub restrictions: storage::CallLinkRestrictions,
+    #[serde_as(as = "serde_with::base64::Base64")]
+    pub name: Vec<u8>,
+    pub revoked: bool,
+    #[serde_as(as = "serde_with::TimestampSeconds<i64>")]
+    pub expiration: SystemTime,
+    #[serde_as(as = "serde_with::TimestampSeconds<i64>")]
+    pub delete_at: SystemTime,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<calling_common::CallLinkEpoch>,
+}
+
+/// CallLinkEpoch header representation. Convertible into [`calling_common::CallLinkEpoch`].
+/// Expects base 10 string representations of 32-bit unsigned integers as header values. The
+/// X-Epoch header is only allowed to have a single value.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CallLinkEpoch(calling_common::CallLinkEpoch);
+
+impl Header for CallLinkEpoch {
+    fn name() -> &'static HeaderName {
+        &X_EPOCH
+    }
+
+    fn decode<'i, I>(values: &mut I) -> std::result::Result<Self, headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(headers::Error::invalid)?;
+        if values.next().is_some() {
+            return Err(headers::Error::invalid());
+        }
+        if let Ok(value) = value.to_str() {
+            let result = value.try_into().map_err(|_| headers::Error::invalid())?;
+            Ok(result)
+        } else {
+            Err(headers::Error::invalid())
+        }
+    }
+
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        if let Ok(value) = HeaderValue::from_str(&self.0.as_ref().to_string()) {
+            values.extend(std::iter::once(value));
+        }
+    }
+}
+
+impl From<CallLinkEpoch> for calling_common::CallLinkEpoch {
+    fn from(value: CallLinkEpoch) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<&str> for CallLinkEpoch {
+    type Error = ParseIntError;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        let v = value.parse::<u32>()?;
+        Ok(Self(v.into()))
+    }
+}
+
+/// A light wrapper around [`calling_common::RoomId`] that limits the maximum size when
+/// deserializing.
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(try_from = "String")]
+pub struct RoomId(calling_common::RoomId);
+
+impl TryFrom<String> for RoomId {
+    type Error = StatusCode;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        if value.is_empty() || value.len() > 128 || value.contains(":") {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Ok(Self(value.into()))
+    }
+}
+
+impl Header for RoomId {
+    fn name() -> &'static HeaderName {
+        &X_ROOM_ID
+    }
+    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
+    where
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(headers::Error::invalid)?;
+        if values.next().is_some() {
+            return Err(headers::Error::invalid());
+        }
+        if value.is_empty() || value.len() > 128 {
+            return Err(headers::Error::invalid());
+        }
+        if let Ok(value) = value.to_str() {
+            Ok(Self(value.into()))
+        } else {
+            Err(headers::Error::invalid())
+        }
+    }
+    fn encode<E>(&self, values: &mut E)
+    where
+        E: Extend<HeaderValue>,
+    {
+        if let Ok(value) = HeaderValue::from_str(self.0.as_ref()) {
+            values.extend(std::iter::once(value));
+        }
+    }
+}
+
+impl AsRef<str> for RoomId {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl From<RoomId> for calling_common::RoomId {
+    fn from(value: RoomId) -> Self {
+        value.0
+    }
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)] // rather than silently rejecting something a client wants to do
+pub struct CallLinkUpdate {
+    #[serde_as(as = "serde_with::base64::Base64")]
+    admin_passkey: Vec<u8>,
+    #[serde_as(as = "Option<serde_with::base64::Base64>")]
+    zkparams: Option<Vec<u8>>,
+    #[serde(default)]
+    restrictions: Option<CallLinkRestrictions>,
+    #[serde_as(as = "Option<serde_with::base64::Base64>")]
+    name: Option<Vec<u8>>,
+    #[serde(default)]
+    revoked: Option<bool>,
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallLinkDelete {
+    #[serde_as(as = "serde_with::base64::Base64")]
+    admin_passkey: Vec<u8>,
+}
+
+impl From<CallLinkUpdate> for storage::CallLinkUpdate {
+    fn from(value: CallLinkUpdate) -> Self {
+        Self {
+            admin_passkey: value.admin_passkey,
+            restrictions: value.restrictions,
+            encrypted_name: value.name,
+            revoked: value.revoked,
+        }
+    }
+}
+
+fn current_time() -> zkgroup::Timestamp {
+    zkgroup::Timestamp::from_epoch_seconds(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("server clock is correct")
+            .as_secs(),
+    )
+}
+
+// This helper function extracts checked, optional typed header values. Returns Ok(Some(V)) if a
+// valid value is in the typed header, Ok(None) if the header is missing, or
+// Err(TypedHeaderRejection) if any other error is encountered.
+fn extract_optional_header_value<T, V>(
+    typed_header_result: Result<TypedHeader<T>, TypedHeaderRejection>,
+) -> Result<Option<V>, TypedHeaderRejection>
+where
+    V: From<T>,
+{
+    match typed_header_result {
+        Ok(TypedHeader(v)) => Ok(Some(v.into())),
+        Err(err) if err.is_missing() => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+pub fn verify_auth_credential_against_zkparams(
+    auth_credential: &CallLinkAuthCredentialPresentation,
+    existing_call_link: &storage::CallLinkState,
+    frontend: &Frontend,
+) -> Result<(), StatusCode> {
+    let call_link_params: CallLinkPublicParams = zkgroup::deserialize(&existing_call_link.zkparams)
+        .map_err(|err| {
+            error!("stored zkparams corrupted: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let result = if let Some(old_zkparams) = frontend.old_zkparams.as_ref() {
+        auth_credential.verify_against_appropriate_params(
+            current_time(),
+            old_zkparams,
+            &frontend.zkparams,
+            &call_link_params,
+        )
+    } else {
+        auth_credential.verify(current_time(), &frontend.zkparams, &call_link_params)
+    };
+
+    result.map_err(|_| {
+        event!("calling.frontend.api.call_links.bad_credential");
+        StatusCode::FORBIDDEN
+    })
+}
+
+pub fn verify_create_credential_against_zkparams(
+    room_id: &[u8],
+    create_credential: &Arc<CreateCallLinkCredentialPresentation>,
+    zkparams_for_create: &Option<Vec<u8>>,
+    frontend: &Frontend,
+) -> Result<(), StatusCode> {
+    // Verify the credential against the zkparams provided in the payload.
+    // We're trying to create a room, after all, so we are *establishing* those parameters.
+    // If a room with the same ID already exists, we'll find that out later.
+    let call_link_params: CallLinkPublicParams = zkparams_for_create
+        .as_ref()
+        .and_then(|params| zkgroup::deserialize(params).ok())
+        .ok_or_else(|| {
+            event!("calling.frontend.api.update_call_link.invalid_zkparams");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let result = if let Some(old_zkparams) = frontend.old_zkparams.as_ref() {
+        create_credential.verify_against_appropriate_params(
+            room_id,
+            current_time(),
+            old_zkparams,
+            &frontend.zkparams,
+            &call_link_params,
+        )
+    } else {
+        create_credential.verify(
+            room_id,
+            current_time(),
+            &frontend.zkparams,
+            &call_link_params,
+        )
+    };
+
+    result.map_err(|_| {
+        event!("calling.frontend.api.update_call_link.bad_credential");
+        StatusCode::UNAUTHORIZED
+    })
+}
+
+/// Handler for the GET /call-link route.
+pub async fn read_call_link(
+    State(frontend): State<Arc<Frontend>>,
+    Extension(auth_credential): Extension<Arc<CallLinkAuthCredentialPresentation>>,
+    TypedHeader(room_id): TypedHeader<RoomId>,
+    epoch_header: Result<TypedHeader<CallLinkEpoch>, TypedHeaderRejection>,
+) -> Result<impl IntoResponse, StatusCode> {
+    trace!("read_call_link:");
+
+    let epoch = extract_optional_header_value(epoch_header).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let state = match frontend.storage.get_call_link(&room_id.into(), epoch).await {
+        Ok(Some(state)) => Ok(state),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            error!("read_call_link: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }?;
+
+    verify_auth_credential_against_zkparams(&auth_credential, &state, &frontend)?;
+
+    Ok(Json(CallLinkState {
+        restrictions: state.restrictions,
+        name: state.encrypted_name,
+        revoked: state.revoked,
+        expiration: state.expiration,
+        delete_at: state.delete_at,
+        epoch: None,
+    })
+    .into_response())
+}
+
+/// Handler for the PUT /call-link route.
+pub async fn update_call_link(
+    State(frontend): State<Arc<Frontend>>,
+    auth_credential: Option<Extension<Arc<CallLinkAuthCredentialPresentation>>>,
+    create_credential: Option<Extension<Arc<CreateCallLinkCredentialPresentation>>>,
+    TypedHeader(room_id): TypedHeader<RoomId>,
+    epoch_header: Result<TypedHeader<CallLinkEpoch>, TypedHeaderRejection>,
+    Json(mut update): Json<CallLinkUpdate>,
+) -> Result<impl IntoResponse, StatusCode> {
+    trace!("update_call_link:");
+
+    let epoch = extract_optional_header_value(epoch_header).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Require that call link room IDs are valid hex.
+    let room_id_bytes = hex::decode(room_id.as_ref()).map_err(|_| {
+        event!("calling.frontend.api.update_call_link.bad_room_id");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    // Validate the updates.
+    if update.admin_passkey.len() > ADMIN_PASSKEY_LIMIT {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    if let Some(new_name) = update.name.as_ref() {
+        const AES_TAG_AND_SALT_OVERHEAD: usize = 32;
+        if new_name.len() > CALL_LINK_NAME_LIMIT + AES_TAG_AND_SALT_OVERHEAD {
+            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+        }
+    }
+
+    // Check preconditions:
+    // - Credentials must be valid.
+    // - If updating, the epoch must match the epoch generated at creation time.
+    // - If changing restrictions, there must not be an active call.
+    let has_create_credential;
+    let zkparams_for_create;
+    if let Some(Extension(create_credential)) = create_credential {
+        has_create_credential = true;
+        zkparams_for_create = update.zkparams.take();
+
+        verify_create_credential_against_zkparams(
+            &room_id_bytes,
+            &create_credential,
+            &zkparams_for_create,
+            &frontend,
+        )?;
+
+        // default to AdminApproval when no restrictions are specfied during creation
+        let _ = update
+            .restrictions
+            .get_or_insert(storage::CallLinkRestrictions::AdminApproval);
+    } else if let Some(Extension(auth_credential)) = auth_credential {
+        has_create_credential = false;
+        zkparams_for_create = None;
+
+        if update.zkparams.is_some() {
+            event!("calling.frontend.api.update_call_link.zkparams_on_update");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+
+        let (maybe_existing_call_link, maybe_current_call_record) = frontend
+            .storage
+            .get_call_link_and_record(&room_id.clone().into(), epoch, true)
+            .await
+            .map_err(|err| {
+                error!("update_call_link: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        let Some(existing_call_link) = maybe_existing_call_link else {
+            event!("calling.frontend.api.update_call_link.nonexistent_room");
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+
+        verify_auth_credential_against_zkparams(&auth_credential, &existing_call_link, &frontend)?;
+
+        if maybe_current_call_record.is_some() && update.restrictions.is_some() {
+            // Cannot change restrictions while a call is active.
+            // (It is okay to change the name or revoke a link.)
+            return Err(StatusCode::CONFLICT);
+        }
+    } else {
+        error!("neither anon nor create auth provided");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    match frontend
+        .storage
+        .update_call_link(&room_id.into(), epoch, update.into(), zkparams_for_create)
+        .await
+    {
+        Ok(state) => Ok(Json(CallLinkState {
+            restrictions: state.restrictions,
+            name: state.encrypted_name,
+            revoked: state.revoked,
+            expiration: state.expiration,
+            delete_at: state.delete_at,
+            epoch: state.epoch,
+        })
+        .into_response()),
+        Err(CallLinkUpdateError::AdminPasskeyDidNotMatch) => {
+            if has_create_credential {
+                Err(StatusCode::CONFLICT)
+            } else {
+                Err(StatusCode::FORBIDDEN)
+            }
+        }
+        Err(CallLinkUpdateError::RoomDoesNotExist) => {
+            if has_create_credential {
+                error!("update_call_link: got RoomDoesNotExist, but should have created the room");
+            } else {
+                error!("update_call_link: got RoomDoesNotExist, but should have checked earlier");
+            }
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(CallLinkUpdateError::UnexpectedError(err)) => {
+            error!("update_call_link: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Handler for the DELETE /call-link route.
+/// Idempotent, succeeds if call link is not found
+pub async fn delete_call_link(
+    State(frontend): State<Arc<Frontend>>,
+    auth_credential: Option<Extension<Arc<CallLinkAuthCredentialPresentation>>>,
+    TypedHeader(room_id): TypedHeader<RoomId>,
+    epoch_header: Result<TypedHeader<CallLinkEpoch>, TypedHeaderRejection>,
+    Json(request): Json<CallLinkDelete>,
+) -> Result<impl IntoResponse, StatusCode> {
+    trace!("delete_call_link:");
+
+    let epoch = extract_optional_header_value(epoch_header).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let _ = hex::decode(room_id.as_ref()).map_err(|_| {
+        event!("calling.frontend.api.delete_call_link.bad_room_id");
+        StatusCode::BAD_REQUEST
+    })?;
+    if request.admin_passkey.len() > ADMIN_PASSKEY_LIMIT {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // Check preconditions:
+    // - Credentials must be valid.
+    // - There must not be an active call.
+    if let Some(Extension(auth_credential)) = auth_credential {
+        let (maybe_existing_call_link, maybe_current_call_record) = frontend
+            .storage
+            .get_call_link_and_record(&room_id.clone().into(), epoch, true)
+            .await
+            .map_err(|err| {
+                error!("delete_call_link: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        if let Some(existing_call_link) = maybe_existing_call_link {
+            verify_auth_credential_against_zkparams(
+                &auth_credential,
+                &existing_call_link,
+                &frontend,
+            )?;
+        } else {
+            event!("calling.frontend.api.delete_call_link.nonexistent_room");
+            return Ok(Json(empty_json_object()));
+        }
+
+        if maybe_current_call_record.is_some() {
+            return Err(StatusCode::CONFLICT);
+        }
+    } else {
+        error!("no auth creds provided");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    match frontend
+        .storage
+        .delete_call_link(&room_id.into(), epoch, &request.admin_passkey)
+        .await
+    {
+        Ok(_) => Ok(Json(empty_json_object())),
+        Err(CallLinkDeleteError::AdminPasskeyDidNotMatch) => Err(StatusCode::FORBIDDEN),
+        Err(CallLinkDeleteError::RoomDoesNotExist) => Ok(Json(empty_json_object())),
+        Err(CallLinkDeleteError::CallRecordConflict) => Err(StatusCode::CONFLICT),
+        Err(CallLinkDeleteError::UnexpectedError(err)) => {
+            error!("delete_call_link: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Handler for the POST /call-link/reset-expiration route, used only for testing.
+#[cfg(any(debug_assertions, feature = "testing"))]
+pub async fn reset_call_link_expiration(
+    State(frontend): State<Arc<Frontend>>,
+    Extension(auth_credential): Extension<Arc<CallLinkAuthCredentialPresentation>>,
+    TypedHeader(room_id): TypedHeader<RoomId>,
+    epoch_header: Result<TypedHeader<CallLinkEpoch>, TypedHeaderRejection>,
+) -> Result<impl IntoResponse, StatusCode> {
+    trace!("reset_call_link_expiration:");
+
+    let epoch = extract_optional_header_value(epoch_header).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Require that call link room IDs are valid hex.
+    let _ = hex::decode(room_id.as_ref()).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let existing_call_link = frontend
+        .storage
+        .get_call_link(&room_id.clone().into(), epoch)
+        .await
+        .map_err(|err| {
+            error!("reset_call_link_expiration: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    verify_auth_credential_against_zkparams(&auth_credential, &existing_call_link, &frontend)?;
+
+    match frontend
+        .storage
+        .reset_call_link_expiration(&room_id.into(), epoch, SystemTime::now())
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(CallLinkUpdateError::AdminPasskeyDidNotMatch) => {
+            unreachable!("not checked by this entry point");
+        }
+        Err(CallLinkUpdateError::RoomDoesNotExist) => {
+            // We just checked, though there could be a race.
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(CallLinkUpdateError::UnexpectedError(err)) => {
+            error!("reset_call_link_expiration: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Handler for the DELETE /call-link/approvals route, used only for testing.
+#[cfg(any(debug_assertions, feature = "testing"))]
+pub async fn reset_call_link_approvals(
+    State(frontend): State<Arc<Frontend>>,
+    Extension(auth_credential): Extension<Arc<CallLinkAuthCredentialPresentation>>,
+    TypedHeader(room_id): TypedHeader<RoomId>,
+    epoch_header: Result<TypedHeader<CallLinkEpoch>, TypedHeaderRejection>,
+) -> Result<impl IntoResponse, StatusCode> {
+    trace!("reset_call_link_approvals:");
+
+    let epoch = extract_optional_header_value(epoch_header).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Require that call link room IDs are valid hex.
+    let _ = hex::decode(room_id.as_ref()).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let existing_call_link = frontend
+        .storage
+        .get_call_link(&room_id.clone().into(), epoch)
+        .await
+        .map_err(|err| {
+            error!("reset_call_link_approvals: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    verify_auth_credential_against_zkparams(&auth_credential, &existing_call_link, &frontend)?;
+
+    match frontend
+        .storage
+        .update_call_link_approved_users(&room_id.into(), vec![])
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(CallLinkUpdateError::AdminPasskeyDidNotMatch) => {
+            unreachable!("not checked by this entry point");
+        }
+        Err(CallLinkUpdateError::RoomDoesNotExist) => {
+            // We just checked, though there could be a race.
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(CallLinkUpdateError::UnexpectedError(err)) => {
+            error!("reset_call_link_approvals: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::sync::LazyLock;
+
+    use axum::body::Body;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use calling_common::Duration;
+    use hex::FromHex;
+    use http::{Request, header};
+    use mockall::predicate::*;
+    use tower::ServiceExt;
+    use zkgroup::{
+        call_links::{
+            CallLinkAuthCredentialResponse, CallLinkSecretParams,
+            CreateCallLinkCredentialRequestContext,
+        },
+        generic_server_params::{GenericServerSecretParams, GenericServerSecretParamsStandard},
+    };
+
+    use super::*;
+    use crate::{
+        api::{app, v2::api_server_v2_tests::create_call_record},
+        authenticator::Authenticator,
+        backend::MockBackend,
+        config,
+        frontend::{FrontendIdGenerator, UserId},
+        storage::MockStorage,
+    };
+
+    const AUTH_KEY: &str = "f00f0014fe091de31827e8d686969fad65013238aadd25ef8629eb8a9e5ef69b";
+    /// These are legacy (v0) params, meant to be used with `verify_against_appropriate_params`
+    static OLD_ZKPARAMS: LazyLock<GenericServerSecretParams> = LazyLock::new(|| {
+        GenericServerSecretParams::try_from(
+            STANDARD.decode("AMJqvmQRYwEGlm0MSy6QFPIAvgOVsqRASNX1meQyCOYHJFqxO8lITPkow5kmhPrsNbu9JhVfKFwesVSKhdZaqQko3IZlJZMqP7DDw0DgTWpdnYzSt0XBWT50DM1cw1nCUXXBZUiijdaFs+JRlTKdh54M7sf43pFxyMHlS3URH50LOeR8jVQKaUHi1bDP2GR9ZXp3Ot9Fsp0pM4D/vjL5PwoOUuzNNdpIqUSFhKVrtazwuHNn9ecHMsFsN0QPzByiDA8nhKcGpdzyWUvGjEDBvpKkBtqjo8QuXWjyS3jSl2oJ/Z4Fh3o2N1YfD2aWV/K88o+TN2/j2/k+KbaIZgmiWwppLU+SYGwthxdDfZgnbaaGT/vMYX9P5JlUWSuP3xIxDzPzxBEFho67BP0Pvux+0a5nEOEVEpfRSs61MMvwNXEKZtzkO0QFbOrFYrPntyb7ToqNi66OQNyTfl/J7kqFZg2MTm3CKjHTAIvVMFAGCIamsrT9sWXOtuNeMS94xazxDA==").unwrap().as_slice(),
+        )
+            .unwrap()
+    });
+
+    pub const USER_ID_1: &str = "11111111111111111111111111111111";
+    pub const USER_ID_1_DOUBLE_ENCODED: &str = "00b033dec3c913aa7d087a49be7bbf4115cd441453778a73d5c705f3515d500841b867748697709fe3f587f796d6c9b20104a27cd1250af6b330fc0dd4eda07005";
+    pub const USER_ID_2: &str = "22222222222222222222222222222222";
+    pub const USER_ID_2_DOUBLE_ENCODED: &str = "0098d38ed257381ba5cd769275e505ae3d4d577a85c8393e787a818c18c9d0dc5196b8e46f96d4f2f1cbb32d79370e6b177c45be1a52a5f1a63ed656d6d4cb1b21";
+    pub const USER_ID_3: &str = "33333333333333333333333333333333";
+    pub const USER_ID_3_DOUBLE_ENCODED: &str = "005c623150bf34d1f5d569a6ac3e4ca9edf6938288971442c2cf8fc6ff0825fe09b6406e031db6c23d6df715a6198369899c6709b44f9f3fb1cb33ca174d384622";
+
+    const ROOM_ID: &str = "ff0000dd";
+    const EPOCH: u32 = 0x0000c350;
+    pub const ADMIN_PASSKEY: &[u8] = b"swordfish";
+
+    pub const X_ROOM_ID: &str = "X-Room-Id";
+    pub const X_EPOCH: &str = "X-Epoch";
+
+    const DISTANT_FUTURE_IN_EPOCH_SECONDS: u64 = 4133980800; // 2101-01-01
+    const DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS: u64 =
+        4133980800 + storage::CallLinkState::DELETION_TIMER.as_secs();
+
+    static DISTANT_FUTURE: LazyLock<SystemTime> = LazyLock::new(|| {
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(DISTANT_FUTURE_IN_EPOCH_SECONDS)
+    });
+
+    static DISTANT_FUTURE_DELETE_AT: LazyLock<SystemTime> = LazyLock::new(|| {
+        SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(DISTANT_FUTURE_IN_EPOCH_SECONDS)
+            + storage::CallLinkState::DELETION_TIMER
+    });
+
+    static CONFIG: LazyLock<config::Config> = LazyLock::new(|| {
+        initialize_logging();
+        let mut config = config::default_test_config();
+        config.authentication_key = AUTH_KEY.to_string();
+        config
+    });
+
+    static CALL_LINK_SECRET_PARAMS: LazyLock<CallLinkSecretParams> =
+        LazyLock::new(|| CallLinkSecretParams::derive_from_root_key(b"testing"));
+
+    /// The standard (v1) counterpart to [`OLD_ZKPARAMS`], for testing rotation.
+    static NEW_ZKPARAMS: LazyLock<GenericServerSecretParams> =
+        LazyLock::new(|| GenericServerSecretParamsStandard::generate([0x42; 32]).into());
+
+    fn initialize_logging() {
+        let _ = env_logger::Builder::from_env(
+            env_logger::Env::default()
+                .default_filter_or("calling_frontend=info")
+                .default_write_style_or("never"),
+        )
+        .format_timestamp_millis()
+        .is_test(true)
+        .try_init();
+    }
+
+    fn create_frontend(storage: Box<MockStorage>) -> Arc<Frontend> {
+        Arc::new(Frontend {
+            config: &CONFIG,
+            authenticator: Authenticator::from_hex_key(AUTH_KEY).unwrap(),
+            zkparams: NEW_ZKPARAMS.clone(),
+            old_zkparams: None,
+            storage,
+            backend: Box::new(MockBackend::new()),
+            id_generator: Box::new(FrontendIdGenerator),
+            api_metrics: Default::default(),
+        })
+    }
+
+    fn create_frontend_with_rotating_zkparams(storage: Box<MockStorage>) -> Arc<Frontend> {
+        Arc::new(Frontend {
+            config: &CONFIG,
+            authenticator: Authenticator::from_hex_key(AUTH_KEY).unwrap(),
+            zkparams: NEW_ZKPARAMS.clone(),
+            old_zkparams: Some(OLD_ZKPARAMS.clone()),
+            storage,
+            backend: Box::new(MockBackend::new()),
+            id_generator: Box::new(FrontendIdGenerator),
+            api_metrics: Default::default(),
+        })
+    }
+
+    fn start_of_today() -> zkgroup::Timestamp {
+        let now: Duration = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time moves forwards")
+            .into();
+
+        zkgroup::Timestamp::from_epoch_seconds(
+            now.truncated_to(Duration::from_secs(24 * 60 * 60))
+                .as_secs(),
+        )
+    }
+
+    pub fn create_authorization_header_for_user(frontend: &Frontend, user_id: &str) -> String {
+        create_authorization_header_for_user_with_zkparams(&frontend.zkparams, user_id)
+    }
+
+    fn create_authorization_header_for_user_with_zkparams(
+        zkparams: &GenericServerSecretParams,
+        user_id: &str,
+    ) -> String {
+        let public_server_params = zkparams.get_public_params();
+        let user_id = libsignal_core::Aci::from_uuid_bytes(
+            FromHex::from_hex(user_id).expect("valid user ID"),
+        );
+        let redemption_time = start_of_today();
+        let credential = CallLinkAuthCredentialResponse::issue_credential(
+            user_id,
+            redemption_time,
+            zkparams,
+            rand::random(),
+        )
+        .receive(user_id, redemption_time, &public_server_params)
+        .expect("just created")
+        .present(
+            user_id,
+            redemption_time,
+            &public_server_params,
+            &CALL_LINK_SECRET_PARAMS,
+            rand::random(),
+        );
+        format!(
+            "Bearer auth.{}",
+            STANDARD.encode(bincode::serialize(&credential).expect("can serialize"))
+        )
+    }
+
+    pub fn create_authorization_header_for_creator(frontend: &Frontend, user_id: &str) -> String {
+        create_authorization_header_for_creator_with_zkparams(&frontend.zkparams, user_id)
+    }
+
+    fn create_authorization_header_for_creator_with_zkparams(
+        zkparams: &GenericServerSecretParams,
+        user_id: &str,
+    ) -> String {
+        let public_server_params = zkparams.get_public_params();
+        let user_id = libsignal_core::Aci::from_uuid_bytes(
+            FromHex::from_hex(user_id).expect("valid user ID"),
+        );
+        let room_id = Vec::from_hex(ROOM_ID).expect("valid room ID");
+
+        let request_context = CreateCallLinkCredentialRequestContext::new(&room_id, rand::random());
+        let response = request_context.get_request().issue(
+            user_id,
+            start_of_today(),
+            zkparams,
+            rand::random(),
+        );
+
+        let credential = request_context
+            .receive(response, user_id, &public_server_params)
+            .expect("just created")
+            .present(
+                &room_id,
+                user_id,
+                &public_server_params,
+                &CALL_LINK_SECRET_PARAMS,
+                rand::random(),
+            );
+        format!(
+            "Bearer create.{}",
+            STANDARD.encode(bincode::serialize(&credential).expect("can serialize"))
+        )
+    }
+
+    pub fn default_call_link_state() -> storage::CallLinkState {
+        call_link_state_with_approved(vec![])
+    }
+
+    pub fn call_link_state_with_approved(approved_users: Vec<UserId>) -> storage::CallLinkState {
+        storage::CallLinkState {
+            admin_passkey: ADMIN_PASSKEY.into(),
+            epoch: None,
+            zkparams: bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params())
+                .expect("can serialize"),
+            restrictions: CallLinkRestrictions::None,
+            encrypted_name: vec![],
+            revoked: false,
+            expiration: *DISTANT_FUTURE,
+            delete_at: *DISTANT_FUTURE_DELETE_AT,
+            approved_users,
+        }
+    }
+
+    pub fn default_call_link_state_with_epoch() -> storage::CallLinkState {
+        call_link_state_with_approved_and_epoch(vec![])
+    }
+
+    pub fn call_link_state_with_approved_and_epoch(
+        approved_users: Vec<UserId>,
+    ) -> storage::CallLinkState {
+        storage::CallLinkState {
+            admin_passkey: ADMIN_PASSKEY.into(),
+            epoch: Some(EPOCH.into()),
+            zkparams: bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params())
+                .expect("can serialize"),
+            restrictions: CallLinkRestrictions::None,
+            encrypted_name: vec![],
+            revoked: false,
+            expiration: *DISTANT_FUTURE,
+            delete_at: *DISTANT_FUTURE_DELETE_AT,
+            approved_users,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_not_found_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(calling_common::CallLinkEpoch::from(EPOCH))),
+            )
+            .once()
+            .return_once(|_, _| Ok(None));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_not_found_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(eq(calling_common::RoomId::from(ROOM_ID)), eq(None))
+            .once()
+            .return_once(|_, _| Ok(None));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_wrong_zkparams() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(calling_common::CallLinkEpoch::from(EPOCH))),
+            )
+            .once()
+            .return_once(|_, _| {
+                Ok(Some(storage::CallLinkState {
+                    zkparams: bincode::serialize(
+                        &CallLinkSecretParams::derive_from_root_key(b"different")
+                            .get_public_params(),
+                    )
+                    .unwrap(),
+                    ..default_call_link_state()
+                }))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_success_with_old_and_new_zkparams() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(eq(calling_common::RoomId::from(ROOM_ID)), eq(None))
+            .times(2)
+            .returning(|_, _| Ok(Some(default_call_link_state())));
+        let frontend = create_frontend_with_rotating_zkparams(storage);
+
+        let authorization_headers = [
+            create_authorization_header_for_user_with_zkparams(&OLD_ZKPARAMS, USER_ID_1),
+            create_authorization_header_for_user_with_zkparams(&frontend.zkparams, USER_ID_2),
+        ];
+
+        for authorization_header in authorization_headers {
+            // Create an axum application.
+            let app = app(frontend.clone());
+
+            // Create the request.
+            let request = Request::builder()
+                .method(http::Method::GET)
+                .uri("/v1/call-link".to_string())
+                .header(X_ROOM_ID, ROOM_ID)
+                .header(header::USER_AGENT, "test/user/agent")
+                .header(header::AUTHORIZATION, authorization_header)
+                .body(Body::empty())
+                .unwrap();
+
+            // Submit the request.
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_missing_room_id() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_multiple_room_id() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_multiple_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_invalid_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, "abc123")
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_success_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(eq(calling_common::RoomId::from(ROOM_ID)), eq(None))
+            .once()
+            .return_once(|_, _| Ok(Some(default_call_link_state())));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": "",
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_success_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(calling_common::CallLinkEpoch::from(EPOCH))),
+            )
+            .once()
+            .return_once(|_, _| Ok(Some(default_call_link_state_with_epoch())));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": "",
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_success_alternate_values_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(eq(calling_common::RoomId::from(ROOM_ID)), eq(None))
+            .once()
+            .return_once(|_, _| {
+                Ok(Some(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    revoked: true,
+                    restrictions: CallLinkRestrictions::AdminApproval,
+                    ..default_call_link_state()
+                }))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "adminApproval",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": true,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_success_alternate_values_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(calling_common::CallLinkEpoch::from(EPOCH))),
+            )
+            .once()
+            .return_once(|_, _| {
+                Ok(Some(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    revoked: true,
+                    restrictions: CallLinkRestrictions::AdminApproval,
+                    ..default_call_link_state()
+                }))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::GET)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "adminApproval",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": true,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_missing_admin_passkey() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    )
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        // This error comes from the Json extractor.
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_create_missing_zkparams() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_wrong_zkparams() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let wrong_params = CallLinkSecretParams::derive_from_root_key(b"wrong");
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&wrong_params.get_public_params()).unwrap(),
+                    )
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_create_success() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                // Epoch will be randomly generated.
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: None,
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_some());
+                Ok(default_call_link_state_with_epoch())
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    )
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "epoch": EPOCH,
+                "name": "",
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_success_with_old_and_new_zkparams() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage.expect_update_call_link().times(2).returning(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                // Epoch will be randomly generated.
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: None,
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_some());
+                Ok(default_call_link_state_with_epoch())
+            },
+        );
+        let frontend = create_frontend_with_rotating_zkparams(storage);
+
+        let authorization_headers = [
+            create_authorization_header_for_creator_with_zkparams(&OLD_ZKPARAMS, USER_ID_1),
+            create_authorization_header_for_creator_with_zkparams(&NEW_ZKPARAMS, USER_ID_2),
+        ];
+
+        for authorization_header in authorization_headers {
+            // Create an axum application.
+            let app = app(frontend.clone());
+
+            // Create the request.
+            let request = Request::builder()
+                .method(http::Method::PUT)
+                .uri("/v1/call-link".to_string())
+                .header(X_ROOM_ID, ROOM_ID)
+                .header(header::USER_AGENT, "test/user/agent")
+                .header(header::AUTHORIZATION, authorization_header)
+                .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                        "zkparams": STANDARD.encode(
+                            bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params())
+                                .unwrap(),
+                        )
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap();
+
+            // Submit the request.
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_with_initial_values() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: Some(b"abc".to_vec()),
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_some());
+                // Remember that we're not testing the storage logic here.
+                // This is the return value the real storage implementation will produce
+                // for a new room, or for an existing room whose parameters all match.
+                Ok(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    restrictions: CallLinkRestrictions::AdminApproval,
+                    ..default_call_link_state_with_epoch()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    ),
+                    "restrictions": "adminApproval",
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "adminApproval",
+                "epoch": EPOCH,
+                "name": STANDARD.encode(b"abc"),
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_conflict() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage.expect_update_call_link().once().return_once(
+            |room_id, _epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: None,
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_some());
+                Err(storage::CallLinkUpdateError::AdminPasskeyDidNotMatch)
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_creator(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    ),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_update_missing_admin_passkey_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({})).unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        // This error comes from the Json extractor.
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_update_missing_admin_passkey_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({})).unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        // This error comes from the Json extractor.
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_update_with_zkparams_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    ),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_with_zkparams_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "zkparams": STANDARD.encode(
+                        bincode::serialize(&CALL_LINK_SECRET_PARAMS.get_public_params()).unwrap(),
+                    ),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_not_found_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((None, None)));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_update_not_found_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((None, None)));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_update_wrong_zkparams_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(storage::CallLinkState {
+                        zkparams: bincode::serialize(
+                            &CallLinkSecretParams::derive_from_root_key(b"different")
+                                .get_public_params(),
+                        )
+                        .unwrap(),
+                        ..default_call_link_state()
+                    }),
+                    None,
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_wrong_zkparams_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(storage::CallLinkState {
+                        zkparams: bincode::serialize(
+                            &CallLinkSecretParams::derive_from_root_key(b"different")
+                                .get_public_params(),
+                        )
+                        .unwrap(),
+                        ..default_call_link_state()
+                    }),
+                    None,
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_wrong_passkey_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: b"different".to_vec(),
+                        restrictions: None,
+                        encrypted_name: None,
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                Err(storage::CallLinkUpdateError::AdminPasskeyDidNotMatch)
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(b"different"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_wrong_passkey_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, Some(EPOCH.into()));
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: b"different".to_vec(),
+                        restrictions: None,
+                        encrypted_name: None,
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                Err(storage::CallLinkUpdateError::AdminPasskeyDidNotMatch)
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(b"different"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_update_success_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, Some(EPOCH.into()));
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: Some(b"abc".to_vec()),
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    restrictions: CallLinkRestrictions::AdminApproval,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "adminApproval",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_success_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: Some(CallLinkRestrictions::AdminApproval),
+                        encrypted_name: Some(b"abc".to_vec()),
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    restrictions: CallLinkRestrictions::AdminApproval,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "adminApproval",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_link_invalid_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, "abc123")
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_link_multiple_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_title_during_active_call_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: None,
+                        encrypted_name: Some(b"abc".to_vec()),
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    restrictions: CallLinkRestrictions::None,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_title_during_active_call_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, Some(EPOCH.into()));
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: None,
+                        encrypted_name: Some(b"abc".to_vec()),
+                        revoked: None,
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: b"abc".to_vec(),
+                    restrictions: CallLinkRestrictions::None,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "name": STANDARD.encode(b"abc"),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": STANDARD.encode(b"abc"),
+                "revoked": false,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_revocation_during_active_call_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, None);
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: None,
+                        encrypted_name: None,
+                        revoked: Some(true),
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: vec![],
+                    restrictions: CallLinkRestrictions::None,
+                    revoked: true,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "revoked": true,
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": "",
+                "revoked": true,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_revocation_during_active_call_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        storage.expect_update_call_link().once().return_once(
+            |room_id, epoch, new_attributes, zkparams_for_creation| {
+                assert_eq!(room_id.as_ref(), ROOM_ID);
+                assert_eq!(epoch, Some(EPOCH.into()));
+                assert_eq!(
+                    new_attributes,
+                    storage::CallLinkUpdate {
+                        admin_passkey: ADMIN_PASSKEY.into(),
+                        restrictions: None,
+                        encrypted_name: None,
+                        revoked: Some(true),
+                    }
+                );
+                assert!(zkparams_for_creation.is_none());
+                // Remember that we're not testing the storage logic here.
+                Ok(storage::CallLinkState {
+                    encrypted_name: vec![],
+                    restrictions: CallLinkRestrictions::None,
+                    revoked: true,
+                    ..default_call_link_state()
+                })
+            },
+        );
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "revoked": true,
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        // Compare as JSON values to check the encoding of the non-primitive types.
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "restrictions": "none",
+                "name": "",
+                "revoked": true,
+                "expiration": DISTANT_FUTURE_IN_EPOCH_SECONDS,
+                "delete_at": DISTANT_FUTURE_DELETE_AT_IN_EPOCH_SECONDS,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_restrictions_during_active_call_fails_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_update_restrictions_during_active_call_fails_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::PUT)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                    "restrictions": "adminApproval",
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_during_active_call_fails_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_during_active_call_fails_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| {
+                Ok((
+                    Some(default_call_link_state()),
+                    Some(create_call_record(ROOM_ID, "pangaea")),
+                ))
+            });
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_succeeds_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Ok(()));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(bytes.to_vec()).expect("valid utf-8");
+        assert_eq!(body, "{}");
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_succeeds_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state_with_epoch()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Ok(()));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(bytes.to_vec()).expect("valid utf-8");
+        assert_eq!(body, "{}");
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_absent_succeeds_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((None, None)));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_absent_succeeds_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((None, None)));
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_no_auth_fails_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_no_auth_fails_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_invalid_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, "abc123")
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_multiple_epoch() {
+        // Create mocked dependencies with expectations.
+        let storage = Box::new(MockStorage::new());
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Submit the request.
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_call_conflict_fails_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::CallRecordConflict));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Call Record Conflict case
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_call_conflict_fails_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::CallRecordConflict));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        // Call Record Conflict case
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_room_not_found_succeeds_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::RoomDoesNotExist));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_room_not_found_succeeds_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::RoomDoesNotExist));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_adminkey_mismatch_fails_without_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(None),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::AdminPasskeyDidNotMatch));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link_storage_adminkey_mismatch_fails_with_epoch() {
+        // Create mocked dependencies with expectations.
+        let mut storage = Box::new(MockStorage::new());
+        storage
+            .expect_get_call_link_and_record()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(true),
+            )
+            .once()
+            .return_once(|_, _, _| Ok((Some(default_call_link_state()), None)));
+        storage
+            .expect_delete_call_link()
+            .with(
+                eq(calling_common::RoomId::from(ROOM_ID)),
+                eq(Some(EPOCH.into())),
+                eq(ADMIN_PASSKEY),
+            )
+            .once()
+            .return_once(|_, _, _| Err(CallLinkDeleteError::AdminPasskeyDidNotMatch));
+
+        let frontend = create_frontend(storage);
+
+        // Create an axum application.
+        let app = app(frontend.clone());
+
+        // Create the request.
+        let request = Request::builder()
+            .method(http::Method::DELETE)
+            .uri("/v1/call-link".to_string())
+            .header(X_ROOM_ID, ROOM_ID)
+            .header(X_EPOCH, EPOCH)
+            .header(header::USER_AGENT, "test/user/agent")
+            .header(
+                header::AUTHORIZATION,
+                create_authorization_header_for_user(&frontend, USER_ID_1),
+            )
+            .header(header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "adminPasskey": STANDARD.encode(ADMIN_PASSKEY),
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}

@@ -1,0 +1,67 @@
+#
+# Copyright 2023 Signal Messenger, LLC
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+
+[package]
+name = "calling_backend-fuzz"
+version = "0.0.0"
+authors = ["Calling Team <callingteam@signal.org>"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+anyhow = "1.0.104"
+arbitrary = "1.4.2"
+hex-literal = "0.4.1"
+libfuzzer-sys = "0.4.10"
+rand = "0.10.2"
+
+[dependencies.calling_common]
+path = "../../common"
+
+[dependencies.calling_backend]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ice"
+path = "fuzz_targets/ice.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtcp"
+path = "fuzz_targets/rtcp.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "transportcc"
+path = "fuzz_targets/transportcc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtp"
+path = "fuzz_targets/rtp.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "googcc"
+path = "fuzz_targets/googcc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "dependency-descriptor"
+path = "fuzz_targets/dependency_descriptor.rs"
+test = false
+doc = false

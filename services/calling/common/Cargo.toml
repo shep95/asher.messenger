@@ -1,0 +1,46 @@
+#
+# Copyright 2019-2021 Signal Messenger, LLC
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+
+[package]
+name = "calling_common"
+version = "0.0.0"
+authors = ["Calling Team <callingteam@signal.org>"]
+edition = "2024"
+description = "Common calling library."
+license = "AGPL-3.0-only"
+
+[features]
+dynamic_config = [
+    "dep:chrono",
+    "dep:object_store",
+    "dep:serde_with",
+    "dep:serde_yaml",
+    "dep:tokio",
+]
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.22.1"
+env_logger = "0.11.8"
+log = "0.4.29"
+rand = { workspace = true }
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = { workspace = true }
+strum = "0.26.3"
+strum_macros = "0.26.4"
+thiserror = "2.0.17"
+
+# dynamic config dependencies
+chrono = { version = "0.4.42", optional = true }
+object_store = { version = "0.14.1", optional = true, features = ["gcp"] }
+serde_with = { version = "3.16.1", features = ["base64"], optional = true }
+serde_yaml = { version = "0.9.34", optional = true }
+tokio = { version = "1.48.0", features = ["sync", "signal"], optional = true }
+
+[dev-dependencies]
+hex = { version = "0.4.3", features = ["serde"] }
+hex-literal = "0.4.1"
+mockall = "0.15.0"
+once_cell = "1.21.3"
