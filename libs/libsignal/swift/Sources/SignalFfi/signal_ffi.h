@@ -742,6 +742,18 @@ static_assert_64bit(alignof(SignalFfiSyncInputStreamStruct) == 8);
 typedef const SignalFfiSyncInputStreamStruct* SignalType_ConstPointer_SignalFfiSyncInputStreamStruct;
 static_assert_64bit(sizeof(SignalType_ConstPointer_SignalFfiSyncInputStreamStruct) == 8);
 static_assert_64bit(alignof(SignalType_ConstPointer_SignalFfiSyncInputStreamStruct) == 8);
+typedef struct SignalMeshContactCard SignalMeshContactCard;
+typedef const SignalMeshContactCard* SignalType_ConstPointer_SignalMeshContactCard;
+static_assert_64bit(sizeof(SignalType_ConstPointer_SignalMeshContactCard) == 8);
+static_assert_64bit(alignof(SignalType_ConstPointer_SignalMeshContactCard) == 8);
+typedef struct SignalMeshIdentity SignalMeshIdentity;
+typedef const SignalMeshIdentity* SignalType_ConstPointer_SignalMeshIdentity;
+static_assert_64bit(sizeof(SignalType_ConstPointer_SignalMeshIdentity) == 8);
+static_assert_64bit(alignof(SignalType_ConstPointer_SignalMeshIdentity) == 8);
+typedef struct SignalMeshNode SignalMeshNode;
+typedef const SignalMeshNode* SignalType_ConstPointer_SignalMeshNode;
+static_assert_64bit(sizeof(SignalType_ConstPointer_SignalMeshNode) == 8);
+static_assert_64bit(alignof(SignalType_ConstPointer_SignalMeshNode) == 8);
 typedef struct SignalBackupJsonExporter SignalBackupJsonExporter;
 typedef const SignalBackupJsonExporter* SignalType_ConstPointer_SignalBackupJsonExporter;
 static_assert_64bit(sizeof(SignalType_ConstPointer_SignalBackupJsonExporter) == 8);
@@ -1794,6 +1806,42 @@ static_assert_64bit(alignof(SignalMutPointerValidatingMac) == 8);
 typedef SignalMutPointerValidatingMac* SignalType_MutPointer_SignalMutPointerValidatingMac;
 static_assert_64bit(sizeof(SignalType_MutPointer_SignalMutPointerValidatingMac) == 8);
 static_assert_64bit(alignof(SignalType_MutPointer_SignalMutPointerValidatingMac) == 8);
+typedef SignalMeshContactCard* SignalType_MutPointer_SignalMeshContactCard;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMeshContactCard) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMeshContactCard) == 8);
+typedef struct {
+  SignalMeshContactCard* raw;
+} SignalMutPointerMeshContactCard;
+static_assert_64bit(offsetof(SignalMutPointerMeshContactCard, raw) == 0);
+static_assert_64bit(sizeof(SignalMutPointerMeshContactCard) == 8);
+static_assert_64bit(alignof(SignalMutPointerMeshContactCard) == 8);
+typedef SignalMutPointerMeshContactCard* SignalType_MutPointer_SignalMutPointerMeshContactCard;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMutPointerMeshContactCard) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMutPointerMeshContactCard) == 8);
+typedef SignalMeshIdentity* SignalType_MutPointer_SignalMeshIdentity;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMeshIdentity) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMeshIdentity) == 8);
+typedef struct {
+  SignalMeshIdentity* raw;
+} SignalMutPointerMeshIdentity;
+static_assert_64bit(offsetof(SignalMutPointerMeshIdentity, raw) == 0);
+static_assert_64bit(sizeof(SignalMutPointerMeshIdentity) == 8);
+static_assert_64bit(alignof(SignalMutPointerMeshIdentity) == 8);
+typedef SignalMutPointerMeshIdentity* SignalType_MutPointer_SignalMutPointerMeshIdentity;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMutPointerMeshIdentity) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMutPointerMeshIdentity) == 8);
+typedef SignalMeshNode* SignalType_MutPointer_SignalMeshNode;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMeshNode) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMeshNode) == 8);
+typedef struct {
+  SignalMeshNode* raw;
+} SignalMutPointerMeshNode;
+static_assert_64bit(offsetof(SignalMutPointerMeshNode, raw) == 0);
+static_assert_64bit(sizeof(SignalMutPointerMeshNode) == 8);
+static_assert_64bit(alignof(SignalMutPointerMeshNode) == 8);
+typedef SignalMutPointerMeshNode* SignalType_MutPointer_SignalMutPointerMeshNode;
+static_assert_64bit(sizeof(SignalType_MutPointer_SignalMutPointerMeshNode) == 8);
+static_assert_64bit(alignof(SignalType_MutPointer_SignalMutPointerMeshNode) == 8);
 typedef SignalBackupJsonExporter* SignalType_MutPointer_SignalBackupJsonExporter;
 static_assert_64bit(sizeof(SignalType_MutPointer_SignalBackupJsonExporter) == 8);
 static_assert_64bit(alignof(SignalType_MutPointer_SignalBackupJsonExporter) == 8);
@@ -3107,6 +3155,24 @@ typedef struct {
 static_assert_64bit(offsetof(SignalConstPointerFfiSyncInputStreamStruct, raw) == 0);
 static_assert_64bit(sizeof(SignalConstPointerFfiSyncInputStreamStruct) == 8);
 static_assert_64bit(alignof(SignalConstPointerFfiSyncInputStreamStruct) == 8);
+typedef struct {
+  const SignalMeshContactCard* raw;
+} SignalConstPointerMeshContactCard;
+static_assert_64bit(offsetof(SignalConstPointerMeshContactCard, raw) == 0);
+static_assert_64bit(sizeof(SignalConstPointerMeshContactCard) == 8);
+static_assert_64bit(alignof(SignalConstPointerMeshContactCard) == 8);
+typedef struct {
+  const SignalMeshIdentity* raw;
+} SignalConstPointerMeshIdentity;
+static_assert_64bit(offsetof(SignalConstPointerMeshIdentity, raw) == 0);
+static_assert_64bit(sizeof(SignalConstPointerMeshIdentity) == 8);
+static_assert_64bit(alignof(SignalConstPointerMeshIdentity) == 8);
+typedef struct {
+  const SignalMeshNode* raw;
+} SignalConstPointerMeshNode;
+static_assert_64bit(offsetof(SignalConstPointerMeshNode, raw) == 0);
+static_assert_64bit(sizeof(SignalConstPointerMeshNode) == 8);
+static_assert_64bit(alignof(SignalConstPointerMeshNode) == 8);
 typedef struct {
   const SignalBackupJsonExporter* raw;
 } SignalConstPointerBackupJsonExporter;
@@ -5311,6 +5377,246 @@ SignalFfiError* signal_lookup_request_new(
 SignalFfiError* signal_lookup_request_set_token(
   SignalConstPointerLookupRequest request,
   SignalBorrowedBuffer token
+);
+SignalFfiError* signal_mesh_contact_card_address_name(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_created_at(
+  uint64_t* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_decode(
+  SignalMutPointerMeshContactCard* out,
+  SignalBorrowedBuffer data
+);
+SignalFfiError* signal_mesh_contact_card_destroy(
+  SignalMutPointerMeshContactCard p
+);
+SignalFfiError* signal_mesh_contact_card_device_id(
+  uint32_t* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_encode(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_fingerprint(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_from_base64(
+  SignalMutPointerMeshContactCard* out,
+  const int8_t* text
+);
+SignalFfiError* signal_mesh_contact_card_identity_key(
+  SignalMutPointerPublicKey* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_name(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_pre_key_bundle(
+  SignalMutPointerPreKeyBundle* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_registration_id(
+  uint32_t* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_contact_card_safety_number(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshContactCard mine,
+  SignalConstPointerMeshContactCard theirs
+);
+SignalFfiError* signal_mesh_contact_card_to_base64(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshContactCard card
+);
+SignalFfiError* signal_mesh_identity_card(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshIdentity identity
+);
+SignalFfiError* signal_mesh_identity_destroy(
+  SignalMutPointerMeshIdentity p
+);
+SignalFfiError* signal_mesh_identity_export(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshIdentity identity
+);
+SignalFfiError* signal_mesh_identity_fingerprint(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshIdentity identity
+);
+SignalFfiError* signal_mesh_identity_from_identity_key_pair(
+  SignalMutPointerMeshIdentity* out,
+  SignalBorrowedBuffer key_pair,
+  uint32_t registration_id,
+  const int8_t* name
+);
+SignalFfiError* signal_mesh_identity_generate(
+  SignalMutPointerMeshIdentity* out,
+  const int8_t* name
+);
+SignalFfiError* signal_mesh_identity_import(
+  SignalMutPointerMeshIdentity* out,
+  SignalBorrowedBuffer data
+);
+SignalFfiError* signal_mesh_identity_kyber_pre_key_record(
+  SignalMutPointerKyberPreKeyRecord* out,
+  SignalConstPointerMeshIdentity identity
+);
+SignalFfiError* signal_mesh_identity_signed_pre_key_record(
+  SignalMutPointerSignedPreKeyRecord* out,
+  SignalConstPointerMeshIdentity identity
+);
+SignalFfiError* signal_mesh_node_add_contact(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer card
+);
+SignalFfiError* signal_mesh_node_attach_link(
+  uint64_t* out,
+  SignalConstPointerMeshNode node,
+  uint32_t mtu,
+  uint32_t max_bytes_per_sec,
+  uint32_t max_frames_per_sec
+);
+SignalFfiError* signal_mesh_node_broadcast_card(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_card(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_contact(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer fingerprint
+);
+SignalFfiError* signal_mesh_node_contacts(
+  SignalBytestringArray* out,
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_create_group(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  const int8_t* name,
+  SignalBorrowedBuffer members
+);
+SignalFfiError* signal_mesh_node_defer(
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer bundle_id
+);
+SignalFfiError* signal_mesh_node_deliver_plaintext(
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer bundle_id,
+  SignalBorrowedBuffer plaintext
+);
+SignalFfiError* signal_mesh_node_destroy(
+  SignalMutPointerMeshNode p
+);
+SignalFfiError* signal_mesh_node_detach_link(
+  SignalConstPointerMeshNode node,
+  uint64_t link
+);
+SignalFfiError* signal_mesh_node_fingerprint(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_flush(
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_group(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer group
+);
+SignalFfiError* signal_mesh_node_groups(
+  SignalBytestringArray* out,
+  SignalConstPointerMeshNode node
+);
+SignalFfiError* signal_mesh_node_link_read(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  uint64_t link,
+  uint32_t timeout_ms
+);
+SignalFfiError* signal_mesh_node_link_write(
+  bool* out,
+  SignalConstPointerMeshNode node,
+  uint64_t link,
+  SignalBorrowedBuffer frame
+);
+SignalFfiError* signal_mesh_node_new(
+  SignalMutPointerMeshNode* out,
+  SignalConstPointerMeshIdentity identity,
+  const int8_t* state_path,
+  bool external_crypto,
+  uint32_t anti_entropy_secs
+);
+SignalFfiError* signal_mesh_node_next_event(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  uint32_t timeout_ms
+);
+SignalFfiError* signal_mesh_node_prepare_group_create(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  const int8_t* name,
+  SignalBorrowedBuffer members
+);
+SignalFfiError* signal_mesh_node_prepare_group_text(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer group,
+  SignalBorrowedBuffer plaintext
+);
+SignalFfiError* signal_mesh_node_prepare_text(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  SignalBorrowedBuffer plaintext
+);
+SignalFfiError* signal_mesh_node_remove_contact(
+  bool* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer fingerprint
+);
+SignalFfiError* signal_mesh_node_rename(
+  SignalConstPointerMeshNode node,
+  const int8_t* name
+);
+SignalFfiError* signal_mesh_node_safety_number(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer fingerprint
+);
+SignalFfiError* signal_mesh_node_send_ciphertext(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  SignalBorrowedBuffer commit,
+  uint32_t message_type,
+  SignalBorrowedBuffer ciphertext
+);
+SignalFfiError* signal_mesh_node_send_group_text(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer group,
+  SignalBorrowedBuffer plaintext
+);
+SignalFfiError* signal_mesh_node_send_text(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  SignalBorrowedBuffer plaintext
+);
+SignalFfiError* signal_mesh_node_stats(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node
 );
 SignalFfiError* signal_message_backup_key_destroy(
   SignalMutPointerMessageBackupKey p

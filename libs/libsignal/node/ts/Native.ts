@@ -105,7 +105,7 @@ export type MessageBackupValidationOutcome = {
 
 export type JsonFrameExportResult = [
   line: string | null,
-  errorMessage: string | null
+  errorMessage: string | null,
 ];
 
 export type PreKeysResponse = {
@@ -2116,6 +2116,153 @@ type NativeFunctions = {
     request: Wrapper<LookupRequest>,
     token: Uint8Array<ArrayBuffer>
   ) => void;
+  MeshContactCard_AddressName: (card: Wrapper<MeshContactCard>) => string;
+  MeshContactCard_CreatedAt: (card: Wrapper<MeshContactCard>) => bigint;
+  MeshContactCard_Decode: (data: Uint8Array<ArrayBuffer>) => MeshContactCard;
+  MeshContactCard_DeviceId: (card: Wrapper<MeshContactCard>) => number;
+  MeshContactCard_Encode: (
+    card: Wrapper<MeshContactCard>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshContactCard_Fingerprint: (
+    card: Wrapper<MeshContactCard>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshContactCard_FromBase64: (text: string) => MeshContactCard;
+  MeshContactCard_IdentityKey: (card: Wrapper<MeshContactCard>) => PublicKey;
+  MeshContactCard_Name: (card: Wrapper<MeshContactCard>) => string;
+  MeshContactCard_PreKeyBundle: (
+    card: Wrapper<MeshContactCard>
+  ) => PreKeyBundle;
+  MeshContactCard_RegistrationId: (card: Wrapper<MeshContactCard>) => number;
+  MeshContactCard_SafetyNumber: (
+    mine: Wrapper<MeshContactCard>,
+    theirs: Wrapper<MeshContactCard>
+  ) => string;
+  MeshContactCard_ToBase64: (card: Wrapper<MeshContactCard>) => string;
+  MeshIdentity_Card: (
+    identity: Wrapper<MeshIdentity>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshIdentity_Export: (
+    identity: Wrapper<MeshIdentity>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshIdentity_Fingerprint: (
+    identity: Wrapper<MeshIdentity>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshIdentity_FromIdentityKeyPair: (
+    key_pair: Uint8Array<ArrayBuffer>,
+    registration_id: number,
+    name: string
+  ) => MeshIdentity;
+  MeshIdentity_Generate: (name: string) => MeshIdentity;
+  MeshIdentity_Import: (data: Uint8Array<ArrayBuffer>) => MeshIdentity;
+  MeshIdentity_KyberPreKeyRecord: (
+    identity: Wrapper<MeshIdentity>
+  ) => KyberPreKeyRecord;
+  MeshIdentity_SignedPreKeyRecord: (
+    identity: Wrapper<MeshIdentity>
+  ) => SignedPreKeyRecord;
+  MeshNode_AddContact: (
+    node: Wrapper<MeshNode>,
+    card: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_AttachLink: (
+    node: Wrapper<MeshNode>,
+    mtu: number,
+    max_bytes_per_sec: number,
+    max_frames_per_sec: number
+  ) => bigint;
+  MeshNode_BroadcastCard: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
+  MeshNode_Card: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
+  MeshNode_Contact: (
+    node: Wrapper<MeshNode>,
+    fingerprint: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_Contacts: (
+    node: Wrapper<MeshNode>
+  ) => Array<Uint8Array<ArrayBuffer>>;
+  MeshNode_CreateGroup: (
+    node: Wrapper<MeshNode>,
+    name: string,
+    members: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_Defer: (
+    node: Wrapper<MeshNode>,
+    bundle_id: Uint8Array<ArrayBuffer>
+  ) => void;
+  MeshNode_DeliverPlaintext: (
+    node: Wrapper<MeshNode>,
+    bundle_id: Uint8Array<ArrayBuffer>,
+    plaintext: Uint8Array<ArrayBuffer>
+  ) => void;
+  MeshNode_DetachLink: (node: Wrapper<MeshNode>, link: bigint) => void;
+  MeshNode_Fingerprint: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
+  MeshNode_Flush: (node: Wrapper<MeshNode>) => void;
+  MeshNode_Group: (
+    node: Wrapper<MeshNode>,
+    group: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_Groups: (node: Wrapper<MeshNode>) => Array<Uint8Array<ArrayBuffer>>;
+  MeshNode_LinkRead: (
+    node: Wrapper<MeshNode>,
+    link: bigint,
+    timeout_ms: number
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_LinkWrite: (
+    node: Wrapper<MeshNode>,
+    link: bigint,
+    frame: Uint8Array<ArrayBuffer>
+  ) => boolean;
+  MeshNode_New: (
+    identity: Wrapper<MeshIdentity>,
+    state_path: string | null,
+    external_crypto: boolean,
+    anti_entropy_secs: number
+  ) => MeshNode;
+  MeshNode_NextEvent: (
+    node: Wrapper<MeshNode>,
+    timeout_ms: number
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_PrepareGroupCreate: (
+    node: Wrapper<MeshNode>,
+    name: string,
+    members: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_PrepareGroupText: (
+    node: Wrapper<MeshNode>,
+    group: Uint8Array<ArrayBuffer>,
+    plaintext: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_PrepareText: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    plaintext: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_RemoveContact: (
+    node: Wrapper<MeshNode>,
+    fingerprint: Uint8Array<ArrayBuffer>
+  ) => boolean;
+  MeshNode_Rename: (node: Wrapper<MeshNode>, name: string) => void;
+  MeshNode_SafetyNumber: (
+    node: Wrapper<MeshNode>,
+    fingerprint: Uint8Array<ArrayBuffer>
+  ) => string;
+  MeshNode_SendCiphertext: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    commit: Uint8Array<ArrayBuffer>,
+    message_type: number,
+    ciphertext: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_SendGroupText: (
+    node: Wrapper<MeshNode>,
+    group: Uint8Array<ArrayBuffer>,
+    plaintext: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_SendText: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    plaintext: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_Stats: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
   MessageBackupKey_FromAccountEntropyPool: (
     account_entropy: AccountEntropyPool,
     aci: Uint8Array<ArrayBuffer>,
@@ -4257,6 +4404,55 @@ const {
   LookupRequest_addPreviousE164,
   LookupRequest_new,
   LookupRequest_setToken,
+  MeshContactCard_AddressName,
+  MeshContactCard_CreatedAt,
+  MeshContactCard_Decode,
+  MeshContactCard_DeviceId,
+  MeshContactCard_Encode,
+  MeshContactCard_Fingerprint,
+  MeshContactCard_FromBase64,
+  MeshContactCard_IdentityKey,
+  MeshContactCard_Name,
+  MeshContactCard_PreKeyBundle,
+  MeshContactCard_RegistrationId,
+  MeshContactCard_SafetyNumber,
+  MeshContactCard_ToBase64,
+  MeshIdentity_Card,
+  MeshIdentity_Export,
+  MeshIdentity_Fingerprint,
+  MeshIdentity_FromIdentityKeyPair,
+  MeshIdentity_Generate,
+  MeshIdentity_Import,
+  MeshIdentity_KyberPreKeyRecord,
+  MeshIdentity_SignedPreKeyRecord,
+  MeshNode_AddContact,
+  MeshNode_AttachLink,
+  MeshNode_BroadcastCard,
+  MeshNode_Card,
+  MeshNode_Contact,
+  MeshNode_Contacts,
+  MeshNode_CreateGroup,
+  MeshNode_Defer,
+  MeshNode_DeliverPlaintext,
+  MeshNode_DetachLink,
+  MeshNode_Fingerprint,
+  MeshNode_Flush,
+  MeshNode_Group,
+  MeshNode_Groups,
+  MeshNode_LinkRead,
+  MeshNode_LinkWrite,
+  MeshNode_New,
+  MeshNode_NextEvent,
+  MeshNode_PrepareGroupCreate,
+  MeshNode_PrepareGroupText,
+  MeshNode_PrepareText,
+  MeshNode_RemoveContact,
+  MeshNode_Rename,
+  MeshNode_SafetyNumber,
+  MeshNode_SendCiphertext,
+  MeshNode_SendGroupText,
+  MeshNode_SendText,
+  MeshNode_Stats,
   MessageBackupKey_FromAccountEntropyPool,
   MessageBackupKey_FromBackupKeyAndBackupId,
   MessageBackupKey_GetAesKey,
@@ -5066,6 +5262,55 @@ export {
   LookupRequest_addPreviousE164,
   LookupRequest_new,
   LookupRequest_setToken,
+  MeshContactCard_AddressName,
+  MeshContactCard_CreatedAt,
+  MeshContactCard_Decode,
+  MeshContactCard_DeviceId,
+  MeshContactCard_Encode,
+  MeshContactCard_Fingerprint,
+  MeshContactCard_FromBase64,
+  MeshContactCard_IdentityKey,
+  MeshContactCard_Name,
+  MeshContactCard_PreKeyBundle,
+  MeshContactCard_RegistrationId,
+  MeshContactCard_SafetyNumber,
+  MeshContactCard_ToBase64,
+  MeshIdentity_Card,
+  MeshIdentity_Export,
+  MeshIdentity_Fingerprint,
+  MeshIdentity_FromIdentityKeyPair,
+  MeshIdentity_Generate,
+  MeshIdentity_Import,
+  MeshIdentity_KyberPreKeyRecord,
+  MeshIdentity_SignedPreKeyRecord,
+  MeshNode_AddContact,
+  MeshNode_AttachLink,
+  MeshNode_BroadcastCard,
+  MeshNode_Card,
+  MeshNode_Contact,
+  MeshNode_Contacts,
+  MeshNode_CreateGroup,
+  MeshNode_Defer,
+  MeshNode_DeliverPlaintext,
+  MeshNode_DetachLink,
+  MeshNode_Fingerprint,
+  MeshNode_Flush,
+  MeshNode_Group,
+  MeshNode_Groups,
+  MeshNode_LinkRead,
+  MeshNode_LinkWrite,
+  MeshNode_New,
+  MeshNode_NextEvent,
+  MeshNode_PrepareGroupCreate,
+  MeshNode_PrepareGroupText,
+  MeshNode_PrepareText,
+  MeshNode_RemoveContact,
+  MeshNode_Rename,
+  MeshNode_SafetyNumber,
+  MeshNode_SendCiphertext,
+  MeshNode_SendGroupText,
+  MeshNode_SendText,
+  MeshNode_Stats,
   MessageBackupKey_FromAccountEntropyPool,
   MessageBackupKey_FromBackupKeyAndBackupId,
   MessageBackupKey_GetAesKey,
@@ -5791,6 +6036,15 @@ export interface KyberSecretKey {
   readonly __type: unique symbol;
 }
 export interface LookupRequest {
+  readonly __type: unique symbol;
+}
+export interface MeshContactCard {
+  readonly __type: unique symbol;
+}
+export interface MeshIdentity {
+  readonly __type: unique symbol;
+}
+export interface MeshNode {
   readonly __type: unique symbol;
 }
 export interface MessageBackupKey {

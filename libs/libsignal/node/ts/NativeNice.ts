@@ -1810,7 +1810,7 @@ export function returnConverterSetOneTimeEcPreKeysArgs(
       arr.map(
         ([a, b]: [number, Uint8Array<ArrayBuffer>]): [
           number,
-          Uint8Array<ArrayBuffer>
+          Uint8Array<ArrayBuffer>,
         ] => [identity(a), identity(b)]
       ))(ffiInput.pre_keys),
   };
@@ -3112,7 +3112,7 @@ export function TESTING_CheckSvrCredentialsTests(): Array<
       arr.map(
         ([a, b]: [string, ReturnFfiAuthCheckResult]): [
           string,
-          AuthCheckResult
+          AuthCheckResult,
         ] => [identity(a), returnConverterAuthCheckResult(b)]
       )
   )(Native.TESTING_CheckSvrCredentialsTests());
@@ -4717,7 +4717,7 @@ export async function UnauthenticatedChatConnection_check_svr_credentials({
     arr.map(
       ([a, b]: [string, ReturnFfiAuthCheckResult]): [
         string,
-        AuthCheckResult
+        AuthCheckResult,
       ] => [identity(a), returnConverterAuthCheckResult(b)]
     ))(
     await asyncContext.makeCancellable(

@@ -1833,6 +1833,236 @@ internal object Native {
   ): Unit
 
   @JvmStatic
+  public external fun MeshContactCard_AddressName(card: ObjectHandle): String
+
+  @JvmStatic
+  public external fun MeshContactCard_CreatedAt(card: ObjectHandle): Long
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshContactCard_Decode(data: ByteArray): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshContactCard_Destroy(handle: ObjectHandle): Unit
+
+  @JvmStatic
+  public external fun MeshContactCard_DeviceId(card: ObjectHandle): Int
+
+  @JvmStatic
+  public external fun MeshContactCard_Encode(card: ObjectHandle): ByteArray
+
+  @JvmStatic
+  public external fun MeshContactCard_Fingerprint(card: ObjectHandle): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshContactCard_FromBase64(text: String): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshContactCard_IdentityKey(card: ObjectHandle): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshContactCard_Name(card: ObjectHandle): String
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshContactCard_PreKeyBundle(card: ObjectHandle): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshContactCard_RegistrationId(card: ObjectHandle): Int
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshContactCard_SafetyNumber(mine: ObjectHandle, theirs: ObjectHandle): String
+
+  @JvmStatic
+  public external fun MeshContactCard_ToBase64(card: ObjectHandle): String
+
+  @JvmStatic
+  public external fun MeshIdentity_Card(identity: ObjectHandle): ByteArray
+
+  @JvmStatic
+  public external fun MeshIdentity_Destroy(handle: ObjectHandle): Unit
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshIdentity_Export(identity: ObjectHandle): ByteArray
+
+  @JvmStatic
+  public external fun MeshIdentity_Fingerprint(identity: ObjectHandle): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshIdentity_FromIdentityKeyPair(
+    keyPair: ByteArray,
+    registrationId: Int,
+    name: String,
+  ): ObjectHandle
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshIdentity_Generate(name: String): ObjectHandle
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshIdentity_Import(data: ByteArray): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshIdentity_KyberPreKeyRecord(identity: ObjectHandle): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshIdentity_SignedPreKeyRecord(identity: ObjectHandle): ObjectHandle
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_AddContact(node: ObjectHandle, card: ByteArray): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_AttachLink(
+    node: ObjectHandle,
+    mtu: Int,
+    maxBytesPerSec: Int,
+    maxFramesPerSec: Int,
+  ): Long
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_BroadcastCard(node: ObjectHandle): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_Card(node: ObjectHandle): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_Contact(node: ObjectHandle, fingerprint: ByteArray): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_Contacts(node: ObjectHandle): Array<ByteArray>
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_CreateGroup(
+    node: ObjectHandle,
+    name: String,
+    members: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_Defer(node: ObjectHandle, bundleId: ByteArray): Unit
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_DeliverPlaintext(
+    node: ObjectHandle,
+    bundleId: ByteArray,
+    plaintext: ByteArray,
+  ): Unit
+
+  @JvmStatic
+  public external fun MeshNode_Destroy(handle: ObjectHandle): Unit
+
+  @JvmStatic
+  public external fun MeshNode_DetachLink(node: ObjectHandle, link: Long): Unit
+
+  @JvmStatic
+  public external fun MeshNode_Fingerprint(node: ObjectHandle): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_Flush(node: ObjectHandle): Unit
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_Group(node: ObjectHandle, group: ByteArray): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_Groups(node: ObjectHandle): Array<ByteArray>
+
+  @JvmStatic
+  public external fun MeshNode_LinkRead(node: ObjectHandle, link: Long, timeoutMs: Int): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_LinkWrite(node: ObjectHandle, link: Long, frame: ByteArray): Boolean
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_New(
+    identity: ObjectHandle,
+    statePath: String?,
+    externalCrypto: Boolean,
+    antiEntropySecs: Int,
+  ): ObjectHandle
+
+  @JvmStatic
+  public external fun MeshNode_NextEvent(node: ObjectHandle, timeoutMs: Int): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_PrepareGroupCreate(
+    node: ObjectHandle,
+    name: String,
+    members: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_PrepareGroupText(
+    node: ObjectHandle,
+    group: ByteArray,
+    plaintext: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_PrepareText(
+    node: ObjectHandle,
+    to: ByteArray,
+    plaintext: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_RemoveContact(node: ObjectHandle, fingerprint: ByteArray): Boolean
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_Rename(node: ObjectHandle, name: String): Unit
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SafetyNumber(node: ObjectHandle, fingerprint: ByteArray): String
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SendCiphertext(
+    node: ObjectHandle,
+    to: ByteArray,
+    commit: ByteArray,
+    messageType: Int,
+    ciphertext: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SendGroupText(
+    node: ObjectHandle,
+    group: ByteArray,
+    plaintext: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SendText(
+    node: ObjectHandle,
+    to: ByteArray,
+    plaintext: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  public external fun MeshNode_Stats(node: ObjectHandle): ByteArray
+
+  @JvmStatic
   public external fun MessageBackupKey_Destroy(handle: ObjectHandle): Unit
 
   @JvmStatic
