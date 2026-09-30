@@ -1,0 +1,52 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use '../colors.scss';
+@use '../mixins.scss';
+@use '../fonts.scss';
+
+.base {
+  font-family: fonts.$inter;
+  margin: 0;
+}
+
+.heading {
+  composes: base;
+  font-weight: 500;
+}
+
+.h1 {
+  composes: heading;
+  font-size: 16px;
+  line-height: 20px;
+  color: light-dark(colors.$color-gray-90, colors.$color-gray-05);
+}
+
+.h2 {
+  composes: heading;
+  font-size: 14px;
+  line-height: 18px;
+  margin-bottom: 8px;
+  color: light-dark(colors.$color-gray-90, colors.$color-white);
+}
+
+.text {
+  composes: base;
+  font-size: 13px;
+  line-height: 18px;
+  color: light-dark(colors.$color-gray-90, colors.$color-white);
+
+  a {
+    color: colors.$color-ultramarine;
+    text-decoration: none;
+  }
+}
+
+.text-center {
+  composes: text;
+  text-align: center;
+}
+
+.secondary {
+  color: light-dark(colors.$color-gray-60, colors.$color-gray-25);
+}

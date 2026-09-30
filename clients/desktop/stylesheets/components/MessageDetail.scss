@@ -1,0 +1,16 @@
+// Copyright 2018 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use '../mixins';
+@use '../variables';
+
+.module-message-detail__contact__unidentified-delivery-icon {
+  margin-inline-end: 6px;
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  @include mixins.color-svg(
+    '../images/icons/v2/unidentified-delivery-solid-20.svg',
+    currentColor
+  );
+}

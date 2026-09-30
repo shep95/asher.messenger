@@ -1,0 +1,68 @@
+// Copyright 2021 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use '../mixins';
+@use '../variables';
+
+.ConversationDetails {
+  &__chat-color {
+    @include mixins.color-bubble(32px);
+  }
+
+  &-membership-list__member-label {
+    @include mixins.font-body-small;
+  }
+
+  &-membership-list__member-label-button {
+    @include mixins.font-body-small;
+    @include mixins.button-focus-outline;
+
+    &:hover {
+      background-color: light-dark(
+        variables.$color-gray-02,
+        variables.$color-gray-90
+      );
+    }
+
+    margin-inline-start: -5px;
+    padding-inline-start: 5px;
+    font-weight: 500;
+    border-radius: 5px;
+
+    display: flex;
+    align-items: center;
+    color: light-dark(
+      rgba(variables.$color-black, 0.55),
+      rgba(variables.$color-white, 0.55)
+    );
+
+    &:focus-visible {
+      @include mixins.axo-focus-ring;
+    }
+
+    &__chevron-icon {
+      height: 16px;
+      width: 16px;
+      margin-bottom: 1px;
+
+      @include mixins.color-svg-themed(
+        '../images/icons/v3/chevron/chevron-right.svg',
+        rgba(variables.$color-black, 0.55),
+        rgba(variables.$color-white, 0.55)
+      );
+    }
+  }
+
+  &__header-buttons {
+    margin-bottom: 24px;
+  }
+}
+
+.Input__container.GroupMemberLabelEditor__container {
+  margin-block: 0;
+}
+
+.Input__input--textarea.GroupMemberLabelEditor__input--textarea {
+  line-height: 32px;
+  margin-top: 0px;
+}

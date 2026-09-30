@@ -1,0 +1,85 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use 'sass:color';
+
+@use '../mixins.scss';
+@use '../colors.scss';
+@use '../fonts.scss';
+
+.base {
+  border: none;
+  min-width: 80px;
+  height: 36px;
+  padding-block: 0;
+  padding-inline: 25px;
+  border-radius: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-family: fonts.$inter;
+  font-weight: normal;
+  font-size: 14px;
+  white-space: nowrap;
+  background-color: light-dark(colors.$color-gray-05, colors.$color-gray-65);
+  color: light-dark(colors.$color-gray-90, colors.$color-gray-05);
+
+  &:hover {
+    background-color: light-dark(
+      color.mix(colors.$color-black, colors.$color-gray-05, 15%),
+      color.mix(colors.$color-white, colors.$color-gray-65, 15%)
+    );
+  }
+
+  &:active {
+    background-color: light-dark(
+      color.mix(colors.$color-black, colors.$color-gray-05, 25%),
+      color.mix(colors.$color-white, colors.$color-gray-65, 25%)
+    );
+  }
+
+  &:disabled {
+    opacity: 0.4;
+  }
+}
+
+.primary {
+  composes: base;
+  background-color: colors.$color-ultramarine;
+  color: light-dark(colors.$color-white, colors.$color-white);
+
+  &:hover {
+    background-color: light-dark(
+      color.mix(colors.$color-black, colors.$color-ultramarine, 15%),
+      color.mix(colors.$color-white, colors.$color-ultramarine, 15%)
+    );
+  }
+
+  &:active {
+    background-color: light-dark(
+      color.mix(colors.$color-black, colors.$color-ultramarine, 25%),
+      color.mix(colors.$color-white, colors.$color-ultramarine, 25%)
+    );
+  }
+}
+
+.pill {
+  composes: base;
+  height: 28px;
+  border-radius: 15px;
+  padding-block: 0;
+  padding-inline: 17px;
+  color: light-dark(colors.$color-gray-90, colors.$color-white);
+  border: 1px solid light-dark(colors.$color-gray-90, colors.$color-white);
+  background: transparent;
+}
+
+.pill-primary {
+  composes: pill;
+  border: none;
+  background-color: light-dark(
+    colors.$color-ultramarine,
+    colors.$color-ultramarine-light
+  );
+  color: light-dark(colors.$color-white, colors.$color-white);
+}

@@ -1,0 +1,111 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use './mixins.scss';
+@use './colors.scss';
+@use './fonts.scss';
+
+:root {
+  color-scheme: light dark;
+}
+
+html {
+  height: 100%;
+  cursor: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+svg:not([fill]) {
+  fill: currentColor;
+}
+
+body {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  user-select: none;
+
+  @include fonts.font-family;
+  @include fonts.font-body-1;
+
+  background-color: light-dark(colors.$color-white, colors.$color-gray-95);
+  color: light-dark(colors.$color-gray-90, colors.$color-gray-05);
+}
+
+input,
+button,
+select,
+optgroup,
+textarea {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+}
+
+button.grey {
+  border-radius: 5px;
+  border: solid 1px light-dark(colors.$color-gray-25, colors.$color-gray-25);
+  cursor: pointer;
+  margin-block: 1em;
+  margin-inline: auto;
+  padding: 1em;
+  font-family: inherit;
+  color: light-dark(colors.$color-gray-60, colors.$color-gray-60);
+  background: light-dark(colors.$color-gray-02, colors.$color-gray-02);
+  box-shadow: 0 0 10px -5px light-dark(colors.$color-black-alpha-40, colors.$color-white-alpha-60);
+
+  &:hover {
+    box-shadow: 0 0 10px -3px light-dark(colors.$color-black-alpha-60, colors.$color-white-alpha-80);
+  }
+
+  &[disabled='disabled'] {
+    &,
+    &:hover {
+      opacity: 0.5;
+      box-shadow: none;
+      cursor: default;
+    }
+  }
+}
+
+a {
+  color: light-dark(colors.$color-gray-90, colors.$color-gray-05);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: light-dark(colors.$color-white, colors.$color-gray-90);
+}
+
+// Overrides
+
+.EmojiPickerReact.epr-main {
+  --emoji-padding: 2px;
+
+  .epr-search,
+  .epr-emoji-category-label {
+    font-family: fonts.$inter;
+  }
+
+  button.epr-emoji {
+    padding: var(--epr-emoji-padding);
+
+    &:hover {
+      background-color: var(--epr-emoji-hover-color);
+    }
+  }
+
+  button.epr-emoji .epr-emoji-native {
+    font-family: 'Signal Emoji Large' !important;
+  }
+}

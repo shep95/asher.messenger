@@ -1,0 +1,75 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+@use '../mixins.scss';
+@use '../colors.scss';
+
+.base {
+  width: 380px;
+  padding: 4px;
+  display: flex;
+  flex-direction: row;
+  border-radius: 8px;
+  box-shadow: 0 2px 13px 3px rgba(0, 0, 0, 0.3);
+  position: relative;
+  background: light-dark(colors.$color-white, colors.$color-gray-75);
+}
+
+.frame {
+  width: 50%;
+  padding-block: 12px 3px;
+  padding-inline: 12px;
+}
+
+.frame-light {
+  composes: frame;
+  background: colors.$color-white;
+  border-radius: 6px 0 0 6px;
+}
+
+.frame-dark {
+  composes: frame;
+  background: colors.$color-black;
+  border-radius: 0 6px 6px 0;
+}
+
+.arrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
+
+.arrow-top {
+  composes: arrow;
+  border-width: 0 8px 8px 8px;
+  top: -8px;
+  border-color: transparent;
+  border-bottom-color: light-dark(colors.$color-white, colors.$color-gray-75);
+}
+
+.arrow-bottom {
+  composes: arrow;
+  border-width: 8px 8px 0 8px;
+  bottom: -8px;
+  border-color: transparent;
+  border-top-color: light-dark(colors.$color-white, colors.$color-gray-75);
+}
+
+.arrow-left {
+  composes: arrow;
+  border-width: 8px 8px 8px 0;
+  inset-inline-start: -8px;
+  border-color: transparent;
+  /* stylelint-disable-next-line liberty/use-logical-spec */
+  border-right-color: light-dark(colors.$color-white, colors.$color-gray-75);
+}
+
+.arrow-right {
+  composes: arrow;
+  border-width: 8px 0 8px 8px;
+  inset-inline-end: -8px;
+  border-color: transparent;
+  /* stylelint-disable-next-line liberty/use-logical-spec */
+  border-left-color: light-dark(colors.$color-white, colors.$color-gray-75);
+}
