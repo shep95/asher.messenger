@@ -31,6 +31,7 @@ import {
   writeNewAttachmentData,
 } from '../util/migrations.preload.ts';
 import { drop } from '../util/drop.std.ts';
+import { getMeshRouter } from '../mesh/meshRouter.std.ts';
 import { isShallowEqual } from '../util/isShallowEqual.std.ts';
 import type { NotifyWhileMutedKey } from '../util/notifyWhileMuted.std.ts';
 import { NOTIFY_WHILE_MUTED_FIELDS } from '../util/notifyWhileMuted.std.ts';
@@ -4436,23 +4437,41 @@ export class ConversationModel {
       reason: 'mandatoryProfileSharing',
     });
 
-    await conversationJobQueue.add(
-      {
-        type: conversationQueueJobEnum.enum.NormalMessage,
-        conversationId: this.id,
-        messageId: model.id,
-        revision: this.get('revision'),
-      },
-      async jobToInsert => {
-        log.info(
-          `enqueueMessageForSend: saving message ${model.id} and job ${jobToInsert.id}`
-        );
-        await window.MessageCache.saveMessage(model, {
-          jobToInsert,
-          forceSave: true,
-        });
-      }
-    );
+    const meshRouter = getMeshRouter();
+    if (meshRouter?.shouldRoute(this.id)) {
+      // Offline mesh contact (ts/mesh, flag `mesh.transport`): the message is
+      // encrypted with the same session stores and handed to the mesh node;
+      // it never gets a network send job.
+      log.info(
+        `enqueueMessageForSend: routing message ${model.id} over the mesh`
+      );
+      await window.MessageCache.saveMessage(model, { forceSave: true });
+      drop(
+        meshRouter.send(this.id, model).catch(error => {
+          log.error(
+            `enqueueMessageForSend: mesh send of ${model.id} failed: ${error}`
+          );
+        })
+      );
+    } else {
+      await conversationJobQueue.add(
+        {
+          type: conversationQueueJobEnum.enum.NormalMessage,
+          conversationId: this.id,
+          messageId: model.id,
+          revision: this.get('revision'),
+        },
+        async jobToInsert => {
+          log.info(
+            `enqueueMessageForSend: saving message ${model.id} and job ${jobToInsert.id}`
+          );
+          await window.MessageCache.saveMessage(model, {
+            jobToInsert,
+            forceSave: true,
+          });
+        }
+      );
+    }
 
     const dbDuration = Date.now() - dbStart;
     if (dbDuration > SEND_REPORTING_THRESHOLD_MS) {

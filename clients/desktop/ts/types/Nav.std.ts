@@ -78,6 +78,7 @@ export enum SettingsPage {
   DataUsage = 'DataUsage',
   Backups = 'Backups',
   Internal = 'Internal',
+  Mesh = 'Mesh',
 
   // Sub pages
   AccountKeys = 'AccountKeys',

@@ -102,6 +102,7 @@ import * as ephemeralConfig from './ephemeral_config.main.ts';
 import * as mainProcessLogging from '../ts/logging/main_process_logging.main.ts';
 import { MainSQL } from '../ts/sql/main.main.ts';
 import * as sqlChannels from './sql_channel.main.ts';
+import * as meshChannel from './mesh_channel.main.ts';
 import {
   assertPrivilegedSender,
   setPrivilegedWebContents,
@@ -2450,6 +2451,13 @@ app.on('ready', async () => {
       }
       mainWindow.webContents.send(event);
     },
+  });
+  // Offline mesh transport: sockets and device choosers for the main window.
+  meshChannel.initialize({
+    send(channel, ...args) {
+      mainWindow?.webContents.send(channel, ...args);
+    },
+    getWebContents: () => mainWindow?.webContents,
   });
 
   appStartInitialSpellcheckSetting = await getSpellCheckSetting();

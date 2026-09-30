@@ -68,6 +68,7 @@ import type { EmbeddedContactType } from '../types/EmbeddedContact.std.ts';
 import type { GifType } from '../components/fun/panels/FunPanelGifs.dom.tsx';
 import type { NotificationProfileType } from '../types/NotificationProfile.std.ts';
 import type { DonationReceipt } from '../types/Donations.std.ts';
+import type { MeshContactType } from './server/meshContacts.std.ts';
 import type { InsertOrUpdateCallLinkFromSyncResult } from './server/callLinks.node.ts';
 import type { ChatFolderId, ChatFolder } from '../types/ChatFolder.std.ts';
 import type { CurrentChatFolder } from '../types/CurrentChatFolders.std.ts';
@@ -1116,6 +1117,14 @@ type ReadableInterface = {
   getAllDonationReceipts: () => Array<DonationReceipt>;
   getDonationReceiptById: (id: string) => DonationReceipt | undefined;
 
+  getAllMeshContacts: () => Array<MeshContactType>;
+  getMeshContactByFingerprint: (
+    fingerprint: string
+  ) => MeshContactType | undefined;
+  getMeshContactByConversationId: (
+    conversationId: string
+  ) => MeshContactType | undefined;
+
   getAllChatFolders: () => ReadonlyArray<ChatFolder>;
   getCurrentChatFolders: () => ReadonlyArray<CurrentChatFolder>;
   getChatFolder: (id: ChatFolderId) => ChatFolder | null;
@@ -1498,6 +1507,10 @@ type WritableInterface = {
   _deleteAllDonationReceipts: () => void;
   deleteDonationReceiptById: (id: string) => void;
   createDonationReceipt: (profile: DonationReceipt) => void;
+
+  upsertMeshContact: (contact: MeshContactType) => void;
+  removeMeshContact: (fingerprint: string) => void;
+  _deleteAllMeshContacts: () => void;
 
   createChatFolder: (chatFolder: ChatFolder) => void;
   createAllChatsChatFolder: () => ChatFolder;

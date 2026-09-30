@@ -295,6 +295,8 @@ import { itemStorage } from './textsecure/Storage.preload.ts';
 import { initMessageCleanup } from './services/messageStateCleanup.dom.ts';
 import { MessageCache } from './services/MessageCache.preload.ts';
 import { saveAndNotify } from './messages/saveAndNotify.preload.ts';
+import { meshService } from './mesh/MeshService.preload.ts';
+import { isMeshTransportEnabled } from './mesh/isMeshTransportEnabled.preload.ts';
 import { getBackupKeyHash } from './services/backups/crypto.preload.ts';
 import { Emoji } from './axo/emoji.std.ts';
 import { isTrustedContact } from './util/isConversationAccepted.preload.ts';
@@ -1492,6 +1494,12 @@ async function startApp(): Promise<void> {
     initializeExpiringMessageService();
     initializeNotificationProfilesService();
     keyTransparency.start();
+
+    // Offline mesh transport (docs/offline-mesh.md); off unless the
+    // `mesh.transport` flag or its local override in Preferences > Mesh is on.
+    if (isMeshTransportEnabled()) {
+      drop(meshService.start());
+    }
 
     log.info('Blocked uuids cleanup: starting...');
     const blockedUuids = itemStorage.get(BLOCKED_UUIDS_ID, []);

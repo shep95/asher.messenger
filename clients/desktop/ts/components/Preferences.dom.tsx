@@ -230,6 +230,8 @@ export type PropsDataType = {
   isSystemTraySupported: boolean;
   isMinimizeToAndStartInSystemTraySupported: boolean;
   isInternalUser: boolean;
+  // Offline mesh transport (ts/mesh): shows the Mesh page.
+  isMeshAvailable: boolean;
 
   // Devices
   availableCameras: Array<
@@ -257,6 +259,9 @@ type PropsFunctionType = {
     contentsRef: MutableRefObject<HTMLDivElement | null>;
     settingsLocation: SettingsLocation;
     setSettingsLocation: (settingsLocation: SettingsLocation) => void;
+  }) => JSX.Element;
+  renderMeshPane: (options: {
+    contentsRef: MutableRefObject<HTMLDivElement | null>;
   }) => JSX.Element;
   renderNotificationProfilesHome: (
     props: SmartNotificationProfilesProps
@@ -535,6 +540,7 @@ export function Preferences({
   isSystemTraySupported,
   isMinimizeToAndStartInSystemTraySupported,
   isInternalUser,
+  isMeshAvailable,
   lastLocalBackup,
   lastSyncTime,
   localBackupFolder,
@@ -603,6 +609,7 @@ export function Preferences({
   removeCustomColor,
   removeCustomColorOnConversations,
   renderDonationsPane,
+  renderMeshPane,
   renderNotificationProfilesCreateFlow,
   renderNotificationProfilesHome,
   renderProfileEditor,
@@ -713,6 +720,9 @@ export function Preferences({
   }
 
   if (settingsLocation.page === SettingsPage.Internal && !isInternalUser) {
+    setSettingsLocation({ page: SettingsPage.General });
+  }
+  if (settingsLocation.page === SettingsPage.Mesh && !isMeshAvailable) {
     setSettingsLocation({ page: SettingsPage.General });
   }
 
@@ -2568,6 +2578,14 @@ export function Preferences({
       setSettingsLocation,
       contentsRef: settingsPaneRef,
     });
+  } else if (settingsLocation.page === SettingsPage.Mesh) {
+    content = (
+      <PreferencesContent
+        contents={renderMeshPane({ contentsRef: settingsPaneRef })}
+        contentsRef={settingsPaneRef}
+        title="Mesh"
+      />
+    );
   } else if (settingsLocation.page === SettingsPage.Internal) {
     content = (
       <PreferencesContent
@@ -2806,6 +2824,16 @@ export function Preferences({
                   setSettingsLocation({ page: SettingsPage.Backups })
                 }
               />
+              {isMeshAvailable ? (
+                <PreferencesButton
+                  symbol="globe"
+                  label="Mesh"
+                  current={settingsLocation.page === SettingsPage.Mesh}
+                  onClick={() =>
+                    setSettingsLocation({ page: SettingsPage.Mesh })
+                  }
+                />
+              ) : null}
               {isInternalUser ? (
                 <PreferencesButton
                   symbol="bolt"

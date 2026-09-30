@@ -246,6 +246,14 @@ import {
   getDonationReceiptById,
 } from './server/donationReceipts.std.ts';
 import {
+  _deleteAllMeshContacts,
+  getAllMeshContacts,
+  getMeshContactByConversationId,
+  getMeshContactByFingerprint,
+  removeMeshContact,
+  upsertMeshContact,
+} from './server/meshContacts.std.ts';
+import {
   deleteAllEndorsementsForGroup,
   getGroupSendCombinedEndorsementExpiration,
   getGroupSendEndorsementsData,
@@ -520,6 +528,10 @@ export const DataReader: ServerReadableInterface = {
 
   getAllDonationReceipts,
   getDonationReceiptById,
+
+  getAllMeshContacts,
+  getMeshContactByFingerprint,
+  getMeshContactByConversationId,
 
   getAllChatFolders,
   getCurrentChatFolders,
@@ -800,6 +812,10 @@ export const DataWriter: ServerWritableInterface = {
   _deleteAllDonationReceipts,
   deleteDonationReceiptById,
   createDonationReceipt,
+
+  upsertMeshContact,
+  removeMeshContact,
+  _deleteAllMeshContacts,
 
   createChatFolder,
   createAllChatsChatFolder,
@@ -8745,6 +8761,7 @@ function removeAll(db: WritableDB): void {
       DELETE FROM identityKeys;
       DELETE FROM items;
       DELETE FROM jobs;
+      DELETE FROM mesh_contacts;
       DELETE FROM key_transparency_account_data;
       DELETE FROM kyberPreKeys;
       DELETE FROM megaphones;

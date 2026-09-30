@@ -349,6 +349,15 @@ export type StorageAccessType = {
   sfuUrl: string | undefined;
   callStatsIntervalSecs: number | undefined;
 
+  // Offline mesh transport (docs/offline-mesh.md, ts/mesh)
+  // Local override for the `mesh.transport` flag: true/false win, undefined
+  // defers to remote config.
+  meshTransportEnabled: boolean | undefined;
+  // `MeshIdentity_Export` blob: keeps our card's prekeys stable across restarts.
+  meshIdentity: Uint8Array<ArrayBuffer>;
+  meshGatewayAddress: string | undefined;
+  meshListenPort: number | undefined;
+
   // Deprecated
   'challenge:retry-message-ids': never;
   nextSignedKeyRotationTime: number;
@@ -465,6 +474,9 @@ export const STORAGE_KEYS_TO_PRESERVE_AFTER_UNLINK = [
   'defaultDimWallpaperInDarkMode',
   'defaultAutoBubbleColor',
   'restoredBackupFirstAppVersion',
+  'meshTransportEnabled',
+  'meshGatewayAddress',
+  'meshListenPort',
 ] as const satisfies ReadonlyArray<keyof StorageAccessType>;
 
 export const STORAGE_KEYS_TO_PRESERVE_WHEN_PRIMARY = [
@@ -617,6 +629,7 @@ const STORAGE_KEYS_TO_REMOVE_AFTER_UNLINK = [
   'backupKeyViewed',
   'payments',
   'call-system-notification',
+  'meshIdentity',
 ] as const satisfies ReadonlyArray<keyof StorageAccessType>;
 
 // Ensure every storage key is explicitly marked to be preserved or removed on unlink.

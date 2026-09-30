@@ -84,6 +84,8 @@ import { useToastActions } from '../ducks/toast.preload.ts';
 import { DataReader, DataWriter } from '../../sql/Client.preload.ts';
 import { deleteAllMyStories } from '../../util/deleteAllMyStories.preload.ts';
 import { SmartPreferencesDonations } from './PreferencesDonations.preload.tsx';
+import { SmartPreferencesMesh } from './PreferencesMesh.preload.tsx';
+import { isMeshTransportEnabledFromItems } from '../../mesh/isMeshTransportEnabled.preload.ts';
 import { useDonationsActions } from '../ducks/donations.preload.ts';
 import { generateDonationReceiptBlob } from '../../util/generateDonationReceipt.dom.ts';
 import { backupLevelFromNumber } from '../../services/backups/types.std.ts';
@@ -191,6 +193,12 @@ function renderDonationsPane({
       />
     </DonationsErrorBoundary>
   );
+}
+
+function renderMeshPane(_options: {
+  contentsRef: MutableRefObject<HTMLDivElement | null>;
+}): JSX.Element {
+  return <SmartPreferencesMesh />;
 }
 
 function getSystemTraySettingValues(
@@ -650,6 +658,10 @@ export function SmartPreferences(): JSX.Element | null {
     items.emojiSkinToneDefault ?? Emoji.SkinTone.None;
   const isInternalUser =
     items.remoteConfig?.['desktop.internalUser']?.enabled ?? false;
+  // The Mesh page holds the local override for `mesh.transport`, so internal
+  // users see it even while the flag is off.
+  const isMeshAvailable =
+    isInternalUser || isMeshTransportEnabledFromItems(items);
   const isContentProtectionSupported =
     Settings.isContentProtectionSupported(OS);
   const isContentProtectionNeeded = Settings.isContentProtectionNeeded(OS);
@@ -1120,6 +1132,7 @@ export function SmartPreferences(): JSX.Element | null {
         isSyncSupported={isSyncSupported}
         isSystemTraySupported={isSystemTraySupported}
         isInternalUser={isInternalUser}
+        isMeshAvailable={isMeshAvailable}
         lastLocalBackup={lastLocalBackup}
         lastSyncTime={lastSyncTime}
         localBackupFolder={localBackupFolder}
@@ -1195,6 +1208,7 @@ export function SmartPreferences(): JSX.Element | null {
         removeCustomColorOnConversations={removeCustomColorOnConversations}
         removeCustomColor={removeCustomColor}
         renderDonationsPane={renderDonationsPane}
+        renderMeshPane={renderMeshPane}
         renderNotificationProfilesHome={renderNotificationProfilesHome}
         renderNotificationProfilesCreateFlow={
           renderNotificationProfilesCreateFlow

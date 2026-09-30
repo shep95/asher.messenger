@@ -96,6 +96,9 @@ const ScalarKeys = [
   'global.pinnedMessageLimit',
   'global.textAttachmentLimitBytes',
   'global.videoAttachments.transcodeTargetBytes',
+  // Offline mesh transport (docs/offline-mesh.md); off unless enabled here or
+  // overridden locally in Preferences > Mesh (ts/mesh/isMeshTransportEnabled).
+  'mesh.transport',
 ] as const;
 
 // These keys should always match those in Net.REMOTE_CONFIG_KEYS, prefixed by

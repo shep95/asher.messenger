@@ -54,6 +54,7 @@ import { SmartMiniPlayer } from './MiniPlayer.preload.tsx';
 import { SmartPinnedMessagesBar } from './PinnedMessagesBar.preload.tsx';
 import { getContactSpoofingWarningSelector } from '../selectors/timeline.preload.ts';
 import { getNetworkIsOnline } from '../selectors/network.preload.ts';
+import { getMeshSceneStateSelector } from '../selectors/mesh.std.ts';
 import type { SceneState } from '../../components/conversation/SceneIndicator.dom.tsx';
 import { useNavActions } from '../ducks/nav.std.ts';
 
@@ -136,12 +137,18 @@ export const SmartConversationHeader = memo(function SmartConversationHeader({
   const contactSpoofingWarning = contactSpoofingWarningSelector(conversation);
 
   const activeAudioPlayer = useSelector(selectAudioPlayerActive);
-  // Asher scene indicator: internet reachable → Orbit, otherwise Out of range.
-  // Mesh and Carrying states are wired once the meshlink transport lands.
+  // Asher scene indicator: for a mesh contact the transport decides (Mesh
+  // with a neighbour present, Carrying while bundles await their ack; see
+  // ts/state/selectors/mesh.std.ts); otherwise internet reachable → Orbit,
+  // else Out of range.
   const isNetworkOnline = useSelector(getNetworkIsOnline);
+  const meshSceneStateSelector = useSelector(getMeshSceneStateSelector);
+  const meshSceneState = meshSceneStateSelector(id);
   const sceneState = useMemo<SceneState>(
-    () => (isNetworkOnline ? { kind: 'orbit' } : { kind: 'offline' }),
-    [isNetworkOnline]
+    () =>
+      meshSceneState ??
+      (isNetworkOnline ? { kind: 'orbit' } : { kind: 'offline' }),
+    [isNetworkOnline, meshSceneState]
   );
   const shouldShowMiniPlayer = activeAudioPlayer != null;
 
