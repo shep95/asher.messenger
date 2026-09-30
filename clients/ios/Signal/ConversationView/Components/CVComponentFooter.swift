@@ -606,7 +606,7 @@ public class CVComponentFooter: CVComponentBase, CVComponent {
 
         return CVLabelConfig.unstyledText(
             text,
-            font: .dynamicTypeCaption1,
+            font: .dynamicTypeCaption2, // Asher `bubble.meta.size` (11pt)
             textColor: textColor,
         )
     }
@@ -614,7 +614,7 @@ public class CVComponentFooter: CVComponentBase, CVComponent {
     private func timestampLabelConfig(textColor: UIColor) -> CVLabelConfig {
         return CVLabelConfig.unstyledText(
             timestampText,
-            font: .dynamicTypeCaption1,
+            font: .dynamicTypeCaption2, // Asher `bubble.meta.size` (11pt)
             textColor: textColor,
         )
     }

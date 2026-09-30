@@ -34,4 +34,6 @@
     <item name="edittext_clear_formatting" type="id" />
 
     <item name="nav_host_wrapper_container" type="id" />
+    <item name="scene_indicator_glow" type="id" />
+    <item name="scene_indicator_core" type="id" />
 </resources>

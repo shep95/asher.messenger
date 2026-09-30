@@ -53,31 +53,50 @@
   @include localized-fonts;
 }
 
+// Asher type scale (brands/asher/design/tokens.json → typography.scale):
+//   display 40/44, title 22/28/600/-0.01em, headline 17/22/600, body 16/22,
+//   caption 13/18, micro 11/14 uppercase 0.04em. Display and titles are set in
+//   Space Grotesk (bundled, see _asher.scss) and fall back to Inter.
+@mixin font-display-family {
+  font-family: variables.$display;
+  @include localized-fonts;
+}
+
+@mixin font-display {
+  font-family: variables.$display;
+  font-weight: 500;
+  font-size: 40px;
+  line-height: 44px;
+  letter-spacing: -0.02em;
+}
+
 @mixin font-title-1 {
+  font-family: variables.$display;
   font-weight: 600;
   font-size: 26px;
   line-height: 32px;
-  letter-spacing: -0.56px;
+  letter-spacing: -0.02em;
 }
 
 @mixin font-title-2 {
+  font-family: variables.$display;
   font-weight: 600;
-  font-size: 20px;
-  line-height: 26px;
-  letter-spacing: -0.34px;
+  font-size: 22px;
+  line-height: 28px;
+  letter-spacing: -0.01em;
 }
 
 @mixin font-title-medium {
   font-weight: 600;
-  font-size: 18px;
-  line-height: 25px;
-  letter-spacing: -0.25px;
+  font-size: 17px;
+  line-height: 22px;
+  letter-spacing: -0.01em;
 }
 
 @mixin font-body-1 {
-  font-size: 14px;
-  line-height: 20px;
-  letter-spacing: -0.08px;
+  font-size: 16px;
+  line-height: 22px;
+  letter-spacing: 0;
 }
 @mixin font-body-1-bold {
   @include font-body-1;
@@ -141,7 +160,12 @@
 @mixin font-caption {
   font-size: 11px;
   line-height: 14px;
-  letter-spacing: 0.06px;
+  letter-spacing: 0.04em;
+}
+@mixin font-micro {
+  @include font-caption;
+  font-weight: 500;
+  text-transform: uppercase;
 }
 @mixin font-caption-bold {
   @include font-caption;

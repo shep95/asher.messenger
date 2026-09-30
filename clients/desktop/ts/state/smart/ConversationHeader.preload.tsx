@@ -53,6 +53,8 @@ import type { SmartMiniPlayerProps } from './MiniPlayer.preload.tsx';
 import { SmartMiniPlayer } from './MiniPlayer.preload.tsx';
 import { SmartPinnedMessagesBar } from './PinnedMessagesBar.preload.tsx';
 import { getContactSpoofingWarningSelector } from '../selectors/timeline.preload.ts';
+import { getNetworkIsOnline } from '../selectors/network.preload.ts';
+import type { SceneState } from '../../components/conversation/SceneIndicator.dom.tsx';
 import { useNavActions } from '../ducks/nav.std.ts';
 
 function renderCollidingAvatars(
@@ -134,6 +136,13 @@ export const SmartConversationHeader = memo(function SmartConversationHeader({
   const contactSpoofingWarning = contactSpoofingWarningSelector(conversation);
 
   const activeAudioPlayer = useSelector(selectAudioPlayerActive);
+  // Asher scene indicator: internet reachable → Orbit, otherwise Out of range.
+  // Mesh and Carrying states are wired once the meshlink transport lands.
+  const isNetworkOnline = useSelector(getNetworkIsOnline);
+  const sceneState = useMemo<SceneState>(
+    () => (isNetworkOnline ? { kind: 'orbit' } : { kind: 'offline' }),
+    [isNetworkOnline]
+  );
   const shouldShowMiniPlayer = activeAudioPlayer != null;
 
   const {
@@ -302,6 +311,7 @@ export const SmartConversationHeader = memo(function SmartConversationHeader({
       isMissingMandatoryProfileSharing={isMissingMandatoryProfileSharing}
       isSelectMode={isSelectMode}
       isSignalConversation={isSignalConversation(conversation)}
+      sceneState={sceneState}
       isSmsOnlyOrUnregistered={
         isDirectConversation(conversation) &&
         (isConversationSMSOnly(conversation) ||

@@ -61,6 +61,7 @@ public class ConversationAvatarView: UIView, CVView, PrimaryImageView {
 
         addSubview(storyStateView)
         addSubview(avatarView)
+        layer.insertSublayer(rimLightLayer, above: avatarView.layer)
         addSubview(badgeView)
         autoresizesSubviews = false
         isUserInteractionEnabled = false
@@ -422,6 +423,9 @@ public class ConversationAvatarView: UIView, CVView, PrimaryImageView {
         return view
     }()
 
+    /// Asher `avatar.ring`: rim light on circular avatars.
+    private let rimLightLayer = AsherRimLight.makeLayer()
+
     private var badgeView: UIImageView = {
         let view = UIImageView()
         view.contentMode = .scaleAspectFit
@@ -496,6 +500,12 @@ public class ConversationAvatarView: UIView, CVView, PrimaryImageView {
             avatarView.layer.cornerRadius = 0
             avatarView.layer.masksToBounds = false
         }
+
+        AsherRimLight.layout(
+            rimLightLayer,
+            in: avatarView.frame,
+            isVisible: configuration.shape == .circular && avatarView.image != nil,
+        )
     }
 
     override public var intrinsicContentSize: CGSize { configuration.sizeClass.size }

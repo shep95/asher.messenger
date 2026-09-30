@@ -1868,6 +1868,9 @@
 		B9B4621D3037A35D004C358F /* NotificationPreferencesManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B4621C3037A35D004C358F /* NotificationPreferencesManager.swift */; };
 		B9B7BC652D41C61500C26E42 /* NewLinkedDeviceNotificationMegaphone.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B7BC642D41C61500C26E42 /* NewLinkedDeviceNotificationMegaphone.swift */; };
 		B9B89EED2C064E760093A2FA /* notification_simple-01.caf in Resources */ = {isa = PBXBuildFile; fileRef = B9B89EEC2C064E700093A2FA /* notification_simple-01.caf */; };
+		A5E8A5E80001000000000011 /* asher_notify.wav in Resources */ = {isa = PBXBuildFile; fileRef = A5E8A5E80001000000000001 /* asher_notify.wav */; };
+		A5E8A5E80001000000000012 /* asher_notify.wav in Resources */ = {isa = PBXBuildFile; fileRef = A5E8A5E80001000000000001 /* asher_notify.wav */; };
+		A5E8A5E80001000000000013 /* asher_sent.wav in Resources */ = {isa = PBXBuildFile; fileRef = A5E8A5E80001000000000002 /* asher_sent.wav */; };
 		B9D413742BCDDE66006D4E48 /* Tooltip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D413732BCDDE66006D4E48 /* Tooltip.swift */; };
 		B9D65E532BAE1DA70067322A /* NicknameEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D65E522BAE1DA70067322A /* NicknameEditorViewController.swift */; };
 		B9D721762C87B8EB007EDA85 /* SwiftUI+Animations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9D721752C87B8EB007EDA85 /* SwiftUI+Animations.swift */; };
@@ -6253,6 +6256,8 @@
 		B9B4621C3037A35D004C358F /* NotificationPreferencesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPreferencesManager.swift; sourceTree = "<group>"; };
 		B9B7BC642D41C61500C26E42 /* NewLinkedDeviceNotificationMegaphone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewLinkedDeviceNotificationMegaphone.swift; sourceTree = "<group>"; };
 		B9B89EEC2C064E700093A2FA /* notification_simple-01.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "notification_simple-01.caf"; sourceTree = "<group>"; };
+		A5E8A5E80001000000000001 /* asher_notify.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = asher_notify.wav; sourceTree = "<group>"; };
+		A5E8A5E80001000000000002 /* asher_sent.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = asher_sent.wav; sourceTree = "<group>"; };
 		B9D413732BCDDE66006D4E48 /* Tooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tooltip.swift; sourceTree = "<group>"; };
 		B9D65E522BAE1DA70067322A /* NicknameEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NicknameEditorViewController.swift; sourceTree = "<group>"; };
 		B9D721752C87B8EB007EDA85 /* SwiftUI+Animations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftUI+Animations.swift"; sourceTree = "<group>"; };
@@ -8877,6 +8882,8 @@
 			isa = PBXGroup;
 			children = (
 				34074FC5203E5435004596AE /* messageReceivedSounds */,
+				A5E8A5E80001000000000001 /* asher_notify.wav */,
+				A5E8A5E80001000000000002 /* asher_sent.wav */,
 				34CF0783203E6B77005C4D61 /* busy_tone_ansi.caf */,
 				34CF0786203E6B78005C4D61 /* end_call_tone_cept.caf */,
 				88D6E93E254CF712003142D9 /* group_call_join.aiff */,
@@ -16452,6 +16459,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				342FFEA627249C88000AC89F /* aurora.aifc in Resources */,
+				A5E8A5E80001000000000011 /* asher_notify.wav in Resources */,
 				342FFEA727249C8C000AC89F /* bamboo.aifc in Resources */,
 				342FFEA927249C9A000AC89F /* chord.aifc in Resources */,
 				342FFEAF27249C9A000AC89F /* circles.aifc in Resources */,
@@ -16575,6 +16583,8 @@
 				45B74A7F2044AAB600CD42F8 /* note-quiet.aifc in Resources */,
 				45B74A862044AAB600CD42F8 /* note.aifc in Resources */,
 				B9B89EED2C064E760093A2FA /* notification_simple-01.caf in Resources */,
+				A5E8A5E80001000000000012 /* asher_notify.wav in Resources */,
+				A5E8A5E80001000000000013 /* asher_sent.wav in Resources */,
 				3406D32E25DD80D600885B14 /* payments_spinner.json in Resources */,
 				3406D33225DD832800885B14 /* payments_spinner_dark.json in Resources */,
 				3406D32B25DD80D600885B14 /* payments_spinner_fail.json in Resources */,

@@ -25,6 +25,21 @@ extension Wallpaper {
         switch self {
         case .photo, .releaseNotes:
             return nil
+        case .asherEarth:
+            // Rendered from the `asher_earth` image asset; this void colour is
+            // only the fallback if the asset cannot be loaded.
+            return .themedColor(
+                lightThemeColor: OWSColor(
+                    red: 0.9568627450980393,
+                    green: 0.9686274509803922,
+                    blue: 0.9803921568627451,
+                ),
+                darkThemeColor: OWSColor(
+                    red: 0.0196078431372549,
+                    green: 0.027450980392156862,
+                    blue: 0.043137254901960784,
+                ),
+            )
         // Solid
         case .blush:
             // Spec name: Blush
@@ -426,6 +441,8 @@ extension Wallpaper {
 
     public var defaultChatColor: PaletteChatColor? {
         switch self {
+        // Built-in photo
+        case .asherEarth: return .ultramarine
         // Solid
         case .blush: return .crimson
         case .copper: return .vermilion

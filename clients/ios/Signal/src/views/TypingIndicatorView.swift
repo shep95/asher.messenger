@@ -7,12 +7,16 @@ import SignalServiceKit
 import SignalUI
 
 class TypingIndicatorView: ManualStackView {
-    // This represents the spacing between the dots
-    // _at their max size_.
-    private static let kDotMaxHSpacing: CGFloat = 3
+    // Asher `typing_indicator`: three 6pt dots with a 4pt gap. Each dot rises
+    // 3pt and brightens from text-muted to rim over 900ms, staggered 150ms.
+    private static let kDotMaxHSpacing: CGFloat = 4
 
     static let kMinRadiusPt: CGFloat = 6
-    static let kMaxRadiusPt: CGFloat = 8
+    static let kMaxRadiusPt: CGFloat = 6
+
+    private static let kDotRise: CGFloat = 3
+    private static let kDotRiseDuration: CFTimeInterval = 0.9
+    private static let kDotStagger: CFTimeInterval = 0.15
 
     private let dot1 = DotView(dotType: .dotType1)
     private let dot2 = DotView(dotType: .dotType2)
@@ -153,6 +157,14 @@ class TypingIndicatorView: ManualStackView {
         case dotType1
         case dotType2
         case dotType3
+
+        var index: Int {
+            switch self {
+            case .dotType1: return 0
+            case .dotType2: return 1
+            case .dotType3: return 2
+            }
+        }
     }
 
     private class DotView: UIView {
@@ -181,74 +193,51 @@ class TypingIndicatorView: ManualStackView {
         fileprivate func startAnimation() {
             stopAnimation()
 
-            let baseColor = Theme.secondaryTextAndIconColor
-            let timeIncrement: CFTimeInterval = 0.15
-            var colorValues = [CGColor]()
-            var pathValues = [CGPath]()
-            var keyTimes = [CFTimeInterval]()
-            var animationDuration: CFTimeInterval = 0
+            let dotSize = TypingIndicatorView.kMaxRadiusPt
+            let dotRect = CGRect(x: 0, y: 0, width: dotSize, height: dotSize)
+            shapeLayer.frame = dotRect
+            shapeLayer.path = UIBezierPath(ovalIn: dotRect).cgPath
 
-            let addDotKeyFrame = { (keyFrameTime: CFTimeInterval, progress: CGFloat) in
-                let dotColor = baseColor.withAlphaComponent(CGFloat.lerp(left: 0.4, right: 1.0, alpha: CGFloat.clamp01(progress)))
-                colorValues.append(dotColor.cgColor)
-                let radius = CGFloat.lerp(left: TypingIndicatorView.kMinRadiusPt, right: TypingIndicatorView.kMaxRadiusPt, alpha: CGFloat.clamp01(progress))
-                let margin = (TypingIndicatorView.kMaxRadiusPt - radius) * 0.5
-                let bezierPath = UIBezierPath(ovalIn: CGRect(x: margin, y: margin, width: radius, height: radius))
-                pathValues.append(bezierPath.cgPath)
+            let mutedColor = UIColor.Signal.asherTextMuted.resolvedColor(with: traitCollection).cgColor
+            let rimColor = UIColor.Signal.asherRim.cgColor
+            shapeLayer.fillColor = mutedColor
 
-                keyTimes.append(keyFrameTime)
-                animationDuration = max(animationDuration, keyFrameTime)
-            }
+            // One cycle: rise and settle over 900ms, then rest while the other
+            // two dots take their turn (2 x 150ms stagger).
+            let riseDuration = TypingIndicatorView.kDotRiseDuration
+            let stagger = TypingIndicatorView.kDotStagger
+            let cycleDuration = riseDuration + 2 * stagger
+            let keyTimes: [NSNumber] = [
+                0,
+                NSNumber(value: (riseDuration / 2) / cycleDuration),
+                NSNumber(value: riseDuration / cycleDuration),
+                1,
+            ]
+            let timingFunctions = [AsherMotion.easeInOut, AsherMotion.easeInOut, AsherMotion.easeInOut]
 
-            // All animations in the group apparently need to have the same number
-            // of keyframes, and use the same timing.
-            switch dotType {
-            case .dotType1:
-                addDotKeyFrame(0 * timeIncrement, 0.0)
-                addDotKeyFrame(1 * timeIncrement, 0.5)
-                addDotKeyFrame(2 * timeIncrement, 1.0)
-                addDotKeyFrame(3 * timeIncrement, 0.5)
-                addDotKeyFrame(4 * timeIncrement, 0.0)
-                addDotKeyFrame(5 * timeIncrement, 0.0)
-                addDotKeyFrame(6 * timeIncrement, 0.0)
-                addDotKeyFrame(10 * timeIncrement, 0.0)
-            case .dotType2:
-                addDotKeyFrame(0 * timeIncrement, 0.0)
-                addDotKeyFrame(1 * timeIncrement, 0.0)
-                addDotKeyFrame(2 * timeIncrement, 0.5)
-                addDotKeyFrame(3 * timeIncrement, 1.0)
-                addDotKeyFrame(4 * timeIncrement, 0.5)
-                addDotKeyFrame(5 * timeIncrement, 0.0)
-                addDotKeyFrame(6 * timeIncrement, 0.0)
-                addDotKeyFrame(10 * timeIncrement, 0.0)
-            case .dotType3:
-                addDotKeyFrame(0 * timeIncrement, 0.0)
-                addDotKeyFrame(1 * timeIncrement, 0.0)
-                addDotKeyFrame(2 * timeIncrement, 0.0)
-                addDotKeyFrame(3 * timeIncrement, 0.5)
-                addDotKeyFrame(4 * timeIncrement, 1.0)
-                addDotKeyFrame(5 * timeIncrement, 0.5)
-                addDotKeyFrame(6 * timeIncrement, 0.0)
-                addDotKeyFrame(10 * timeIncrement, 0.0)
-            }
+            let brighten = CAKeyframeAnimation(keyPath: "fillColor")
+            brighten.values = [mutedColor, rimColor, mutedColor, mutedColor]
+            brighten.keyTimes = keyTimes
+            brighten.timingFunctions = timingFunctions
 
-            let makeAnimation: (String, [Any]) -> CAKeyframeAnimation = { keyPath, values in
-                let animation = CAKeyframeAnimation()
-                animation.keyPath = keyPath
-                animation.values = values
-                animation.duration = animationDuration
-                return animation
+            var animations: [CAAnimation] = [brighten]
+
+            // Reduce Motion: brighten only, no rise.
+            if !UIAccessibility.isReduceMotionEnabled {
+                let rise = CAKeyframeAnimation(keyPath: "transform.translation.y")
+                rise.values = [0, -TypingIndicatorView.kDotRise, 0, 0]
+                rise.keyTimes = keyTimes
+                rise.timingFunctions = timingFunctions
+                animations.append(rise)
             }
 
             let groupAnimation = CAAnimationGroup()
-            groupAnimation.animations = [
-                makeAnimation("fillColor", colorValues),
-                makeAnimation("path", pathValues),
-            ]
-            groupAnimation.duration = animationDuration
-            groupAnimation.repeatCount = MAXFLOAT
+            groupAnimation.animations = animations
+            groupAnimation.duration = cycleDuration
+            groupAnimation.repeatCount = .greatestFiniteMagnitude
+            groupAnimation.beginTime = CACurrentMediaTime() + stagger * CFTimeInterval(dotType.index)
 
-            shapeLayer.add(groupAnimation, forKey: UUID().uuidString)
+            shapeLayer.add(groupAnimation, forKey: "asherTyping")
         }
 
         fileprivate func stopAnimation() {

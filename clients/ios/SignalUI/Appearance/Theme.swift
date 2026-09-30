@@ -285,7 +285,7 @@ public final class Theme {
     }
 
     public static var actionSheetBackgroundColor: UIColor {
-        isDarkThemeEnabled ? .ows_gray75 : .white
+        isDarkThemeEnabled ? .ows_gray85 : .white
     }
 
     public class var washColor: UIColor {
@@ -333,10 +333,10 @@ public final class Theme {
 
     public class var tableCell2SelectedBackgroundColor: UIColor {
         UIColor(
-            light: UIColor(rgbHex: 0xD4D4D6),
-            lightHighContrast: UIColor(rgbHex: 0xC6C6CA),
-            dark: UIColor(rgbHex: 0x3A3A3D),
-            darkHighContrast: UIColor(rgbHex: 0x525257),
+            light: UIColor(rgbHex: 0xD6DFE8),
+            lightHighContrast: UIColor(rgbHex: 0xC4D0DC),
+            dark: UIColor(rgbHex: 0x16202D),
+            darkHighContrast: UIColor(rgbHex: 0x27344A),
         )
     }
 
@@ -392,7 +392,7 @@ public final class Theme {
         UIColor.Signal.secondaryLabel.resolvedColor(with: darkTraitCollection)
     }
 
-    public class var darkThemeWashColor: UIColor { .ows_gray75 }
+    public class var darkThemeWashColor: UIColor { .ows_gray85 }
 
     public class var darkThemeNavbarBackgroundColor: UIColor {
         darkThemeBackgroundColor
@@ -416,9 +416,9 @@ public final class Theme {
         UIColor.Signal.groupedBackground.resolvedColor(with: elevatedDarkTraitCollection)
     }
 
-    public class var darkThemeTableView2SeparatorColor: UIColor { .ows_gray75 }
+    public class var darkThemeTableView2SeparatorColor: UIColor { .ows_gray80 }
 
-    public class var darkThemeTableView2PresentedSeparatorColor: UIColor { .ows_gray65 }
+    public class var darkThemeTableView2PresentedSeparatorColor: UIColor { .ows_gray75 }
 
     // MARK: - Blur Effect
 

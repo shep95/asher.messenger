@@ -1857,7 +1857,7 @@ public class NotificationPresenterImpl: NotificationPresenter {
         let now = NSDate.ows_millisecondTimeStamp()
         let recentThreshold = now - UInt64(kAudioNotificationsThrottleInterval * Double(UInt64.secondInMs))
 
-        return unfairLock.withLock {
+        let shouldPlaySound: Bool = unfairLock.withLock {
             let recentNotifications = mostRecentNotifications.filter { $0 > recentThreshold }
 
             guard recentNotifications.count < kAudioNotificationsThrottleCount else {
@@ -1867,6 +1867,13 @@ public class NotificationPresenterImpl: NotificationPresenter {
             mostRecentNotifications.append(now)
             return true
         }
+
+        if shouldPlaySound {
+            // Asher `notification.ios_haptic.receive`: light impact alongside the in-app chime.
+            ImpactHapticFeedback.impactOccurred(style: .light)
+        }
+
+        return shouldPlaySound
     }
 }
 

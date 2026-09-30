@@ -59,6 +59,9 @@ extension ConversationViewController: ConversationInputToolbarDelegate {
         loadCoordinator.clearUnreadMessagesIndicator()
         inputToolbar?.quotedReplyDraft = nil
 
+        // Asher `notification.ios_haptic.send`: selection.
+        SelectionHapticFeedback().selectionChanged()
+
         let shouldPlayMessageSentSound = DependenciesBridge.shared.db.read { tx in
             let notificationPreferencesManager = DependenciesBridge.shared.notificationPreferencesManager
             return notificationPreferencesManager.playSoundInForeground(tx: tx)

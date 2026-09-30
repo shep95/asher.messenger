@@ -23,10 +23,11 @@ extension PaletteChatColor {
     public var colorSetting: ColorOrGradientSetting {
         switch self {
         case .ultramarine:
+            // Asher `bubble.outgoing.fill`: linear-gradient(160deg, #2A6FA8 0%, #1F5686 100%).
             return .gradient(
-                gradientColor1: OWSColor(red: 0.0196078431372549, green: 0.3215686274509804, blue: 0.9411764705882353),
-                gradientColor2: OWSColor(red: 0.17254901960784313, green: 0.4196078431372549, blue: 0.9294117647058824),
-                angleRadians: CGFloat.pi * 0,
+                gradientColor1: OWSColor(red: 0.16470588235294117, green: 0.43529411764705883, blue: 0.6588235294117647),
+                gradientColor2: OWSColor(red: 0.12156862745098039, green: 0.33725490196078434, blue: 0.5254901960784314),
+                angleRadians: Self.parseAngleDegreesFromSpec(160),
             )
         case .crimson:
             return .solidColor(color: OWSColor(red: 0.8117647058823529, green: 0.08627450980392157, blue: 0.24313725490196078))

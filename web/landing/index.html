@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Asher — Talk from anywhere. Even nowhere.</title>
+  <meta name="description" content="Asher is a private messenger built on the open-source Signal stack that keeps working with no internet: Bluetooth mesh between phones, LoRa radios, serial links and satellite gateways carry the same end-to-end encrypted messages.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#05070B" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F4F7FA" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://asher.messenger/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Asher — Talk from anywhere. Even nowhere.">
+  <meta property="og:description" content="A private messenger on the open-source Signal stack that keeps working with no internet: Bluetooth mesh, LoRa radios, store-carry-forward and satellite gateways.">
+  <meta property="og:image" content="assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+  <link rel="preload" href="assets/earth.webp" as="image" type="image/webp">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="nav" id="top">
+  <div class="container nav-inner">
+    <a class="wordmark" href="#top" aria-label="Asher, home">
+      <svg class="wordmark-orbit" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+        <circle cx="12" cy="12" r="3" fill="currentColor"/>
+        <circle cx="19.2" cy="7.6" r="1.6" fill="var(--rim)"/>
+      </svg>
+      Asher
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu" aria-label="Open menu">
+      <span class="nav-toggle-bar" aria-hidden="true"></span>
+    </button>
+    <nav id="nav-menu" class="nav-menu" aria-label="Primary">
+      <ul>
+        <li><a href="#how">How it works</a></li>
+        <li><a href="#security">Security</a></li>
+        <li><a href="#offline">Offline</a></li>
+        <li><a href="#download">Download</a></li>
+        <li><a href="https://github.com/shep95/asher.messenger" rel="noopener">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <!-- ================= HERO ================= -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-bg" aria-hidden="true">
+      <div class="hero-bg-drift" role="img" aria-label="Earth from low orbit with a small spacecraft at the terminator"></div>
+    </div>
+
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <p class="hero-kicker">
+          <span class="scene" id="hero-scene" aria-live="polite">
+            <span class="scene-dot" data-state="orbit"></span>
+            <span class="scene-label">Orbit</span>
+          </span>
+          <span class="hero-kicker-text">Built on the open-source Signal stack</span>
+        </p>
+        <h1 id="hero-title" class="hero-title">Asher</h1>
+        <p class="hero-tagline">Talk from anywhere. Even&nbsp;nowhere.</p>
+        <p class="hero-lede">
+          A private messenger that keeps working when the internet does not: phone to phone over Bluetooth,
+          across LoRa radios and serial links, through satellite gateways, carrying each message until it arrives,
+          with the same end-to-end encryption on every link.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#download">Download</a>
+          <a class="btn btn-secondary" href="https://github.com/shep95/asher.messenger/blob/main/docs/offline-mesh.md" rel="noopener">Read the design</a>
+        </div>
+      </div>
+
+      <!-- ============ LIVE MOCK CONVERSATION ============ -->
+      <div class="hero-demo">
+        <div class="phone" id="demo" aria-label="Demonstration conversation">
+          <div class="phone-header">
+            <span class="avatar avatar-32" aria-hidden="true">M</span>
+            <div class="phone-header-text">
+              <span class="phone-name">Mara</span>
+              <span class="scene scene-compact" id="demo-scene">
+                <span class="scene-dot" data-state="carrying"></span>
+                <span class="scene-label">Carrying</span>
+              </span>
+            </div>
+          </div>
+          <div class="thread" id="thread" aria-live="off">
+            <!-- Messages are inserted by app.js; a static copy lives in <noscript> below. -->
+            <noscript>
+              <div class="msg msg-out"><div class="bubble">Made it to the ridge. No signal up here.<span class="meta"><time>09:40</time></span></div></div>
+              <div class="msg msg-in"><span class="avatar avatar-28" aria-hidden="true">M</span><div class="bubble">Got you through the LoRa node at the hut. Stay put, we are coming up.<span class="meta"><time>09:43</time></span></div></div>
+              <div class="msg msg-out"><div class="bubble">Copy. Light is going, I will keep the beacon on.<span class="meta"><time>09:44</time></span></div></div>
+            </noscript>
+          </div>
+          <div class="composer" aria-hidden="true">
+            <span class="composer-plus"></span>
+            <span class="composer-placeholder">Message</span>
+            <span class="composer-send">
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 10h13M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </div>
+        </div>
+        <p class="hero-demo-caption">The conversation looks the same on every link. Only the pill under the name changes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= HOW IT WORKS ================= -->
+  <section class="section" id="how" aria-labelledby="how-title">
+    <div class="container">
+      <p class="eyebrow">How it works</p>
+      <h2 id="how-title" class="section-title">Encryption never needed the internet. Delivery did.</h2>
+      <p class="section-lede">
+        Signal Protocol runs entirely on the device. What a server did was hand out prekeys, assign identities and hold
+        messages for people who were offline. Asher moves those three jobs onto people and radios and leaves the
+        cryptography exactly where it was.
+      </p>
+
+      <div class="cards cards-4">
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>
+          </div>
+          <h3>The same encryption</h3>
+          <p>Every message is Signal Protocol ciphertext: PQXDH to start a session and the Double Ratchet after that, with a post-quantum Kyber-1024 prekey. Asher calls the same libsignal code the apps already use. Nothing about the encryption changes when the link does.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 18h3"/><path d="M4 8.5v7M20 8.5v7" stroke-dasharray="1.5 2"/></svg>
+          </div>
+          <h3>Identity is your device key</h3>
+          <p>No phone number. Your address is a fingerprint: sixteen bytes of SHA-256 over your Signal identity key, shown as thirty-two hex characters. Nobody assigns it and nobody can revoke it. It names a device, not a person.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><path d="M13.5 13.5h3v3h-3zM18 13.5h2.5M18 18v2.5M13.5 20.5h2"/></svg>
+          </div>
+          <h3>Contact cards instead of a server</h3>
+          <p>Your prekey bundle travels with you as a signed contact card: a QR code you show someone, or a beacon you broadcast over the radio. Both signatures are checked before the card reaches the protocol code. The trade-off, stated plainly: there are no one-time prekeys, as with Signal's last-resort Kyber prekey.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6.6 10.8l3.8-3.4M13.6 7.4l3.8 3.4M17.4 13.2l-3.8 3.4M10.4 16.6l-3.8-3.4"/></svg>
+          </div>
+          <h3>Store, carry, forward</h3>
+          <p>Every node that sees a message carries it until it is acknowledged or expires, and hands it to each new neighbour it meets. Relays cannot read what they carry. Bundles are at most 4 kB and fragment to fit LoRa frames, so the same code runs over Bluetooth LE, LoRa radios (RNode, KISS), serial cables, a LAN, or a gateway with a satellite modem.</p>
+        </article>
+      </div>
+
+      <figure class="path" aria-labelledby="path-caption">
+        <ol class="path-steps">
+          <li><span class="path-dot"></span><strong>Phone to phone</strong><span>Bluetooth LE, hop-limited relay, up to 7 hops</span></li>
+          <li><span class="path-dot"></span><strong>Local mesh</strong><span>A LoRa node in the neighbourhood, over USB or BLE</span></li>
+          <li><span class="path-dot"></span><strong>Gateway uplink</strong><span>A separate device with its own satellite modem forwards the 4 kB bundle</span></li>
+          <li><span class="path-dot"></span><strong>Descent</strong><span>Mesh and phone links again on the far side</span></li>
+        </ol>
+        <figcaption id="path-caption" class="limits">
+          <strong>Limits, stated plainly.</strong> Groups, the storage service, key transparency and contact discovery are
+          server functions and stay off when the server is unreachable. LoRa carries a few hundred bytes a second: text
+          works, attachments do not. And a phone radio cannot reach a satellite; a gateway with its own modem can.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= SECURITY ================= -->
+  <section class="section section-alt" id="security" aria-labelledby="security-title">
+    <div class="container">
+      <p class="eyebrow">Security</p>
+      <h2 id="security-title" class="section-title">What was checked, and what was fixed.</h2>
+      <p class="section-lede">
+        On 30 September 2026 every vendored component and this repository's own additions went through a security
+        audit. This is what it did, not a promise about what remains.
+      </p>
+
+      <div class="split">
+        <div class="split-main">
+          <h3 class="sub-title">The audit</h3>
+          <ul class="checklist">
+            <li><strong>Automated scanning</strong> of dependencies, secrets and configuration: cargo audit, pnpm audit, Trivy, gitleaks, and the GitHub Advisory Database matched against the Maven dependency trees.</li>
+            <li><strong>Manual review</strong> of the authentication, authorization, transport-security, IPC, file-handling, attestation and remote-control surfaces of each client, service and library.</li>
+            <li><strong>Dependency patches</strong> in ringrtc, SVR2, the registration service (38 advisories, one deferred) and the chat server's Jetty.</li>
+            <li><strong>Code fixes</strong>, each with a file and line: internal-only server paths that the websocket bypassed; a registration service with no caller authentication; a Desktop <code>file://</code> handler that exposed the database key and IPC channels with no sender check; an iOS device-transfer path traversal and an internal build flag left on for release; Android domain fronting on by default for brand builds; and a brand-override bug that skipped key-transparency signature checks.</li>
+            <li><strong>Verification stated per change.</strong> Rust, Go, JDK and TypeScript changes were compiled and tested here; Android and iOS changes were verified by inspection only, because no SDK was available.</li>
+            <li><strong>An inventory</strong> of every party that can influence or observe a deployment (compiled trust anchors, remote configuration, push services, DNS fallbacks, third-party SDKs), each removed for brand builds, made operator-controlled, or listed with the reason it stays. Nothing resembling a covert access mechanism was found, and the audit does not claim more than that.</li>
+          </ul>
+          <a class="text-link" href="https://github.com/shep95/asher.messenger/blob/main/docs/security-audit.md" rel="noopener">Read the full audit, finding by finding</a>
+        </div>
+
+        <aside class="split-side" aria-labelledby="threat-title">
+          <h3 class="sub-title" id="threat-title">Mesh threat model</h3>
+          <ul class="threat-list">
+            <li><strong>Relays hold no keys.</strong> A node that forwards a bundle never holds key material for it; a test asserts the relay emits no plaintext and drops the bundle once the acknowledgement arrives.</li>
+            <li><strong>Cards and beacons are authenticated.</strong> Both signatures on a contact card are checked on decode, and a beacon is rejected unless the card's fingerprint matches its source. Acknowledgements are bare bundle ids; only the original sender turns one into "delivered".</li>
+            <li><strong>Stores are bounded.</strong> Duplicates are dropped by id, every bundle has a TTL (7 days by default), the carry store has a byte budget (8 MiB) with nearest-expiry eviction, and link queues are capped at 256 frames.</li>
+            <li><strong>Fragments are limited.</strong> Fixed-width fields and 16-bit length prefixes, no allocation on garbage input beyond the declared length, 4 kB per bundle, 7 hops, and a 120 s reassembly timeout.</li>
+            <li><strong>No code download.</strong> The transport ships inside the normal libsignal build, behind a feature flag that is off by default. Radios are hardware you pair, not software you install.</li>
+            <li><strong>Still visible on the air:</strong> source and destination fingerprints, which relays need for routing. Content is not. No radio hardware was available in the audit environment; the protocol above the byte pipe is what is tested.</li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= OFFLINE ================= -->
+  <section class="section" id="offline" aria-labelledby="offline-title">
+    <div class="container">
+      <p class="eyebrow">Offline</p>
+      <h2 id="offline-title" class="section-title">Three words for how you are connected.</h2>
+      <p class="section-lede">
+        The pill under a conversation's name is the one place the transport shows itself. Everything else looks
+        the same on any link.
+      </p>
+      <div class="scenes">
+        <div class="scene-card">
+          <span class="scene"><span class="scene-dot" data-state="orbit"></span><span class="scene-label">Orbit</span></span>
+          <p>The internet is reachable. Messages go through the server as they always have.</p>
+        </div>
+        <div class="scene-card">
+          <span class="scene"><span class="scene-dot" data-state="mesh"></span><span class="scene-label">Mesh · 2 hops</span></span>
+          <p>A peer is reachable over radio, directly or through nodes in between that cannot read the traffic.</p>
+        </div>
+        <div class="scene-card">
+          <span class="scene"><span class="scene-dot" data-state="carrying"></span><span class="scene-label">Carrying</span></span>
+          <p>Nobody is in range yet. The message is stored and will be handed to the next node that appears.</p>
+        </div>
+        <div class="scene-card">
+          <span class="scene"><span class="scene-dot" data-state="offline"></span><span class="scene-label">Out of range</span></span>
+          <p>Nothing. You can still write; it will carry when a link comes back.</p>
+        </div>
+      </div>
+      <dl class="facts">
+        <div><dt>Bundle size</dt><dd>4 kB max</dd></div>
+        <div><dt>Hop limit</dt><dd>7 by default</dd></div>
+        <div><dt>Message TTL</dt><dd>7 days</dd></div>
+        <div><dt>Smallest frame</dt><dd>64-byte MTU</dd></div>
+        <div><dt>Carry store</dt><dd>8 MiB</dd></div>
+        <div><dt>Tested at</dt><dd>200 B frames</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ================= MULTI-USE ================= -->
+  <section class="section section-alt" id="platform" aria-labelledby="platform-title">
+    <div class="container narrow">
+      <p class="eyebrow">For organisations</p>
+      <h2 id="platform-title" class="section-title">One stack. Your name on it.</h2>
+      <p class="section-lede">
+        Asher is one brand of a platform that white-labels the whole Signal stack: the three clients, the chat
+        server, its satellite services and the shared libsignal library. A brand is a JSON profile (name, bundle
+        ids, domains, server keys, root CA) that one script renders into every platform, and every brand runs
+        against its own servers. Nothing here connects to Signal's infrastructure, and nothing may.
+      </p>
+      <div class="inline-links">
+        <a class="text-link" href="https://github.com/shep95/asher.messenger#how-multi-use-works" rel="noopener">How the brand overlay works</a>
+        <a class="text-link" href="https://github.com/shep95/asher.messenger/blob/main/docs/self-hosting.md" rel="noopener">Self-hosting guide</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= DOWNLOAD ================= -->
+  <section class="section" id="download" aria-labelledby="download-title">
+    <div class="container">
+      <p class="eyebrow">Download</p>
+      <h2 id="download-title" class="section-title">Every platform Signal runs on, plus the radio.</h2>
+      <p class="section-lede">
+        There is no packaged release yet. The buttons below will point at the first one; until then, the source is the
+        release.
+      </p>
+
+      <div class="cards cards-3 downloads">
+        <article class="card dl">
+          <h3>Android</h3>
+          <p class="dl-kind">APK, self-distributed</p>
+          <p class="dl-req">Android 6.0 or later. Bluetooth LE for phone-to-phone; USB or BLE for an RNode.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+        <article class="card dl">
+          <h3>iOS</h3>
+          <p class="dl-kind">TestFlight</p>
+          <p class="dl-req">iOS 15 or later. Bluetooth LE for phone-to-phone; a supported external accessory for serial radios.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+        <article class="card dl">
+          <h3>macOS</h3>
+          <p class="dl-kind">Universal .dmg</p>
+          <p class="dl-req">macOS 13 or later, Apple silicon or Intel. Radios attach over USB serial.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+        <article class="card dl">
+          <h3>Windows</h3>
+          <p class="dl-kind">Installer</p>
+          <p class="dl-req">Windows 10 or later, 64-bit. Radios attach over USB serial.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+        <article class="card dl">
+          <h3>Linux</h3>
+          <p class="dl-kind">.deb package</p>
+          <p class="dl-req">Debian or Ubuntu based, x86-64. A keyring is recommended: without one the database key falls back to plaintext storage.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+        <article class="card dl">
+          <h3>Gateway daemon</h3>
+          <p class="dl-kind">Linux / Raspberry Pi</p>
+          <p class="dl-req">A small Linux computer with an RNode over USB or a satellite modem. The transport crate deliberately ships no binary yet; the daemon is a thin wrapper still to be written.</p>
+          <a class="btn btn-muted" href="https://github.com/shep95/asher.messenger/releases/latest" rel="noopener">Coming with the first release</a>
+        </article>
+      </div>
+
+      <p class="build-note">
+        <a class="text-link" href="https://github.com/shep95/asher.messenger#quick-start" rel="noopener">Build from source</a>
+        <span aria-hidden="true">·</span>
+        <span>The README walks through rendering the brand, building libsignal, then each app.</span>
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <span class="wordmark wordmark-footer">Asher</span>
+      <p>Talk from anywhere. Even nowhere.</p>
+    </div>
+    <nav class="footer-links" aria-label="Documentation">
+      <a href="https://github.com/shep95/asher.messenger" rel="noopener">Source on GitHub</a>
+      <a href="https://github.com/shep95/asher.messenger/blob/main/docs/offline-mesh.md" rel="noopener">Offline transport design</a>
+      <a href="https://github.com/shep95/asher.messenger/blob/main/docs/security-audit.md" rel="noopener">Security audit</a>
+      <a href="https://github.com/shep95/asher.messenger/blob/main/docs/architecture.md" rel="noopener">Architecture</a>
+      <a href="https://github.com/shep95/asher.messenger/blob/main/docs/self-hosting.md" rel="noopener">Self-hosting</a>
+      <a href="https://github.com/shep95/asher.messenger/blob/main/docs/design-system.md" rel="noopener">Design system</a>
+    </nav>
+    <div class="footer-legal">
+      <p>Licensed under the GNU Affero General Public License v3.0. If you run a modified version for users over a network, you must offer them the source.</p>
+      <p>Built on the open-source Signal stack; not affiliated with Signal Messenger LLC or the Signal Technology Foundation. "Signal" is a trademark of Signal Messenger, LLC.</p>
+    </div>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

@@ -16,16 +16,25 @@
     <style name="Signal.Text.HeadlineSmall" parent="TextAppearance.Material3.HeadlineSmall">
     </style>
 
+    <!-- Asher type scale (system font): title 22/28 600, headline 17/22 600, body 16/22, caption 13/18, micro 11/14. -->
     <style name="Signal.Text.TitleLarge" parent="TextAppearance.Material3.TitleLarge">
-        <item name="android:lineSpacingExtra">6sp</item>
+        <item name="fontFamily">sans-serif-medium</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textFontWeight" tools:targetApi="p">600</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:letterSpacing" tools:ignore="NewApi">-0.01</item>
+        <item name="lineHeight">28sp</item>
+        <item name="android:lineHeight" tools:targetApi="p">28sp</item>
     </style>
 
     <style name="Signal.Text.TitleMedium" parent="TextAppearance.Material3.TitleMedium">
-        <item name="fontFamily">sans-serif</item>
-        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif-medium</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textFontWeight" tools:targetApi="p">600</item>
         <item name="android:textStyle">normal</item>
-        <item name="android:textSize">18sp</item>
-        <item name="android:lineSpacingExtra">6sp</item>
+        <item name="android:textSize">17sp</item>
+        <item name="lineHeight">22sp</item>
+        <item name="android:lineHeight" tools:targetApi="p">22sp</item>
     </style>
 
     <style name="Signal.Text.TitleSmall" parent="TextAppearance.Material3.TitleSmall">
@@ -34,7 +43,9 @@
     </style>
 
     <style name="Signal.Text.BodyLarge" parent="TextAppearance.Material3.BodyLarge">
-        <item name="android:lineSpacingExtra">6sp</item>
+        <item name="android:textSize">16sp</item>
+        <item name="lineHeight">22sp</item>
+        <item name="android:lineHeight" tools:targetApi="p">22sp</item>
     </style>
 
     <style name="Signal.Text.BodyMedium" parent="TextAppearance.Material3.BodyMedium">
@@ -43,7 +54,8 @@
 
     <style name="Signal.Text.BodySmall" parent="TextAppearance.Material3.BodySmall">
         <item name="android:textSize">13sp</item>
-        <item name="android:lineSpacingExtra">3sp</item>
+        <item name="lineHeight">18sp</item>
+        <item name="android:lineHeight" tools:targetApi="p">18sp</item>
     </style>
 
     <style name="Signal.Text.MaterialCaption" parent="Signal.Text.BodySmall">
@@ -61,7 +73,15 @@
     </style>
 
     <style name="Signal.Text.LabelSmall" parent="TextAppearance.Material3.LabelSmall">
-        <item name="android:lineSpacingExtra">4sp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing" tools:ignore="NewApi">0.04</item>
+        <item name="lineHeight">14sp</item>
+        <item name="android:lineHeight" tools:targetApi="p">14sp</item>
+    </style>
+
+    <!-- Asher "micro": 11sp uppercase with 0.04em tracking, for pills, section labels and meta. -->
+    <style name="Signal.Text.Micro" parent="Signal.Text.LabelSmall">
+        <item name="android:textAllCaps">true</item>
     </style>
 
     <!-- endregion -->
@@ -99,13 +119,15 @@
     </style>
 
     <style name="Signal.Text.Caption" parent="Base.TextAppearance.AppCompat.Caption">
-        <item name="android:textSize">12sp</item>
+        <item name="android:textSize">13sp</item>
         <item name="android:lineSpacingExtra">2sp</item>
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:letterSpacing" tools:ignore="NewApi">0.03</item>
+        <item name="android:letterSpacing" tools:ignore="NewApi">0.02</item>
     </style>
 
+    <!-- Message meta (timestamps, status) sits inside the bubble at 11sp. -->
     <style name="Signal.Text.Caption.MessageSent">
+        <item name="android:textSize">11sp</item>
         <item name="android:textColor">@color/signal_colorOnSurfaceVariant</item>
         <item name="android:shadowRadius">0</item>
     </style>

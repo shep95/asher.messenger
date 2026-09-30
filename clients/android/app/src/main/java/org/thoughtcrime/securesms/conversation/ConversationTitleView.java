@@ -21,6 +21,7 @@ import org.signal.core.util.ContextUtil;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.avatar.view.AvatarView;
 import org.thoughtcrime.securesms.badges.BadgeImageView;
+import org.thoughtcrime.securesms.components.SceneIndicatorView;
 import org.thoughtcrime.securesms.database.model.StoryViewState;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.signal.core.util.DrawableUtil;
@@ -41,6 +42,7 @@ public class ConversationTitleView extends ConstraintLayout {
   private View            verifiedSubtitle;
   private View            expirationBadgeContainer;
   private TextView        expirationBadgeTime;
+  private SceneIndicatorView sceneIndicator;
   private boolean         isSelf;
 
   public ConversationTitleView(Context context) {
@@ -64,6 +66,7 @@ public class ConversationTitleView extends ConstraintLayout {
     this.avatar                   = findViewById(R.id.contact_photo_image);
     this.expirationBadgeContainer = findViewById(R.id.expiration_badge_container);
     this.expirationBadgeTime      = findViewById(R.id.expiration_badge);
+    this.sceneIndicator           = findViewById(R.id.scene_indicator);
 
     ViewUtil.setTextViewGravityStart(this.title, getContext());
     ViewUtil.setTextViewGravityStart(this.subtitle, getContext());
@@ -173,6 +176,23 @@ public class ConversationTitleView extends ConstraintLayout {
     this.verified.setVisibility(verified ? View.VISIBLE : View.GONE);
 
     updateVerifiedSubtitleVisibility();
+  }
+
+  /**
+   * Asher: shows how this conversation is connected right now. Pass null to hide the indicator
+   * (for example when no transport state is known yet).
+   */
+  public void setSceneState(@Nullable SceneIndicatorView.State state) {
+    if (sceneIndicator == null) {
+      return;
+    }
+
+    if (state == null) {
+      sceneIndicator.setVisibility(View.GONE);
+    } else {
+      sceneIndicator.setState(state);
+      sceneIndicator.setVisibility(View.VISIBLE);
+    }
   }
 
   public void setGroupRecipientSubtitle(@Nullable String members) {

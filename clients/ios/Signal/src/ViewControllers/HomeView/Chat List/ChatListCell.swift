@@ -146,8 +146,8 @@ class ChatListCell: UITableViewCell, ReusableTableViewCell {
         UIFont.dynamicTypeBodyClamped.italic()
     }
 
-    // This value is now larger than AvatarBuilder.standardAvatarSizePoints.
-    private static let avatarSize: UInt = 56
+    // Asher `avatar.sizes.list` (44pt) in a 72pt row (`spacing.list-row-height`).
+    private static let avatarSize: UInt = 44
     private static let muteIconSize: CGFloat = 16
 
     // MARK: -
@@ -358,7 +358,7 @@ class ChatListCell: UITableViewCell, ReusableTableViewCell {
         spoilerConfigBuilder.animationManager = spoilerAnimationManager
 
         owsAssertDebug(avatarView == nil, "ChatListCell.configure without prior reset called")
-        avatarView = ConversationAvatarView(sizeClass: .fiftySix, localUserDisplayMode: .noteToSelf, useAutolayout: true)
+        avatarView = ConversationAvatarView(sizeClass: .fortyFour, localUserDisplayMode: .noteToSelf, useAutolayout: true)
         avatarView?.updateWithSneakyTransactionIfNecessary({ config in
             if configuration.thread.isReleaseNotesThread {
                 config.dataSource = .asset(avatar: AvatarBuilder.releaseNotesIcon(), badge: nil)
@@ -594,7 +594,8 @@ class ChatListCell: UITableViewCell, ReusableTableViewCell {
             axis: .horizontal,
             alignment: .center,
             spacing: 0,
-            layoutMargins: UIEdgeInsets(hMargin: 0, vMargin: 12),
+            // 44pt avatar + 2 x 14pt = 72pt row.
+            layoutMargins: UIEdgeInsets(hMargin: 0, vMargin: 14),
         )
     }
 

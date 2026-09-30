@@ -8,7 +8,7 @@
     android:animateLayoutChanges="true"
     android:background="@drawable/conversation_list_item_background"
     android:focusable="true"
-    android:minHeight="84dp"
+    android:minHeight="@dimen/conversation_list_item_min_height"
     android:nextFocusLeft="@+id/container"
     android:paddingStart="@dimen/dsl_settings_gutter"
     android:paddingTop="10dp"

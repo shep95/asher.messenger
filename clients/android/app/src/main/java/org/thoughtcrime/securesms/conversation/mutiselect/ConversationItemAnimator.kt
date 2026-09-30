@@ -3,6 +3,7 @@ package org.thoughtcrime.securesms.conversation.mutiselect
 import android.animation.Animator
 import android.animation.AnimatorSet
 import android.animation.ValueAnimator
+import android.view.animation.PathInterpolator
 import androidx.core.animation.doOnEnd
 import androidx.recyclerview.widget.RecyclerView
 import org.signal.core.util.logging.Log
@@ -23,7 +24,9 @@ class ConversationItemAnimator(
 
   private data class TweeningInfo(
     val startValue: Float,
-    val endValue: Float
+    val endValue: Float,
+    /** Asher: a newly appearing message also fades in while it rises. */
+    val fadeIn: Boolean = false
   ) {
     fun lerp(progress: Float): Float {
       return startValue + progress * (endValue - startValue)
@@ -88,7 +91,12 @@ class ConversationItemAnimator(
 
     viewHolder.itemView.translationY = translationY
 
-    pendingSlideAnimations[viewHolder] = TweeningInfo(translationY, 0f)
+    val isAppearing = preLayoutInfo == null
+    if (isAppearing) {
+      viewHolder.itemView.alpha = 0f
+    }
+
+    pendingSlideAnimations[viewHolder] = TweeningInfo(translationY, 0f, fadeIn = isAppearing)
     dispatchAnimationStarted(viewHolder)
 
     Log.d(TAG, "Dispatched slide animation for view at ${viewHolder.absoluteAdapterPosition}")
@@ -127,10 +135,14 @@ class ConversationItemAnimator(
     for ((viewHolder, tweeningInfo) in pendingSlideAnimations) {
       val animator = ValueAnimator.ofFloat(0f, 1f)
       slideAnimations[viewHolder] = AnimationInfo(animator, tweeningInfo)
-      animator.duration = 150L
+      animator.duration = ASHER_MOTION_BASE_MS
+      animator.interpolator = ASHER_EASE_OUT
       animator.addUpdateListener {
         if (viewHolder in slideAnimations) {
           viewHolder.itemView.translationY = tweeningInfo.lerp(it.animatedFraction)
+          if (tweeningInfo.fadeIn) {
+            viewHolder.itemView.alpha = it.animatedFraction
+          }
           (viewHolder.itemView.parent as RecyclerView?)?.invalidate()
         }
       }
@@ -152,6 +164,7 @@ class ConversationItemAnimator(
 
   private fun handleAnimationEnd(viewHolder: RecyclerView.ViewHolder) {
     viewHolder.itemView.translationY = 0f
+    viewHolder.itemView.alpha = 1f
     slideAnimations.remove(viewHolder)
     dispatchAnimationFinished(viewHolder)
     dispatchFinishedWhenDone()
@@ -194,5 +207,9 @@ class ConversationItemAnimator(
 
   companion object {
     private val TAG = Log.tag(ConversationItemAnimator::class.java)
+
+    /** Asher motion: 240ms, cubic-bezier(0.2, 0.8, 0.2, 1). */
+    private const val ASHER_MOTION_BASE_MS = 240L
+    private val ASHER_EASE_OUT = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
   }
 }

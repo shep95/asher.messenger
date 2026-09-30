@@ -3,6 +3,10 @@ package org.thoughtcrime.securesms.components;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 
@@ -73,6 +77,11 @@ public final class AvatarImageView extends AppCompatImageView {
   private @NonNull  Drawable               unknownRecipientDrawable;
   private @NonNull  FallbackAvatarProvider fallbackAvatarProvider = new DefaultFallbackAvatarProvider();
 
+  /** Asher rim light: a 1.5dp ring lit at the top-left and fading to nothing, like the planet's limb. */
+  private final Paint   rimPaint    = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private       float   rimWidth;
+  private       boolean showRimLight = true;
+
 
   public AvatarImageView(Context context) {
     this(context, null);
@@ -89,6 +98,10 @@ public final class AvatarImageView extends AppCompatImageView {
 
   public void initialize(@NonNull Context context, @Nullable AttributeSet attrs) {
     setScaleType(ScaleType.CENTER_CROP);
+
+    rimWidth = getResources().getDimension(R.dimen.asher_avatar_rim_width);
+    rimPaint.setStyle(Paint.Style.STROKE);
+    rimPaint.setStrokeWidth(rimWidth);
 
     if (attrs != null) {
       TypedArray typedArray = context.getTheme().obtainStyledAttributes(attrs, R.styleable.AvatarImageView, 0, 0);
@@ -107,6 +120,38 @@ public final class AvatarImageView extends AppCompatImageView {
   public void setOnClickListener(OnClickListener listener) {
     this.listener = listener;
     super.setOnClickListener(listener);
+  }
+
+  @Override
+  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+    super.onSizeChanged(w, h, oldw, oldh);
+    if (w > 0 && h > 0) {
+      // 135deg: lit from the top-left, transparent by 70% of the way across.
+      rimPaint.setShader(new LinearGradient(0, 0, w, h,
+                                            new int[] { getResources().getColor(R.color.asher_rim_light_start), getResources().getColor(R.color.asher_rim_light_end) },
+                                            new float[] { 0f, 0.7f },
+                                            Shader.TileMode.CLAMP));
+    }
+  }
+
+  @Override
+  protected void onDraw(Canvas canvas) {
+    super.onDraw(canvas);
+
+    if (!showRimLight || getDrawable() == null || rimPaint.getShader() == null || isInEditMode()) {
+      return;
+    }
+
+    float size   = Math.min(getWidth() - getPaddingLeft() - getPaddingRight(), getHeight() - getPaddingTop() - getPaddingBottom());
+    float radius = size / 2f - rimWidth / 2f;
+    if (radius <= 0) {
+      return;
+    }
+
+    canvas.drawCircle(getPaddingLeft() + (getWidth() - getPaddingLeft() - getPaddingRight()) / 2f,
+                      getPaddingTop() + (getHeight() - getPaddingTop() - getPaddingBottom()) / 2f,
+                      radius,
+                      rimPaint);
   }
 
   public void setFallbackAvatarProvider(@Nullable FallbackAvatarProvider fallbackAvatarProvider) {
@@ -169,6 +214,8 @@ public final class AvatarImageView extends AppCompatImageView {
     if (isInEditMode()) {
       return;
     }
+
+    showRimLight = true;
 
     if (recipient != null) {
       RecipientContactPhoto photo = (recipient.isSelf() && avatarOptions.useSelfProfileAvatar) ? new RecipientContactPhoto(recipient,
@@ -274,6 +321,8 @@ public final class AvatarImageView extends AppCompatImageView {
 
   public void setImageBytesForGroup(@Nullable byte[] avatarBytes, @NonNull AvatarColor color)
   {
+    showRimLight = true;
+
     Drawable fallback = new FallbackAvatarDrawable(getContext(), new FallbackAvatar.Resource.Group(color)).circleCrop();
 
     Glide.with(this)
@@ -288,6 +337,7 @@ public final class AvatarImageView extends AppCompatImageView {
 
   public void setNonAvatarImageResource(@DrawableRes int imageResource) {
     recipientContactPhoto = null;
+    showRimLight          = false;
     setImageResource(imageResource);
   }
 

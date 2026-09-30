@@ -43,27 +43,63 @@ public extension UIFont {
         return .monospacedDigitSystemFont(ofSize: size, weight: .regular)
     }
 
+    // MARK: - Asher type scale
+
+    /// Asher `typography.scale` on the system font (tokens.json `mobile_note`):
+    /// title 22/semibold, headline 17/semibold, body 16, message 16, caption 13,
+    /// micro 11 (uppercase, 0.04em tracking). Text styles not listed here keep
+    /// the system defaults.
+    private static let asherScale: [UIFont.TextStyle: (size: CGFloat, weight: UIFont.Weight)] = [
+        .title2: (22, .semibold),
+        .headline: (17, .semibold),
+        .body: (16, .regular),
+        .callout: (16, .regular),
+        .footnote: (13, .regular),
+        .caption1: (13, .regular),
+        .caption2: (11, .regular),
+    ]
+
+    /// The unscaled (Dynamic Type "Large") font for a text style under the Asher scale.
+    private class func asherBaseFont(forTextStyle textStyle: UIFont.TextStyle) -> UIFont {
+        if let entry = asherScale[textStyle] {
+            return .systemFont(ofSize: entry.size, weight: entry.weight)
+        }
+        return UIFont.preferredFont(
+            forTextStyle: textStyle,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large),
+        )
+    }
+
+    private class func asherPreferredFont(forTextStyle textStyle: UIFont.TextStyle) -> UIFont {
+        UIFontMetrics(forTextStyle: textStyle).scaledFont(for: asherBaseFont(forTextStyle: textStyle), compatibleWith: .current)
+    }
+
+    /// Asher "micro" style: 11pt, uppercase, 0.04em tracking. Callers uppercase the text.
+    class var asherMicro: UIFont { asherPreferredFont(forTextStyle: .caption2) }
+    /// Tracking (kern) for `asherMicro`, in points (0.04em).
+    class var asherMicroTracking: CGFloat { 11 * 0.04 }
+
     // MARK: - Dynamic Type
 
-    class var dynamicTypeTitle1: UIFont { UIFont.preferredFont(forTextStyle: .title1, compatibleWith: .current) }
+    class var dynamicTypeTitle1: UIFont { asherPreferredFont(forTextStyle: .title1) }
 
-    class var dynamicTypeTitle2: UIFont { UIFont.preferredFont(forTextStyle: .title2, compatibleWith: .current) }
+    class var dynamicTypeTitle2: UIFont { asherPreferredFont(forTextStyle: .title2) }
 
-    class var dynamicTypeTitle3: UIFont { UIFont.preferredFont(forTextStyle: .title3, compatibleWith: .current) }
+    class var dynamicTypeTitle3: UIFont { asherPreferredFont(forTextStyle: .title3) }
 
-    class var dynamicTypeHeadline: UIFont { UIFont.preferredFont(forTextStyle: .headline, compatibleWith: .current) }
+    class var dynamicTypeHeadline: UIFont { asherPreferredFont(forTextStyle: .headline) }
 
-    class var dynamicTypeBody: UIFont { UIFont.preferredFont(forTextStyle: .body, compatibleWith: .current) }
+    class var dynamicTypeBody: UIFont { asherPreferredFont(forTextStyle: .body) }
 
-    class var dynamicTypeCallout: UIFont { UIFont.preferredFont(forTextStyle: .callout, compatibleWith: .current) }
+    class var dynamicTypeCallout: UIFont { asherPreferredFont(forTextStyle: .callout) }
 
-    class var dynamicTypeSubheadline: UIFont { UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: .current) }
+    class var dynamicTypeSubheadline: UIFont { asherPreferredFont(forTextStyle: .subheadline) }
 
-    class var dynamicTypeFootnote: UIFont { UIFont.preferredFont(forTextStyle: .footnote, compatibleWith: .current) }
+    class var dynamicTypeFootnote: UIFont { asherPreferredFont(forTextStyle: .footnote) }
 
-    class var dynamicTypeCaption1: UIFont { UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: .current) }
+    class var dynamicTypeCaption1: UIFont { asherPreferredFont(forTextStyle: .caption1) }
 
-    class var dynamicTypeCaption2: UIFont { UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: .current) }
+    class var dynamicTypeCaption2: UIFont { asherPreferredFont(forTextStyle: .caption2) }
 
     // MARK: - Dynamic Type Clamped
 
@@ -95,8 +131,7 @@ public extension UIFont {
         // UIFontMetrics will only operate on unscaled fonts. So we do this dance to cap the system default styles
         // 1. Grab the standard, unscaled font by using the default trait collection
         // 2. Use UIFontMetrics to scale it up, capped at the desired max size
-        let defaultTraitCollection = UITraitCollection(preferredContentSizeCategory: .large)
-        let unscaledFont = UIFont.preferredFont(forTextStyle: textStyle, compatibleWith: defaultTraitCollection)
+        let unscaledFont = asherBaseFont(forTextStyle: textStyle)
 
         let desiredStyleMetrics = UIFontMetrics(forTextStyle: textStyle)
         guard let maxPointSize = maxPointSizeMap[textStyle] else {

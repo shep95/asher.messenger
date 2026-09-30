@@ -50,7 +50,7 @@ describe('both/state/selectors/items', () => {
   describe('#getPreferredLeftPaneWidth', () => {
     it('returns a default if no value is present', () => {
       const state = getRootState({});
-      assert.strictEqual(getPreferredLeftPaneWidth(state), 320);
+      assert.strictEqual(getPreferredLeftPaneWidth(state), 360);
     });
 
     it('returns a default value if passed something invalid', () => {
@@ -60,7 +60,7 @@ describe('both/state/selectors/items', () => {
             // oxlint-disable-next-line typescript/no-explicit-any
             preferredLeftPaneWidth: preferredLeftPaneWidth as any,
           });
-          assert.strictEqual(getPreferredLeftPaneWidth(state), 320);
+          assert.strictEqual(getPreferredLeftPaneWidth(state), 360);
         }
       );
     });

@@ -257,12 +257,12 @@
 
     <org.thoughtcrime.securesms.components.AnimatingToggle
         android:id="@+id/button_toggle"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        android:layout_width="@dimen/asher_send_button_size"
+        android:layout_height="@dimen/asher_send_button_size"
         android:layout_gravity="bottom"
-        android:layout_marginTop="2dp"
-        android:layout_marginEnd="14dp"
-        android:layout_marginBottom="2dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="@dimen/gutter"
+        android:layout_marginBottom="4dp"
         android:background="@drawable/circle_tintable"
         app:layout_constraintBottom_toBottomOf="@id/compose_bubble"
         app:layout_constraintEnd_toEndOf="parent">
@@ -275,7 +275,7 @@
             android:background="@drawable/circle_touch_highlight_background"
             android:contentDescription="@string/ConversationActivity_add_attachment"
             android:nextFocusLeft="@+id/embedded_text_editor"
-            android:padding="9dp"
+            android:padding="7dp"
             android:scaleType="fitCenter"
             app:srcCompat="@drawable/symbol_plus_24"
             app:tint="@color/conversation_send_button_tint" />
@@ -288,7 +288,7 @@
             android:background="@drawable/circle_touch_highlight_background"
             android:contentDescription="@string/ConversationActivity_send_edit"
             android:nextFocusLeft="@+id/embedded_text_editor"
-            android:padding="9dp"
+            android:padding="7dp"
             android:scaleType="fitCenter"
             app:srcCompat="@drawable/symbol_check_24"
             app:tint="@color/conversation_send_button_tint" />
@@ -300,7 +300,7 @@
             android:background="@drawable/circle_touch_highlight_background"
             android:contentDescription="@string/conversation_activity__send"
             android:nextFocusLeft="@+id/embedded_text_editor"
-            android:padding="9dp"
+            android:padding="7dp"
             android:scaleType="fitCenter"
             app:srcCompat="@drawable/ic_send_unlock_24"
             app:tint="@color/conversation_send_button_tint" />

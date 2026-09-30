@@ -52,21 +52,21 @@
     <color name="signal_colorErrorContainerInverse">@color/signal_dark_colorErrorContainer</color>
 
     <!-- Core color alpha variants -->
-    <color name="signal_colorSecondaryContainer_12">#1FDCE5F9</color>
-    <color name="signal_colorSurface_60">#99FBFCFF</color>
-    <color name="signal_colorSurfaceVariant_38">#61E7EBF3</color>
-    <color name="signal_colorSurfaceVariant_64">#A3E7EBF3</color>
-    <color name="signal_colorOnSurface_8">#141B1B1D</color>
-    <color name="signal_colorOnSurface_12">#1F1B1B1D</color>
-    <color name="signal_colorOnSurface_50">#801B1B1D</color>
-    <color name="signal_colorOnSurfaceVariant_60">#99545863</color>
-    <color name="signal_colorOnBackground_60">#991B1D1D</color>
-    <color name="signal_colorOutline_38">#61808389</color>
-    <color name="signal_colorBackground_0">#00FBFCFF</color>
+    <color name="signal_colorSecondaryContainer_12">#1FE3ECF4</color>
+    <color name="signal_colorSurface_60">#99FFFFFF</color>
+    <color name="signal_colorSurfaceVariant_38">#61EEF3F8</color>
+    <color name="signal_colorSurfaceVariant_64">#A3EEF3F8</color>
+    <color name="signal_colorOnSurface_8">#140B1017</color>
+    <color name="signal_colorOnSurface_12">#1F0B1017</color>
+    <color name="signal_colorOnSurface_50">#800B1017</color>
+    <color name="signal_colorOnSurfaceVariant_60">#994A5D70</color>
+    <color name="signal_colorOnBackground_60">#990B1017</color>
+    <color name="signal_colorOutline_38">#618194A6</color>
+    <color name="signal_colorBackground_0">#00F4F7FA</color>
 
     <!-- Core color alpha variants without alpha channel -->
-    <color name="signal_colorSurfaceVariant_16_no_alpha">#D5D8DE</color>
-    <color name="signal_colorSurfaceVariant_32_no_alpha">#B8BCC5</color>
+    <color name="signal_colorSurfaceVariant_16_no_alpha">#D6DFE8</color>
+    <color name="signal_colorSurfaceVariant_32_no_alpha">#C5D1DC</color>
 
     <color name="reminder_background">#faf0dc</color>
 </resources>

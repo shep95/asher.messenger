@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asher design tokens that have no Material slot (light values; dark in values-night). See brands/asher/design/tokens.json -->
+<resources>
+    <color name="asher_atmosphere">#3D8FCF</color>
+    <color name="asher_atmosphere_hover">#5AA7E0</color>
+    <color name="asher_atmosphere_pressed">#2E74AB</color>
+    <color name="asher_rim">#CFE6F7</color>
+    <color name="asher_rim_light_start">#7FB8E0</color>
+    <color name="asher_rim_light_end">#007FB8E0</color>
+    <color name="asher_success">#4FBF9F</color>
+    <color name="asher_warning">#E0B45A</color>
+    <color name="asher_danger">#E06B6B</color>
+
+    <color name="asher_bubble_out_start">#2A6FA8</color>
+    <color name="asher_bubble_out_end">#1F5686</color>
+    <color name="asher_bubble_in">#EEF3F8</color>
+    <color name="asher_bubble_in_border">#D6DFE8</color>
+
+    <color name="asher_composer_fill">#EEF3F8</color>
+    <color name="asher_composer_border">#D6DFE8</color>
+
+    <color name="asher_typing_dot_dim">#8194A6</color>
+    <color name="asher_typing_dot_bright">#4A5D70</color>
+
+    <color name="asher_scene_orbit">#3D8FCF</color>
+    <color name="asher_scene_mesh">#2F9B7C</color>
+    <color name="asher_scene_carrying">#B98A2E</color>
+    <color name="asher_scene_offline">#8194A6</color>
+    <color name="asher_scene_pill_fill">#EEF3F8</color>
+    <color name="asher_scene_pill_border">#D6DFE8</color>
+</resources>

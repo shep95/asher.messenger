@@ -1,0 +1,725 @@
+// Copyright 2026 Asher
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Asher design system for Desktop. Loaded last from manifest.scss so that
+// everything here overrides upstream. Source of truth:
+//   brands/asher/design/tokens.json and docs/design-system.md
+//
+// Most colours are routed through the remapped variables in _variables.scss
+// (void greys, atmosphere accent) and the Axo custom properties below; this
+// file adds the targeted component rules the tokens ask for (horizon bubbles,
+// rim-lit avatars, typing dots, composer, motion, wallpaper).
+
+@use 'variables';
+@use 'mixins';
+
+$is-storybook: false !default;
+$protocol: 'asset://';
+@if $is-storybook {
+  $protocol: '..';
+}
+
+// ---------------------------------------------------------------------------
+// Display font. Space Grotesk is bundled as a variable TTF under
+// fonts/space-grotesk/ (SIL Open Font License 1.1, see OFL.txt next to it).
+// Nothing is loaded from the network.
+// ---------------------------------------------------------------------------
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('#{$protocol}/fonts/space-grotesk/SpaceGrotesk-Variable.ttf')
+    format('truetype');
+  font-weight: 300 700;
+  font-display: swap;
+  unicode-range: U+0-2B1B, U+2B1D-10FFFF;
+}
+
+// ---------------------------------------------------------------------------
+// Tokens
+// ---------------------------------------------------------------------------
+
+:root {
+  --asher-void: #05070b;
+  --asher-space: #080c13;
+  --asher-surface: #0b1017;
+  --asher-raised: #111823;
+  --asher-overlay: #16202d;
+  --asher-border: #1b2533;
+  --asher-border-strong: #27344a;
+  --asher-atmosphere: #3d8fcf;
+  --asher-atmosphere-hover: #5aa7e0;
+  --asher-atmosphere-pressed: #2e74ab;
+  --asher-atmosphere-soft: #1e466b;
+  --asher-rim: #cfe6f7;
+  --asher-text: #e8eef4;
+  --asher-text-secondary: #9bb0c3;
+  --asher-text-muted: #5f7387;
+  --asher-text-on-atmosphere: #f4f9fd;
+  --asher-success: #4fbf9f;
+  --asher-warning: #e0b45a;
+  --asher-danger: #e06b6b;
+  --asher-bubble-out-start: #2a6fa8;
+  --asher-bubble-out-end: #1f5686;
+  --asher-bubble-in: #131c28;
+  --asher-bubble-in-border: #1e2a3a;
+
+  --asher-light-void: #f4f7fa;
+  --asher-light-surface: #ffffff;
+  --asher-light-raised: #eef3f8;
+  --asher-light-border: #d6dfe8;
+  --asher-light-text: #0b1017;
+  --asher-light-text-secondary: #4a5d70;
+  --asher-light-text-muted: #8194a6;
+
+  --asher-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --asher-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --asher-fast: 160ms;
+  --asher-base: 240ms;
+  --asher-slow: 400ms;
+
+  --asher-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --asher-glow: 0 0 24px rgba(61, 143, 207, 0.25);
+  --asher-focus-ring: 0 0 0 2px rgba(61, 143, 207, 0.45);
+  --asher-wallpaper-overlay: linear-gradient(
+    180deg,
+    rgba(5, 7, 11, 0.35) 0%,
+    rgba(5, 7, 11, 0.65) 100%
+  );
+
+  // Axo colour tokens. Tailwind emits the upstream values inside
+  // `@layer theme`, so this unlayered :root block wins regardless of order.
+  // Values follow the light-dark() convention of ts/axo/_tailwind-theme/colors.css.
+  --axo-color-brand-primary: #3d8fcf;
+
+  --axo-color-label-primary: light-dark(#0b1017, #e8eef4);
+  --axo-color-label-secondary: light-dark(#4a5d70, #9bb0c3);
+  --axo-color-label-placeholder: light-dark(#8194a6, #5f7387);
+  --axo-color-label-disabled: light-dark(
+    rgba(11, 16, 23, 0.3),
+    rgba(232, 238, 244, 0.3)
+  );
+  --axo-color-label-primary-oncolor: light-dark(#f4f9fd, #f4f9fd);
+  --axo-color-label-secondary-oncolor: light-dark(
+    rgba(244, 249, 253, 0.8),
+    rgba(244, 249, 253, 0.75)
+  );
+  --axo-color-label-accent: light-dark(#2e74ab, #5aa7e0);
+  --axo-color-label-accent-disabled: light-dark(
+    rgba(46, 116, 171, 0.3),
+    rgba(90, 167, 224, 0.3)
+  );
+  --axo-color-label-affirmative: light-dark(#2e9b7c, #4fbf9f);
+  --axo-color-label-warning: light-dark(#6b5212, #e0b45a);
+  --axo-color-label-destructive: light-dark(#c94f4f, #e06b6b);
+
+  --axo-color-surface-primary: light-dark(#f4f7fa, #0b1017);
+  --axo-color-surface-secondary: light-dark(#ffffff, #0b1017);
+  --axo-color-surface-tertiary: light-dark(#eef3f8, #111823);
+  --axo-color-surface-quaternary: light-dark(#e3eaf1, #16202d);
+  --axo-color-surface-card: light-dark(#ffffff, #111823);
+  --axo-color-surface-message-incoming: light-dark(#eef3f8, #131c28);
+  --axo-color-surface-message-outgoing: light-dark(#2a6fa8, #2a6fa8);
+
+  --axo-color-material-primary: light-dark(
+    rgba(244, 247, 250, 0.9),
+    rgba(11, 16, 23, 0.9)
+  );
+  --axo-color-material-secondary: light-dark(
+    rgba(255, 255, 255, 0.9),
+    rgba(17, 24, 35, 0.9)
+  );
+  --axo-color-material-tertiary: light-dark(
+    rgba(238, 243, 248, 0.9),
+    rgba(22, 32, 45, 0.9)
+  );
+  --axo-color-material-tertiary-pressed: light-dark(
+    rgba(227, 234, 241, 0.9),
+    rgba(27, 37, 51, 0.9)
+  );
+  --axo-color-material-quaternary: light-dark(
+    rgba(227, 234, 241, 0.9),
+    rgba(27, 37, 51, 0.9)
+  );
+  --axo-color-material-quaternary-pressed: light-dark(
+    rgba(214, 223, 232, 0.9),
+    rgba(39, 52, 74, 0.9)
+  );
+  --axo-color-material-dim-primary: light-dark(
+    rgba(39, 52, 74, 0.9),
+    rgba(39, 52, 74, 0.9)
+  );
+  --axo-color-material-dim-secondary: light-dark(
+    rgba(95, 115, 135, 0.9),
+    rgba(27, 37, 51, 0.9)
+  );
+  --axo-color-material-dialog: light-dark(
+    rgba(255, 255, 255, 0.95),
+    rgba(17, 24, 35, 0.92)
+  );
+
+  --axo-color-fill-primary: light-dark(
+    rgba(11, 16, 23, 0.06),
+    rgba(155, 176, 195, 0.1)
+  );
+  --axo-color-fill-primary-pressed: light-dark(
+    rgba(11, 16, 23, 0.09),
+    rgba(155, 176, 195, 0.14)
+  );
+  --axo-color-fill-secondary: light-dark(
+    rgba(11, 16, 23, 0.12),
+    rgba(155, 176, 195, 0.18)
+  );
+  --axo-color-fill-secondary-pressed: light-dark(
+    rgba(11, 16, 23, 0.16),
+    rgba(155, 176, 195, 0.22)
+  );
+  --axo-color-fill-tertiary: light-dark(
+    rgba(11, 16, 23, 0.2),
+    rgba(155, 176, 195, 0.26)
+  );
+  --axo-color-fill-tertiary-pressed: light-dark(
+    rgba(11, 16, 23, 0.24),
+    rgba(155, 176, 195, 0.3)
+  );
+  --axo-color-fill-control: light-dark(#ffffff, #111823);
+  --axo-color-fill-control-pressed: light-dark(#f4f7fa, #16202d);
+  --axo-color-fill-inverted: light-dark(#0b1017, #e8eef4);
+  --axo-color-fill-inverted-pressed: light-dark(#16202d, #cfe6f7);
+  --axo-color-fill-overlay: light-dark(
+    rgba(5, 7, 11, 0.4),
+    rgba(5, 7, 11, 0.6)
+  );
+
+  --axo-color-fill-accent: light-dark(#3d8fcf, #3d8fcf);
+  --axo-color-fill-accent-pressed: light-dark(#2e74ab, #2e74ab);
+  --axo-color-fill-accent-bright: light-dark(#a9d0ec, #a9d0ec);
+  --axo-color-fill-accent-bright-pressed: light-dark(#94c3e6, #94c3e6);
+  --axo-color-fill-accent-tint: light-dark(
+    rgba(61, 143, 207, 0.1),
+    rgba(61, 143, 207, 0.14)
+  );
+  --axo-color-fill-accent-tint-pressed: light-dark(
+    rgba(61, 143, 207, 0.14),
+    rgba(61, 143, 207, 0.2)
+  );
+  --axo-color-fill-affirmative: light-dark(#4fbf9f, #4fbf9f);
+  --axo-color-fill-affirmative-pressed: light-dark(#43ae8f, #5bcbab);
+  --axo-color-fill-affirmative-tint: light-dark(
+    rgba(79, 191, 159, 0.12),
+    rgba(79, 191, 159, 0.16)
+  );
+  --axo-color-fill-warning-bright: light-dark(#e0b45a, #e0b45a);
+  --axo-color-fill-warning-bright-pressed: light-dark(#d4a74b, #e8bf6d);
+  --axo-color-fill-destructive: light-dark(#e06b6b, #e06b6b);
+  --axo-color-fill-destructive-pressed: light-dark(#cf5a5a, #e67a7a);
+  --axo-color-fill-destructive-tint: light-dark(
+    rgba(224, 107, 107, 0.1),
+    rgba(224, 107, 107, 0.16)
+  );
+
+  --axo-color-border-primary: light-dark(rgba(11, 16, 23, 0.08), #1b2533);
+  --axo-color-border-secondary: light-dark(#d6dfe8, #27344a);
+  --axo-color-border-tertiary: light-dark(rgba(11, 16, 23, 0.3), #3a4a62);
+  --axo-color-border-selected: light-dark(#3d8fcf, #5aa7e0);
+  --axo-color-border-focused-inner: light-dark(#ffffff, #05070b);
+  --axo-color-border-focused-outer: light-dark(#3d8fcf, #5aa7e0);
+
+  --axo-color-legacy-conversation-header-bg: light-dark(
+    #ffffff,
+    rgba(11, 16, 23, 0.92)
+  );
+  --axo-color-legacy-signal-conversation-bg: light-dark(#eef3f8, #16202d);
+  --axo-color-legacy-official-chat-badge-bg: light-dark(
+    rgba(61, 143, 207, 0.12),
+    rgba(61, 143, 207, 0.3)
+  );
+  --axo-color-legacy-official-chat-badge-text: light-dark(#2e74ab, #cfe6f7);
+}
+
+// ---------------------------------------------------------------------------
+// Wallpaper: Earth from orbit on the app frame (dark theme). Surfaces above it
+// are translucent enough to see it where text stays readable.
+// ---------------------------------------------------------------------------
+
+.dark-theme .App {
+  background-color: var(--asher-void);
+  isolation: isolate;
+  overflow: clip;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: var(--asher-wallpaper-overlay),
+      url('../images/asher-earth.webp');
+    background-size: cover;
+    background-position: center right;
+    background-repeat: no-repeat;
+    transform-origin: center;
+    transform: scale(1.04);
+    animation: asher-drift 60s var(--asher-ease-in-out) infinite alternate;
+  }
+}
+
+@keyframes asher-drift {
+  from {
+    transform: scale(1.04) translate3d(0, 0, 0);
+  }
+  to {
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list */
+    transform: scale(1.04) translate3d(-1.5%, -0.75%, 0);
+  }
+}
+
+.dark-theme {
+  .NavSidebar {
+    background: rgba(5, 7, 11, 0.86);
+  }
+
+  .ConversationPanel {
+    background: rgba(11, 16, 23, 0.95);
+  }
+  .ConversationView.ConversationPanel {
+    background: transparent;
+  }
+  .ConversationView > .ConversationPanel {
+    background: rgba(11, 16, 23, 0.86);
+  }
+  .ConversationPanel__header {
+    background: rgba(11, 16, 23, 0.92);
+  }
+
+  .Inbox .__conversation,
+  .Inbox__no-conversation-open {
+    background-color: transparent;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Type
+// ---------------------------------------------------------------------------
+
+.module-ConversationHeader__header__info__title {
+  @include mixins.font-title-medium;
+}
+
+.module-ConversationHeader__header__info {
+  gap: 1px;
+}
+
+// ---------------------------------------------------------------------------
+// Horizon bubbles
+// ---------------------------------------------------------------------------
+
+.module-message__container-outer {
+  max-width: min(72%, calc(100% - 16px - 22px));
+
+  .module-timeline--width-wide &,
+  .module-timeline--width-medium &,
+  .module-message-detail & {
+    max-width: 72%;
+  }
+}
+
+.module-message__container {
+  border-radius: 18px;
+  padding-inline: 14px;
+  padding-block: 10px;
+  // 6px + 6px = 12px between senders; collapsed rows use 1px + 1px = 2px.
+  margin-block: 6px;
+}
+
+.module-message--collapsed-above .module-message__container {
+  margin-top: 1px;
+}
+.module-message--collapsed-below .module-message__container {
+  margin-bottom: 1px;
+}
+
+// Grouped sides: 6px. Tail corner (last bubble of a run): 4px.
+.module-message--incoming.module-message--collapsed-above
+  .module-message__container {
+  border-start-start-radius: 6px;
+}
+.module-message--incoming.module-message--collapsed-below
+  .module-message__container {
+  border-end-start-radius: 6px;
+}
+.module-message--incoming:not(.module-message--collapsed-below)
+  .module-message__container {
+  border-end-start-radius: 4px;
+}
+.module-message--outgoing.module-message--collapsed-above
+  .module-message__container {
+  border-start-end-radius: 6px;
+}
+.module-message--outgoing.module-message--collapsed-below
+  .module-message__container {
+  border-end-end-radius: 6px;
+}
+.module-message--outgoing:not(.module-message--collapsed-below)
+  .module-message__container {
+  border-end-end-radius: 4px;
+}
+
+.module-message__container--outgoing,
+.module-message__container--outgoing-ultramarine {
+  background-color: var(--asher-bubble-out-end);
+  background-image: linear-gradient(
+    160deg,
+    var(--asher-bubble-out-start) 0%,
+    var(--asher-bubble-out-end) 100%
+  );
+  // Upstream pins gradient chat colours to the viewport; the horizon
+  // gradient belongs to each bubble.
+  background-attachment: scroll;
+  color: var(--asher-text-on-atmosphere);
+}
+
+.module-message__container--incoming {
+  background: light-dark(var(--asher-light-raised), var(--asher-bubble-in));
+  box-shadow: inset 0 0 0 1px
+    light-dark(var(--asher-light-border), var(--asher-bubble-in-border));
+  color: light-dark(var(--asher-light-text), var(--asher-text));
+}
+
+.module-message__text {
+  font-size: 16px;
+  line-height: 21px;
+  letter-spacing: 0;
+  color: var(--asher-text-on-atmosphere);
+
+  a {
+    color: var(--asher-text-on-atmosphere);
+  }
+}
+
+.module-message__text--incoming {
+  color: light-dark(var(--asher-light-text), var(--asher-text));
+
+  a {
+    color: light-dark(var(--asher-atmosphere-pressed), var(--asher-rim));
+  }
+}
+
+.module-message__metadata {
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  color: light-dark(var(--asher-light-text-secondary), var(--asher-text-secondary));
+
+  &--outgoing {
+    color: rgba(244, 249, 253, 0.78);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rim-lit avatars: the planet's limb, lit on one side, fading to void.
+// Sizes are set inline by the Avatar component (AvatarSize), so the ring
+// follows any size.
+// ---------------------------------------------------------------------------
+
+.module-Avatar {
+  border-radius: 50%;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -1.5px;
+    z-index: 1;
+    border-radius: 50%;
+    padding: 1.5px;
+    pointer-events: none;
+    background: linear-gradient(135deg, #7fb8e0 0%, rgba(127, 184, 224, 0) 70%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  &--with-story::after {
+    inset: -3px;
+  }
+}
+
+.module-Avatar__contents--icon,
+.module-Avatar__contents {
+  transition: filter var(--asher-fast) var(--asher-ease-out);
+}
+
+// ---------------------------------------------------------------------------
+// Typing indicator: three 6px dots, 4px apart, each rising 3px and
+// brightening from text-muted to rim over 900ms, staggered 150ms.
+// ---------------------------------------------------------------------------
+
+.module-typing-animation {
+  height: 14px;
+  width: auto;
+  gap: 4px;
+  padding-inline: 0;
+  align-items: flex-end;
+}
+
+.module-message__typing-animation-container .module-typing-animation {
+  width: auto;
+}
+
+.module-typing-animation__dot {
+  width: 6px;
+  height: 6px;
+  opacity: 1;
+  background-color: light-dark(
+    var(--asher-light-text-muted),
+    var(--asher-text-muted)
+  );
+}
+
+.module-typing-animation__dot--light {
+  background-color: light-dark(
+    var(--asher-light-text-muted),
+    var(--asher-text-muted)
+  );
+}
+
+.page-is-visible .module-typing-animation__dot {
+  animation: asher-typing 900ms var(--asher-ease-in-out) infinite;
+}
+
+.page-is-visible .module-left-pane .module-typing-animation__dot {
+  animation-name: asher-typing-bare;
+}
+
+.module-typing-animation__dot--second {
+  animation-delay: 150ms;
+}
+
+.module-typing-animation__dot--third {
+  animation-delay: 300ms;
+}
+
+@keyframes asher-typing {
+  0%,
+  100% {
+    transform: translateY(0);
+    background-color: var(--asher-text-muted);
+  }
+  50% {
+    transform: translateY(-3px);
+    background-color: var(--asher-rim);
+  }
+}
+
+@keyframes asher-typing-bare {
+  0%,
+  100% {
+    background-color: var(--asher-text-muted);
+  }
+  50% {
+    background-color: var(--asher-rim);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Motion: sent bubbles rise 8px and fade in; received scale from 0.96.
+// The newest timeline row carries .module-timeline__last-message, so a new
+// row mounting there plays the animation once. (This also plays once for the
+// newest message when a conversation opens; see the report.)
+// ---------------------------------------------------------------------------
+
+@keyframes asher-message-send {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes asher-message-receive {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes asher-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.page-is-visible
+  .module-timeline__messages--have-newest
+  .module-timeline__last-message {
+  .module-message--outgoing .module-message__container-outer {
+    animation: asher-message-send var(--asher-base) var(--asher-ease-out) both;
+  }
+  .module-message--incoming .module-message__container-outer {
+    transform-origin: bottom left;
+    animation: asher-message-receive var(--asher-base) var(--asher-ease-out)
+      both;
+  }
+}
+
+.module-message {
+  transition-duration: var(--asher-fast);
+  transition-timing-function: var(--asher-ease-out);
+}
+
+.module-message__wrapper {
+  transition: background var(--asher-fast) var(--asher-ease-out);
+}
+
+// ---------------------------------------------------------------------------
+// Composer: pill, raised fill, atmosphere focus ring, 36px send button, and a
+// plus that rotates into a close while the attach menu is open.
+// ---------------------------------------------------------------------------
+
+.module-composition-input__input {
+  border-radius: 9999px;
+  background: light-dark(var(--asher-light-surface), var(--asher-raised));
+  border: 1px solid light-dark(var(--asher-light-border), var(--asher-border));
+  transition:
+    border-color var(--asher-fast) var(--asher-ease-out),
+    box-shadow var(--asher-fast) var(--asher-ease-out);
+
+  &[data-focus-visible='true'] {
+    border: 1px solid var(--asher-atmosphere);
+    box-shadow: var(--asher-focus-ring);
+  }
+
+  &:has(.module-composition-input__input__scroller--large) {
+    border-radius: 18px;
+  }
+}
+
+.CompositionArea__button-cell {
+  button {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 9999px;
+    transition:
+      background-color var(--asher-fast) var(--asher-ease-out),
+      color var(--asher-fast) var(--asher-ease-out);
+
+    > span:first-child {
+      display: inline-block;
+      transition: rotate var(--asher-fast) var(--asher-ease-out);
+    }
+
+    &[data-axo-dropdownmenu-state='open'] > span:first-child {
+      rotate: 45deg;
+    }
+  }
+
+  &:last-child button {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Upload and media
+// ---------------------------------------------------------------------------
+
+.module-staged-attachment.module-image,
+.module-staged-attachment .module-image__image,
+.module-staged-attachment .module-image__border-overlay,
+.module-staged-generic-attachment,
+.module-staged-link-preview,
+.module-staged-link-preview__icon-container {
+  border-radius: 12px;
+}
+
+// Drag-and-drop: ConversationView sets data-asher-dragging while files hover.
+.ConversationView[data-asher-dragging='true']::after {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  z-index: variables.$z-index-popup-overlay;
+  border: 1px dashed var(--asher-border-strong);
+  border-radius: 16px;
+  background: light-dark(rgba(244, 247, 250, 0.6), rgba(11, 16, 23, 0.55));
+  box-shadow:
+    var(--asher-glow),
+    inset 0 0 0 1px rgba(61, 143, 207, 0.35),
+    inset 0 0 40px rgba(61, 143, 207, 0.12);
+  pointer-events: none;
+  animation: asher-fade-in var(--asher-fast) var(--asher-ease-out) both;
+}
+
+// Upload progress: the thin 2px arc around the attachment icon, in atmosphere
+// blue on incoming bubbles and rim white on the blue outgoing bubble.
+.AttachmentStatusIcon__progress-container svg g circle {
+  stroke: var(--asher-rim);
+  transition: stroke-dashoffset var(--asher-slow) var(--asher-ease-out);
+}
+.AttachmentStatusIcon__progress-container--incoming svg g circle {
+  stroke: var(--asher-atmosphere);
+}
+
+.ProgressBar {
+  height: 2px;
+  background: rgba(61, 143, 207, 0.2);
+}
+.ProgressBar__fill {
+  background-color: var(--asher-atmosphere);
+  transition: transform var(--asher-slow) var(--asher-ease-out);
+}
+
+// ---------------------------------------------------------------------------
+// Spacing and shared chrome
+// ---------------------------------------------------------------------------
+
+.module-message {
+  padding-inline: 16px;
+}
+
+.module-conversation-list__item--contact-or-conversation {
+  min-height: 44px;
+}
+
+// ---------------------------------------------------------------------------
+// Reduced motion: crossfades only.
+// ---------------------------------------------------------------------------
+
+@media (prefers-reduced-motion: reduce) {
+  .dark-theme .App::before {
+    animation: none;
+    transform: none;
+  }
+
+  .page-is-visible .module-typing-animation__dot,
+  .page-is-visible .module-left-pane .module-typing-animation__dot {
+    animation-name: asher-typing-bare;
+  }
+
+  .page-is-visible
+    .module-timeline__messages--have-newest
+    .module-timeline__last-message {
+    .module-message--outgoing .module-message__container-outer,
+    .module-message--incoming .module-message__container-outer {
+      animation: asher-fade-in var(--asher-fast) linear both;
+    }
+  }
+
+  .CompositionArea__button-cell button > span:first-child {
+    transition: none;
+  }
+
+  .ConversationView[data-asher-dragging='true']::after {
+    animation: none;
+  }
+}

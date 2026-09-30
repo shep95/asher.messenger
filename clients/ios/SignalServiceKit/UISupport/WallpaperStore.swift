@@ -82,13 +82,14 @@ public class WallpaperStore {
     }
 
     /// Return either the per-thread wallpaper setting, or the global setting if none is set on the thread.
+    /// When neither is set, Asher renders `Wallpaper.defaultForNewInstalls`.
     public func fetchWallpaperForRendering(
         for threadUniqueId: String?,
         tx: DBReadTransaction,
     ) -> Wallpaper? {
         return Self.fetchResolvedValue(for: threadUniqueId) {
             return fetchWallpaper(for: $0, tx: tx)
-        }
+        } ?? Wallpaper.defaultForNewInstalls
     }
 
     /// Fetches a thread-specific value (if set) or the global value.

@@ -198,6 +198,8 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
     private enum LayoutMetrics {
         static let initialToolbarHeight: CGFloat = 56
         static let initialTextBoxHeight: CGFloat = 40
+        /// Asher `composer.send-button.size`.
+        static let asherSendButtonSize: CGFloat = 36
 
         static let minTextViewHeight: CGFloat = 35
         static let maxTextViewHeight: CGFloat = 98
@@ -343,7 +345,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
             accessibilityIdentifier: String?,
         ) -> UIButton {
 
-            let buttonSize = LayoutMetrics.initialTextBoxHeight
+            let buttonSize = LayoutMetrics.asherSendButtonSize
 
             let button = UIButton(
                 configuration: .prominentGlass(),
@@ -748,8 +750,11 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
             messageContentView.addSubview(backgroundView)
         } else {
             backgroundView = UIView()
-            backgroundView.backgroundColor = UIColor.Signal.tertiaryFill
+            // Asher `composer`: pill, `composer.fill`, 1pt `color.border`.
+            backgroundView.backgroundColor = UIColor.Signal.asherComposerFill
             backgroundView.layer.cornerRadius = cornerRadius
+            backgroundView.layer.borderWidth = 1
+            backgroundView.layer.borderColor = UIColor.Signal.asherBorder.cgColor
 
             messageContentView.addSubview(backgroundView)
             messageContentView.addSubview(messageComponentsView)
@@ -1251,8 +1256,21 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
             button.accessibilityLabel = MessageStrings.sendButton
             button.isPointerInteractionEnabled = true
             button.accessibilityIdentifier = UIView.accessibilityIdentifier(in: self, name: "sendButton")
-            button.setImage(UIImage(imageLiteralResourceName: "send-blue-28"), for: .normal)
+            // Asher `composer.send-button`: a 36pt atmosphere-blue disc with a
+            // white arrow. The button keeps its larger bounds as the tap target.
             button.bounds.size = CGSize(width: 48, height: LayoutMetrics.initialToolbarHeight)
+            button.setImage(Theme.iconImage(.arrowUp), for: .normal)
+            button.tintColor = .Signal.asherTextOnAtmosphere
+            let disc = CALayer()
+            disc.backgroundColor = UIColor.Signal.accent.cgColor
+            disc.cornerRadius = LayoutMetrics.asherSendButtonSize / 2
+            disc.frame = CGRect(
+                x: (button.bounds.width - LayoutMetrics.asherSendButtonSize) / 2,
+                y: (button.bounds.height - LayoutMetrics.asherSendButtonSize) / 2,
+                width: LayoutMetrics.asherSendButtonSize,
+                height: LayoutMetrics.asherSendButtonSize,
+            )
+            button.layer.insertSublayer(disc, at: 0)
             return button
         }()
 
@@ -1500,7 +1518,8 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
                 iconImageView.transform = .identity
 
             case .close:
-                iconImageView.transform = .rotate(1.5 * .halfPi)
+                // Asher `composer.attach`: the plus rotates 45 degrees into a close.
+                iconImageView.transform = .rotate(0.5 * .halfPi)
             }
         }
     }
@@ -1536,7 +1555,8 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
                 transform = .identity
 
             case .close:
-                transform = .rotate(1.5 * .halfPi)
+                // Asher `composer.attach`: the plus rotates 45 degrees into a close.
+                transform = .rotate(0.5 * .halfPi)
             }
         }
     }

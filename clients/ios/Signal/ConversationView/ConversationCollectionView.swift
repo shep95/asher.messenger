@@ -166,7 +166,15 @@ public class ConversationCollectionView: UICollectionView {
         }
 
         if animated {
-            updateBlock()
+            // Asher motion: message inserts/removals run on the orbital
+            // ease-out over `base` (240ms). The batch update adopts the
+            // enclosing animation's timing.
+            UIView.animate(
+                withDuration: AsherMotion.base,
+                delay: 0,
+                options: [.curveEaseOut, .allowUserInteraction],
+                animations: updateBlock,
+            )
         } else {
             // HACK: We use `UIView.animateWithDuration:0` rather than `UIView.performWithAnimation` to work around a
             // UIKit Crash like:

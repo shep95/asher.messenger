@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asher motion durations (ms). Everything eases out with @interpolator/asher_ease_out. -->
+<resources>
+    <integer name="asher_motion_fast">160</integer>
+    <integer name="asher_motion_base">240</integer>
+    <integer name="asher_motion_slow">400</integer>
+</resources>

@@ -63,7 +63,7 @@
     <color name="safety_number_card_grey">#ffEBEAE8</color>
     <color name="safety_number_card_blue">#ff506ECD</color>
 
-    <color name="notification_background_ultramarine">#3B45FD</color>
+    <color name="notification_background_ultramarine">#3D8FCF</color>
 
     <!-- Bottom-sheet dialog navigation bar color. Opaque below API 27 (keeps the legacy colored
          strip); overridden to transparent in values-v27 so Material's BottomSheetDialog lays the

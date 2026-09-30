@@ -106,6 +106,9 @@ public enum StandardSound: UInt16 {
     // Audio Playback
     case beginNextTrack = 24
     case endLastTrack = 25
+
+    // Asher (default notification chime)
+    case asherNotify = 27
 }
 
 public extension StandardSound {
@@ -130,6 +133,7 @@ public extension StandardSound {
         case .pulse: return "Pulse"
         case .synth: return "Synth"
         case .signalClassic: return "Signal Classic"
+        case .asherNotify: return "Asher"
         // Calls
         case .callConnecting: return "Call Connecting"
         case .callOutboundRinging: return "Call Outbound Ringing"
@@ -186,6 +190,9 @@ public extension StandardSound {
             return quiet ? "synth-quiet.aifc" : "synth.aifc"
         case .signalClassic:
             return quiet ? "classic-quiet.aifc" : "classic.aifc"
+        case .asherNotify:
+            // The Asher chime is already quiet; one file serves both variants.
+            return "asher_notify.wav"
         // Calls
         case .callConnecting: return "ringback_tone_ansi.caf"
         case .callOutboundRinging: return "ringback_tone_ansi.caf"
@@ -196,7 +203,7 @@ public extension StandardSound {
         case .groupCallLeave: return "group_call_leave.aiff"
         case .raisedHand: return "notification_simple-01.caf"
         // Other
-        case .messageSent: return "message_sent.aiff"
+        case .messageSent: return "asher_sent.wav"
         case .silence: return "silence.aiff"
         case .none: return nil
         // Audio Playback
@@ -305,8 +312,9 @@ public class Sounds {
 
     public static var allNotificationSounds: [Sound] {
         let standardSounds: [StandardSound] = [
-            // None and Note (default) should be first.
+            // None and Asher (default) should be first.
             .none,
+            .asherNotify,
             .note,
             .aurora,
             .bamboo,

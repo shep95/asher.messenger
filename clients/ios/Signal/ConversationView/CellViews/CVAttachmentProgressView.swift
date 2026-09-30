@@ -341,6 +341,9 @@ class CVAttachmentProgressView: ManualLayoutView {
             return progressView
         }
         let progressView = CircularProgressView(frame: contentView.bounds)
+        // Asher `upload.progress`: a thin 2pt atmosphere-blue arc ("orbit").
+        progressView.lineWidth = 2
+        progressView.progressTintColor = .Signal.accent
         contentView.addSubviewToFillSuperviewEdges(progressView)
         self.progressView = progressView
         return progressView

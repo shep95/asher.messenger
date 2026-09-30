@@ -55,6 +55,9 @@ public class NotificationChannels {
 
   private static final long[] EMPTY_VIBRATION_PATTERN = new long[] { 0 };
 
+  /** Asher: a short 40/60/40 ms tap for message arrivals. Never more. */
+  private static final long[] ASHER_VIBRATION_PATTERN = new long[] { 0, 40, 60, 40 };
+
   private static class Version {
     static final int MESSAGES_CATEGORY      = 2;
     static final int CALLS_PRIORITY_BUMP    = 3;
@@ -346,7 +349,7 @@ public class NotificationChannels {
     Log.i(TAG, "Updating default message ringtone with URI: " + uri);
 
     updateMessageChannel(channel -> {
-      channel.setSound(uri == null ? Settings.System.DEFAULT_NOTIFICATION_URI : uri, getRingtoneAudioAttributes());
+      channel.setSound(uri == null ? getDefaultMessageSound(context) : uri, getRingtoneAudioAttributes());
     });
   }
 
@@ -367,7 +370,7 @@ public class NotificationChannels {
     boolean success      = updateExistingChannel(ServiceUtil.getNotificationManager(context),
                                                  recipient.getNotificationChannel(),
                                                  newChannelId,
-                                                 channel -> channel.setSound(uri == null ? Settings.System.DEFAULT_NOTIFICATION_URI : uri, getRingtoneAudioAttributes()));
+                                                 channel -> channel.setSound(uri == null ? getDefaultMessageSound(context) : uri, getRingtoneAudioAttributes()));
 
     SignalDatabase.recipients().setNotificationChannel(recipient.getId(), success ? newChannelId : null);
     ensureCustomChannelConsistency();
@@ -452,7 +455,7 @@ public class NotificationChannels {
   @TargetApi(26)
   private void setVibrationEnabled(@NonNull NotificationChannel channel, boolean enabled) {
     if (enabled) {
-      channel.setVibrationPattern(null);
+      channel.setVibrationPattern(ASHER_VIBRATION_PATTERN);
       channel.enableVibration(true);
     } else {
       channel.setVibrationPattern(EMPTY_VIBRATION_PATTERN);
@@ -832,6 +835,14 @@ public class NotificationChannels {
     updater.update(newChannel);
     notificationManager.createNotificationChannel(newChannel);
     return true;
+  }
+
+  /**
+   * Asher's default message chime (res/raw/asher_notify.wav): one soft two-tone note. Used wherever
+   * the platform default notification sound would otherwise be chosen.
+   */
+  public static @NonNull Uri getDefaultMessageSound(@NonNull Context context) {
+    return Uri.parse("android.resource://" + context.getPackageName() + "/raw/asher_notify");
   }
 
   private static AudioAttributes getRingtoneAudioAttributes() {

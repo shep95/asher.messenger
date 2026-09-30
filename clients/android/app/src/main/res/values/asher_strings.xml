@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asher scene indicator labels. Transport names come from brands/asher/design/tokens.json (naming.transport_names). -->
+<resources>
+    <string name="SceneIndicator__orbit">Orbit</string>
+    <string name="SceneIndicator__mesh">Mesh</string>
+    <string name="SceneIndicator__carrying">Carrying</string>
+    <string name="SceneIndicator__out_of_range">Out of range</string>
+    <!-- e.g. "Mesh · 2 hops" -->
+    <string name="SceneIndicator__label_with_detail">%1$s · %2$s</string>
+</resources>

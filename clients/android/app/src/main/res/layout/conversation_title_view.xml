@@ -22,8 +22,8 @@
 
         <org.thoughtcrime.securesms.avatar.view.AvatarView
             android:id="@+id/contact_photo_image"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="@dimen/conversation_header_avatar_size"
+            android:layout_height="@dimen/conversation_header_avatar_size"
             android:clickable="true"
             android:contentDescription="@string/conversation_list_item_view__contact_photo_image"
             android:cropToPadding="true"
@@ -36,8 +36,8 @@
             android:layout_width="16dp"
             android:layout_height="16dp"
             android:layout_gravity="start|top"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="23dp"
+            android:layout_marginStart="18dp"
+            android:layout_marginTop="20dp"
             android:contentDescription="@string/ImageView__badge"
             app:badge_size="small" />
     </FrameLayout>
@@ -70,7 +70,7 @@
         android:orientation="horizontal"
         app:layout_constrainedWidth="true"
         app:layout_constraintTop_toBottomOf="@id/title"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/scene_indicator"
         app:layout_constraintVertical_chainStyle="packed"
         app:layout_constraintHorizontal_bias="0"
         app:layout_constraintStart_toStartOf="@id/title"
@@ -117,5 +117,20 @@
             tools:text="(123) 123-1234" />
 
         </LinearLayout>
+
+    <!-- Asher scene indicator: how the two of you are connected right now (Orbit / Mesh / Carrying / Out of range). -->
+    <org.thoughtcrime.securesms.components.SceneIndicatorView
+        android:id="@+id/scene_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:visibility="gone"
+        app:layout_constrainedWidth="true"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0"
+        app:layout_constraintStart_toStartOf="@id/title"
+        app:layout_constraintTop_toBottomOf="@id/subtitle_container"
+        tools:visibility="visible" />
 
 </org.thoughtcrime.securesms.conversation.ConversationTitleView>

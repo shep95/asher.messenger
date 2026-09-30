@@ -56,6 +56,8 @@ import type {
 import { tw } from '../../axo/tw.dom.tsx';
 import { AxoDragRegion } from '../../axo/AxoDragRegion.dom.tsx';
 import { OfficialChatInlineBadge } from './OfficialChatInlineBadge.dom.tsx';
+import type { SceneState } from './SceneIndicator.dom.tsx';
+import { SceneIndicator } from './SceneIndicator.dom.tsx';
 import { AxoIconButton } from '../../axo/AxoIconButton.dom.tsx';
 import { AxoButton } from '../../axo/AxoButton.dom.tsx';
 import { AxoConfirmDialog } from '../../axo/AxoConfirmDialog.dom.tsx';
@@ -148,6 +150,8 @@ export type PropsDataType = {
   isSignalConversation?: boolean;
   isSmsOnlyOrUnregistered?: boolean;
   outgoingCallButtonStyle: OutgoingCallButtonStyle;
+  // Asher scene indicator (Orbit / Mesh / Carrying / Out of range).
+  sceneState?: SceneState | null;
   theme: ThemeType;
 
   contactSpoofingWarning: ContactSpoofingWarning | null;
@@ -211,6 +215,7 @@ export const ConversationHeader = memo(function ConversationHeader({
   isSelectMode,
   isSignalConversation,
   isSmsOnlyOrUnregistered,
+  sceneState,
   onConversationAccept,
   onConversationArchive,
   onConversationBlock,
@@ -346,6 +351,7 @@ export const ConversationHeader = memo(function ConversationHeader({
               onViewUserStories={onViewUserStories}
               onViewConversationDetails={onViewConversationDetails}
               isSignalConversation={isSignalConversation ?? false}
+              sceneState={sceneState ?? null}
             />
             <div className={tw(`flex flex-row gap-1 px-4 @min-[500px]:gap-3`)}>
               {!isSmsOnlyOrUnregistered &&
@@ -493,6 +499,7 @@ function HeaderContent({
   i18n,
   theme,
   isSignalConversation,
+  sceneState,
   onViewUserStories,
   onViewConversationDetails,
 }: {
@@ -503,6 +510,7 @@ function HeaderContent({
   i18n: LocalizerType;
   theme: ThemeType;
   isSignalConversation: boolean;
+  sceneState: SceneState | null;
   onViewUserStories: () => void;
   onViewConversationDetails: () => void;
 }) {
@@ -561,6 +569,7 @@ function HeaderContent({
         isSignalConversation={isSignalConversation}
         headerRef={headerRef}
       />
+      {sceneState != null ? <SceneIndicator scene={sceneState} /> : null}
       {(isOfficialChat ||
         conversation.expireTimer != null ||
         conversation.isVerified) && (

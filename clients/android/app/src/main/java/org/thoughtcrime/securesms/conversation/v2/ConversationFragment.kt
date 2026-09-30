@@ -181,6 +181,7 @@ import org.thoughtcrime.securesms.components.HidingLinearLayout
 import org.thoughtcrime.securesms.components.InputPanel
 import org.thoughtcrime.securesms.components.ProgressCardDialogFragment
 import org.thoughtcrime.securesms.components.RotatedTiledDrawable
+import org.thoughtcrime.securesms.components.SceneIndicatorView
 import org.thoughtcrime.securesms.components.ScrollToPositionDelegate
 import org.thoughtcrime.securesms.components.SendButton
 import org.thoughtcrime.securesms.components.SignalProgressDialog
@@ -239,6 +240,7 @@ import org.thoughtcrime.securesms.conversation.ScheduledMessagesRepository
 import org.thoughtcrime.securesms.conversation.ShowAdminsBottomSheetDialog
 import org.thoughtcrime.securesms.conversation.clicklisteners.PollVotesFragment
 import org.thoughtcrime.securesms.conversation.colors.ChatColors
+import org.thoughtcrime.securesms.conversation.colors.ChatColorsPalette
 import org.thoughtcrime.securesms.conversation.colors.ColorizerV2
 import org.thoughtcrime.securesms.conversation.colors.RecyclerViewColorizer
 import org.thoughtcrime.securesms.conversation.drafts.DraftRepository
@@ -304,6 +306,7 @@ import org.thoughtcrime.securesms.groups.ui.migration.GroupsV1MigrationInfoBotto
 import org.thoughtcrime.securesms.groups.ui.migration.GroupsV1MigrationSuggestionsDialog
 import org.thoughtcrime.securesms.groups.v2.GroupBlockJoinRequestResult
 import org.thoughtcrime.securesms.invites.InviteActions
+import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint
 import org.thoughtcrime.securesms.jobs.AttachmentBackfill
 import org.thoughtcrime.securesms.jobs.ServiceOutageDetectionJob
 import org.thoughtcrime.securesms.keyboard.KeyboardPage
@@ -380,6 +383,7 @@ import org.thoughtcrime.securesms.util.Dialogs
 import org.thoughtcrime.securesms.util.DoubleClickDebouncer
 import org.thoughtcrime.securesms.util.FileProviderUtil
 import org.thoughtcrime.securesms.util.FullscreenHelper
+import org.thoughtcrime.securesms.util.InternetConnectionObserver
 import org.thoughtcrime.securesms.util.MediaUtil
 import org.thoughtcrime.securesms.util.MessageConstraintsUtil
 import org.thoughtcrime.securesms.util.MessageConstraintsUtil.getEditMessageThresholdHours
@@ -411,6 +415,7 @@ import org.thoughtcrime.securesms.util.viewModel
 import org.thoughtcrime.securesms.util.views.SimpleProgressDialog
 import org.thoughtcrime.securesms.util.visible
 import org.thoughtcrime.securesms.verify.VerifyIdentityActivity
+import org.thoughtcrime.securesms.wallpaper.AsherEarthWallpaper
 import org.thoughtcrime.securesms.wallpaper.ChatWallpaper
 import org.thoughtcrime.securesms.wallpaper.ChatWallpaperDimLevelUtil
 import java.time.Instant
@@ -1648,6 +1653,16 @@ class ConversationFragment :
     disposables += viewModel.scrollButtonState
       .subscribeBy(onNext = this::presentScrollButtons)
 
+    // Asher scene indicator: Orbit while the internet is reachable, Out of range otherwise. The mesh
+    // transport can later promote this to Mesh / Carrying through ConversationTitleView.setSceneState.
+    disposables += InternetConnectionObserver.observe()
+      .startWithItem(NetworkConstraint.isMet(requireContext().applicationContext))
+      .distinctUntilChanged()
+      .observeOn(AndroidSchedulers.mainThread())
+      .subscribeBy(onNext = { online ->
+        binding.conversationTitleView.root.setSceneState(if (online) SceneIndicatorView.State.ORBIT else SceneIndicatorView.State.OUT_OF_RANGE)
+      })
+
     disposables += viewModel
       .groupMemberServiceIds
       .subscribeBy(onNext = {
@@ -2259,7 +2274,8 @@ class ConversationFragment :
   }
 
   private fun presentWallpaper(recipient: Recipient) {
-    val chatWallpaper = recipient.wallpaper
+    // Asher: Earth from orbit is the default backdrop when neither the chat nor the app has a wallpaper set.
+    val chatWallpaper = recipient.wallpaper ?: if (recipient.isReleaseNotes) null else AsherEarthWallpaper.INSTANCE
     if (recipient.isReleaseNotes) {
       applyReleaseNotesWallpaper()
     } else {
@@ -2359,7 +2375,13 @@ class ConversationFragment :
     binding.scrollToMention.setUnreadCountBackgroundTint(chatColors.asSingleColor())
     binding.scrollToBottom.setUnreadCountBackgroundTint(chatColors.asSingleColor())
     binding.conversationInputPanel.buttonToggle.background.apply {
-      colorFilter = PorterDuffColorFilter(chatColors.asSingleColor(), PorterDuff.Mode.MULTIPLY)
+      // Asher: the send button is the atmosphere accent when the chat uses the default bubble colour.
+      val sendAccent = if (chatColors == ChatColorsPalette.Bubbles.default) {
+        ContextCompat.getColor(requireContext(), R.color.asher_atmosphere)
+      } else {
+        chatColors.asSingleColor()
+      }
+      colorFilter = PorterDuffColorFilter(sendAccent, PorterDuff.Mode.MULTIPLY)
       invalidateSelf()
     }
   }

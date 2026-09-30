@@ -42,7 +42,7 @@ public enum BadgeCountType: Int64, CaseIterable {
 
 public struct NotificationPreferencesManager {
     public enum Defaults {
-        public static let globalNotificationSound = Sound.standard(.note)
+        public static let globalNotificationSound = Sound.standard(.asherNotify)
         static let previewType: NotificationType = .namePreview
         static let playSoundInForeground = true
         static let messageSentSound = true

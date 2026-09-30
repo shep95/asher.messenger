@@ -3,6 +3,8 @@
 
 import {
   useCallback,
+  useRef,
+  useState,
   type JSX,
   type DragEvent,
   type ClipboardEvent,
@@ -76,10 +78,36 @@ export function ConversationView({
   renderPanel,
   shouldHideConversationView,
 }: PropsType): JSX.Element {
+  // Asher: drag-and-drop overlay state (styled in stylesheets/_asher.scss via
+  // data-asher-dragging). A depth counter survives dragenter/dragleave pairs
+  // fired by child elements.
+  const dragDepthRef = useRef(0);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+
+  const onDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer) {
+      return;
+    }
+    if (!Array.from(event.dataTransfer.types).includes('Files')) {
+      return;
+    }
+    dragDepthRef.current += 1;
+    setIsDraggingFiles(true);
+  }, []);
+
+  const onDragLeave = useCallback(() => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDraggingFiles(false);
+    }
+  }, []);
+
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.stopPropagation();
       event.preventDefault();
+      dragDepthRef.current = 0;
+      setIsDraggingFiles(false);
 
       if (!event.dataTransfer) {
         return;
@@ -163,6 +191,9 @@ export function ConversationView({
   return (
     <div
       className="ConversationView ConversationPanel"
+      data-asher-dragging={isDraggingFiles ? 'true' : undefined}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
       onDrop={onDrop}
       onPaste={onPaste}
     >

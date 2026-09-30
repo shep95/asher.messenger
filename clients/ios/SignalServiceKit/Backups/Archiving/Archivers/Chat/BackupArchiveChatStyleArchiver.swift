@@ -226,7 +226,9 @@ public class BackupArchiveChatStyleArchiver: BackupArchiveProtoStreamWriter {
                 case .failure(let error):
                     return .failure(error)
                 }
-            case .releaseNotes:
+            case .releaseNotes, .builtInPhoto:
+                // Built-in photo wallpapers (Asher) have no preset in the backup
+                // proto; they are restored as the app default instead.
                 protoWallpaper = nil
             }
 
@@ -503,6 +505,7 @@ private extension Wallpaper {
         case wallpaperPreset(BackupProto_ChatStyle.WallpaperPreset)
         case photo
         case releaseNotes
+        case builtInPhoto
     }
 
     func asBackupProto() -> BackupRepresentation {
@@ -510,6 +513,7 @@ private extension Wallpaper {
         // the iOS enum names were defined this way. They're persisted to the
         // db now, so we just gotta keep the mapping.
         return switch self {
+        case .asherEarth: .builtInPhoto
         case .blush: .wallpaperPreset(.solidBlush)
         case .copper: .wallpaperPreset(.solidCopper)
         case .zorba: .wallpaperPreset(.solidDust)

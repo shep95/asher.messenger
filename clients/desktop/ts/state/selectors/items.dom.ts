@@ -27,7 +27,7 @@ import type { StateSelector } from '../types.std.ts';
 import { Emoji } from '../../axo/emoji.std.ts';
 import { DEFAULT_SHOW_UNREAD_REMINDERS } from '../../util/unreadReminders.std.ts';
 
-const DEFAULT_PREFERRED_LEFT_PANE_WIDTH = 320;
+const DEFAULT_PREFERRED_LEFT_PANE_WIDTH = 360;
 
 export const getItems = (state: StateType): ItemsStateType => state.items;
 

@@ -8,10 +8,18 @@ object ChatColorsPalette {
 
     // region Default
 
+    /**
+     * Asher default: the "horizon" gradient (#2A6FA8 -> #1F5686). Keeps the ULTRAMARINE name because
+     * the backup, storage-service and MaterialColor mappings key on this object.
+     */
     @JvmField
-    val ULTRAMARINE = ChatColors.forColor(
+    val ULTRAMARINE = ChatColors.forGradient(
       ChatColors.Id.BuiltIn,
-      0xFF315FF4.toInt()
+      ChatColors.LinearGradient(
+        160f,
+        intArrayOf(0xFF2A6FA8.toInt(), 0xFF1F5686.toInt()),
+        floatArrayOf(0f, 1f)
+      )
     )
 
     // endregion

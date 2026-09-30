@@ -158,7 +158,7 @@ private fun ProgressIndicator(
         strokeWidth = 2.dp,
         strokeCap = StrokeCap.Round,
         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        color = MaterialTheme.colorScheme.onSurface,
+        color = MaterialTheme.colorScheme.primary,
         modifier = indicatorModifier
       )
     } else {
@@ -167,7 +167,7 @@ private fun ProgressIndicator(
         strokeWidth = 2.dp,
         strokeCap = StrokeCap.Round,
         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        color = MaterialTheme.colorScheme.onSurface,
+        color = MaterialTheme.colorScheme.primary,
         modifier = indicatorModifier
       )
     }

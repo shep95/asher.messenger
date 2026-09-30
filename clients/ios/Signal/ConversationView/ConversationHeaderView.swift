@@ -64,11 +64,14 @@ class ConversationHeaderView: UIView {
     }
 
     private var avatarSizeClass: ConversationAvatarView.Configuration.SizeClass {
-        // One size for the navigation bar on iOS 26.
-        if #available(iOS 26, *) { return .forty }
+        // Asher `avatar.sizes.header` (32pt); one size for the navigation bar on iOS 26.
+        if #available(iOS 26, *) { return .thirtyTwo }
 
-        return useCompactVerticalLayout ? .twentyFour : .thirtySix
+        return useCompactVerticalLayout ? .twentyFour : .thirtyTwo
     }
+
+    /// Asher scene indicator: how this conversation is connected right now.
+    let sceneIndicatorView = SceneIndicatorView()
 
     private(set) lazy var avatarView = ConversationAvatarView(
         sizeClass: avatarSizeClass,
@@ -87,7 +90,13 @@ class ConversationHeaderView: UIView {
         // breaks the layout, so set an initial height.
         titleColumns.heightAnchor.constraint(greaterThanOrEqualToConstant: titleLabel.font.lineHeight.rounded(.up)).isActive = true
 
-        let textRows = UIStackView(arrangedSubviews: [titleColumns, subtitleLabel])
+        // Subtitle (mute / timer / verified) and the scene indicator share the row under the title.
+        let subtitleRow = UIStackView(arrangedSubviews: [subtitleLabel, sceneIndicatorView])
+        subtitleRow.axis = .horizontal
+        subtitleRow.alignment = .center
+        subtitleRow.spacing = 6
+
+        let textRows = UIStackView(arrangedSubviews: [titleColumns, subtitleRow])
         textRows.axis = .vertical
         textRows.alignment = .leading
         textRows.distribution = .fillProportionally
@@ -151,10 +160,54 @@ class ConversationHeaderView: UIView {
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapView))
         rootStack.addGestureRecognizer(tapGesture)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(connectivityDidChange),
+            name: SSKReachability.owsReachabilityDidChange,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(connectivityDidChange),
+            name: OWSChatConnection.chatConnectionStateDidChange,
+            object: nil,
+        )
+        updateSceneIndicator()
     }
 
     required init(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // MARK: Scene indicator
+
+    /// A state set by the mesh transport (`.mesh(hops:)`, `.carrying`) wins over
+    /// the connectivity-derived state until cleared with `nil`.
+    private var transportStateOverride: SceneIndicatorView.State?
+
+    /// For the mesh transport: report `.mesh(hops:)` / `.carrying`, or `nil` to
+    /// fall back to reachability (Orbit / Out of range).
+    func setTransportState(_ state: SceneIndicatorView.State?) {
+        AssertIsOnMainThread()
+        transportStateOverride = state
+        updateSceneIndicator()
+    }
+
+    @objc
+    private func connectivityDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.updateSceneIndicator()
+        }
+    }
+
+    private func updateSceneIndicator() {
+        if let transportStateOverride {
+            sceneIndicatorView.state = transportStateOverride
+            return
+        }
+        let isReachable = SSKEnvironment.shared.reachabilityManagerRef.isReachable
+        sceneIndicatorView.state = isReachable ? .orbit : .offline
     }
 
     func configure(threadViewModel: ThreadViewModel) {
@@ -198,6 +251,7 @@ class ConversationHeaderView: UIView {
         }
         // Single line of text when vertically compact layout.
         subtitleLabel.isHidden = useCompactVerticalLayout
+        sceneIndicatorView.isHidden = useCompactVerticalLayout
     }
 
     // MARK: Spinning Title
@@ -230,5 +284,159 @@ class ConversationHeaderView: UIView {
         } else {
             self.delegate?.didTapConversationHeaderView(self)
         }
+    }
+}
+
+// MARK: - Scene indicator
+
+/// Asher `scene_indicator`: a pill under the conversation title that says how
+/// the two of you are connected right now. It is the one place the transport
+/// shows itself.
+final class SceneIndicatorView: UIView {
+
+    enum State: Equatable {
+        /// Internet reachable.
+        case orbit
+        /// Peer reachable over radio, N hops away.
+        case mesh(hops: Int)
+        /// Queued, waiting for a relay.
+        case carrying
+        /// Nothing.
+        case offline
+
+        // Transport names are brand terms (tokens.json `naming.transport_names`).
+        var label: String {
+            switch self {
+            case .orbit: return "Orbit"
+            case .mesh(let hops): return "Mesh \u{00B7} \(hops) \(hops == 1 ? "hop" : "hops")"
+            case .carrying: return "Carrying"
+            case .offline: return "Out of range"
+            }
+        }
+
+        var color: UIColor {
+            switch self {
+            case .orbit: return .Signal.asherPresenceOnline
+            case .mesh: return .Signal.asherPresenceMesh
+            case .carrying: return .Signal.asherPresenceCarrying
+            case .offline: return .Signal.asherPresenceOffline
+            }
+        }
+
+        var isActive: Bool {
+            if case .offline = self { return false }
+            return true
+        }
+    }
+
+    private static let dotSize: CGFloat = 6
+    private static let pillHeight: CGFloat = 18
+    private static let pulseKey = "asherBreathe"
+
+    private let dotView = UIView()
+    private let label = UILabel()
+
+    var state: State = .offline {
+        didSet {
+            guard state != oldValue else { return }
+            applyState()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        backgroundColor = .Signal.asherSurfaceRaised
+        layer.cornerRadius = Self.pillHeight / 2
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.Signal.asherBorder.cgColor
+        directionalLayoutMargins = .init(top: 0, leading: 8, bottom: 0, trailing: 8)
+        isAccessibilityElement = true
+
+        dotView.layer.cornerRadius = Self.dotSize / 2
+        // Soft 8pt glow of the same colour.
+        dotView.layer.shadowOffset = .zero
+        dotView.layer.shadowRadius = 4
+        dotView.layer.shadowOpacity = 0.9
+
+        label.font = .asherMicro
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .Signal.secondaryLabel
+        label.setContentHuggingHigh()
+        label.setCompressionResistanceHigh()
+
+        let stack = UIStackView(arrangedSubviews: [dotView, label])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        addSubview(stack)
+
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        dotView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            dotView.widthAnchor.constraint(equalToConstant: Self.dotSize),
+            dotView.heightAnchor.constraint(equalToConstant: Self.dotSize),
+            stack.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: Self.pillHeight),
+        ])
+        setContentHuggingHigh()
+        setCompressionResistanceHigh()
+
+        applyState()
+
+        // CoreAnimation animations are dropped in the background; restore the pulse.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(didBecomeActive),
+            name: .OWSApplicationDidBecomeActive,
+            object: nil,
+        )
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func applyState() {
+        let color = state.color
+        dotView.backgroundColor = color
+        dotView.layer.shadowColor = color.cgColor
+        label.attributedText = NSAttributedString(
+            string: state.label.uppercased(),
+            attributes: [
+                .font: UIFont.asherMicro,
+                .kern: UIFont.asherMicroTracking,
+            ],
+        )
+        accessibilityLabel = state.label
+        updatePulse()
+    }
+
+    /// 2s breathing pulse while active; still while out of range or under Reduce Motion.
+    private func updatePulse() {
+        dotView.layer.removeAnimation(forKey: Self.pulseKey)
+        guard state.isActive, !UIAccessibility.isReduceMotionEnabled else { return }
+
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1
+        pulse.toValue = 0.6
+        pulse.duration = AsherMotion.breath / 2
+        pulse.autoreverses = true
+        pulse.repeatCount = .greatestFiniteMagnitude
+        pulse.timingFunction = AsherMotion.easeInOut
+        dotView.layer.add(pulse, forKey: Self.pulseKey)
+    }
+
+    @objc
+    private func didBecomeActive() {
+        updatePulse()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        layer.borderColor = UIColor.Signal.asherBorder.cgColor
     }
 }

@@ -6,6 +6,9 @@
 import Foundation
 
 public enum Wallpaper: String, CaseIterable {
+    // Built-in photo (Asher): Earth from low orbit. Listed first so it leads the picker.
+    case asherEarth
+
     // Solid
     case blush
     case copper
@@ -38,4 +41,15 @@ public enum Wallpaper: String, CaseIterable {
     case releaseNotes
 
     public static var defaultWallpapers: [Wallpaper] { allCases.filter { $0 != .photo && $0 != .releaseNotes } }
+
+    /// The wallpaper rendered when nothing has been chosen (Asher default for new installs).
+    public static let defaultForNewInstalls: Wallpaper = .asherEarth
+
+    /// Image asset name (`Images.xcassets`) backing a built-in photo wallpaper, if any.
+    public var builtInImageName: String? {
+        switch self {
+        case .asherEarth: return "asher_earth"
+        default: return nil
+        }
+    }
 }

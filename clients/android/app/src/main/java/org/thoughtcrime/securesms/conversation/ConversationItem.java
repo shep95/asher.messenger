@@ -804,12 +804,15 @@ public final class ConversationItem extends RelativeLayout implements BindableCo
     return availableWidth;
   }
 
+  private static final float ASHER_MAX_BUBBLE_WIDTH_FRACTION = 0.72f;
+
   private int getMaxBubbleWidth() {
     int paddings = getPaddingLeft() + getPaddingRight() + ViewUtil.getLeftMargin(bodyBubble) + ViewUtil.getRightMargin(bodyBubble);
     if (groupThread && !messageRecord.isOutgoing() && !messageRecord.isRemoteDelete()) {
       paddings += contactPhoto.getLayoutParams().width + ViewUtil.getLeftMargin(contactPhoto) + ViewUtil.getRightMargin(contactPhoto);
     }
-    return getMeasuredWidth() - paddings;
+    // Asher: bubbles measure at most 72% of the row so the wallpaper stays part of the reading experience.
+    return Math.min(getMeasuredWidth() - paddings, Math.round(getMeasuredWidth() * ASHER_MAX_BUBBLE_WIDTH_FRACTION));
   }
 
   private void initializeAttributes() {

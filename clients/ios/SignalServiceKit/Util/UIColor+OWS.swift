@@ -131,79 +131,82 @@ public extension UIColor {
 public extension UIColor {
 
     // MARK: - GreyScale
+    //
+    // Asher: "void, not grey". The ows_gray ramp keeps its names but every
+    // step carries a little blue (brands/asher/design/tokens.json).
 
     class var ows_gray02: UIColor {
-        return UIColor(rgbHex: 0xF6F6F6)
+        return UIColor(rgbHex: 0xF4F7FA)
     }
 
     class var ows_gray05: UIColor {
-        return UIColor(rgbHex: 0xE9E9E9)
+        return UIColor(rgbHex: 0xEEF3F8)
     }
 
     class var ows_gray10: UIColor {
-        return UIColor(rgbHex: 0xf0f0f0)
+        return UIColor(rgbHex: 0xE8EEF4)
     }
 
     class var ows_gray12: UIColor {
-        return UIColor(rgbHex: 0xe0e0e0)
+        return UIColor(rgbHex: 0xDCE4EC)
     }
 
     class var ows_gray15: UIColor {
-        return UIColor(rgbHex: 0xD4D4D4)
+        return UIColor(rgbHex: 0xD6DFE8)
     }
 
     class var ows_gray20: UIColor {
-        return UIColor(rgbHex: 0xCCCCCC)
+        return UIColor(rgbHex: 0xC4D0DC)
     }
 
     class var ows_gray22: UIColor {
-        return UIColor(rgbHex: 0xC6C6C6)
+        return UIColor(rgbHex: 0xBCC9D6)
     }
 
     class var ows_gray25: UIColor {
-        return UIColor(rgbHex: 0xB9B9B9)
+        return UIColor(rgbHex: 0xAEBDCC)
     }
 
     class var ows_gray40: UIColor {
-        return UIColor(rgbHex: 0x999999)
+        return UIColor(rgbHex: 0x9BB0C3)
     }
 
     @objc(ows_gray45Color)
     class var ows_gray45: UIColor {
-        return UIColor(rgbHex: 0x848484)
+        return UIColor(rgbHex: 0x8194A6)
     }
 
     @objc(ows_middleGrayColor)
     class var ows_middleGray: UIColor {
-        return UIColor(white: 0.5, alpha: 1)
+        return UIColor(rgbHex: 0x6E8296)
     }
 
     class var ows_gray60: UIColor {
-        return UIColor(rgbHex: 0x5E5E5E)
+        return UIColor(rgbHex: 0x5F7387)
     }
 
     class var ows_gray65: UIColor {
-        return UIColor(rgbHex: 0x4A4A4A)
+        return UIColor(rgbHex: 0x4A5D70)
     }
 
     class var ows_gray75: UIColor {
-        return UIColor(rgbHex: 0x3B3B3B)
+        return UIColor(rgbHex: 0x27344A)
     }
 
     class var ows_gray80: UIColor {
-        return UIColor(rgbHex: 0x2E2E2E)
+        return UIColor(rgbHex: 0x1B2533)
     }
 
     class var ows_gray85: UIColor {
-        return UIColor(rgbHex: 0x23252A)
+        return UIColor(rgbHex: 0x16202D)
     }
 
     class var ows_gray90: UIColor {
-        return UIColor(rgbHex: 0x1B1B1B)
+        return UIColor(rgbHex: 0x111823)
     }
 
     class var ows_gray95: UIColor {
-        return UIColor(rgbHex: 0x121212)
+        return UIColor(rgbHex: 0x0B1017)
     }
 
     // MARK: Masks

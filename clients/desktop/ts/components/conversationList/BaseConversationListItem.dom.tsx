@@ -213,7 +213,7 @@ export const BaseConversationListItem: FunctionComponent<PropsType> = memo(
             phoneNumber={phoneNumber}
             profileName={profileName}
             title={title}
-            size={avatarSize ?? AvatarSize.FORTY_EIGHT}
+            size={avatarSize ?? AvatarSize.FORTY_FOUR}
             // This is here to appease the type checker.
             {...(props.badge
               ? { badge: props.badge, theme: props.theme }

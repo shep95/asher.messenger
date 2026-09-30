@@ -146,6 +146,7 @@ $is-storybook: false !default;
 @use 'components/SafetyNumberChangeDialog.scss';
 @use 'components/SafetyNumberOnboarding.scss';
 @use 'components/SafetyTipsModal.scss';
+@use 'components/SceneIndicator.scss';
 @use 'components/ScrollDownButton.scss';
 @use 'components/SearchInput.scss';
 @use 'components/SearchResultsLoadingFakeHeader.scss';
@@ -184,3 +185,9 @@ $is-storybook: false !default;
 @use 'components/UsernameLinkEditor.scss';
 @use 'components/UsernameMegaphone.scss';
 @use 'components/WhatsNew.scss';
+
+// Asher design system: loaded last so its overrides win.
+// See docs/design-system.md and brands/asher/design/tokens.json.
+@use 'asher' with (
+  $is-storybook: $is-storybook
+);

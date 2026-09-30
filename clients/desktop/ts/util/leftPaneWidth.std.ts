@@ -9,8 +9,11 @@ const { clamp } = lodash;
 
 export const MIN_WIDTH = 97;
 const SNAP_WIDTH = 200;
-export const MIN_FULL_WIDTH = 280;
-export const MAX_WIDTH = 380;
+// Asher: conversation list is 320 / 360 / 400 px at tablet / desktop / wide
+// (tokens.json → responsive.conversation-list-width); the pane stays
+// user-resizable between the tablet and wide widths.
+export const MIN_FULL_WIDTH = 320;
+export const MAX_WIDTH = 400;
 strictAssert(
   isSorted([MIN_WIDTH, SNAP_WIDTH, MIN_FULL_WIDTH, MAX_WIDTH]),
   'Expected widths to be in the right order'

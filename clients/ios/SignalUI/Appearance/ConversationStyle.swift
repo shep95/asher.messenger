@@ -63,6 +63,8 @@ public struct ConversationStyle {
     public let fullWidthGutterTrailing: CGFloat
 
     public static let groupMessageAvatarSizeClass = ConversationAvatarView.Configuration.SizeClass.twentyEight
+    /// Asher `spacing.bubble-max-width` (72%).
+    public static let asherBubbleMaxWidthFraction: CGFloat = 0.72
     public static let selectionViewWidth: CGFloat = 24
     public static let messageStackSpacing: CGFloat = 8
     public static let defaultMessageSpacing: CGFloat = 12
@@ -147,7 +149,8 @@ public struct ConversationStyle {
 
         dynamicBodyTypePointSize = messageTextFont.pointSize
 
-        let baseFontOffset: CGFloat = 11
+        // Asher `spacing.message-padding`: 10pt vertical, 14pt horizontal.
+        let baseFontOffset: CGFloat = 10
 
         // Don't include the distance from the "cap height" to the top of the UILabel
         // in the top margin.
@@ -157,7 +160,7 @@ public struct ConversationStyle {
         // negative value.
         textInsetBottom = max(0, round(baseFontOffset - abs(messageTextFont.descender)))
 
-        textInsetHorizontal = 12
+        textInsetHorizontal = 14
 
         lastTextLineAxis = CGFloat(round(baseFontOffset + messageTextFont.capHeight * 0.5))
 
@@ -170,6 +173,8 @@ public struct ConversationStyle {
         if thread.isGroupThread {
             maxMessageWidth -= (CGFloat(ConversationStyle.groupMessageAvatarSizeClass.size.width) + Self.messageStackSpacing)
         }
+        // Asher `spacing.bubble-max-width`: bubbles are at most 72% of the content width.
+        maxMessageWidth = min(maxMessageWidth, floor(contentWidth * Self.asherBubbleMaxWidthFraction))
         self.maxMessageWidth = maxMessageWidth
 
         // This upper bound should have no effect in portrait orientation.
@@ -234,19 +239,11 @@ public struct ConversationStyle {
         shouldDimWallpaperInDarkMode: Bool,
         isDarkThemeEnabled: Bool,
     ) -> ColorOrGradientValue {
-        if UIAccessibility.isReduceTransparencyEnabled, hasWallpaper {
-            return .solidColor(color: Theme.backgroundColor)
-        }
-        if
-            let blurEffect = bubbleBackgroundBlurEffect(
-                hasWallpaper: hasWallpaper,
-                isDarkThemeEnabled: isDarkThemeEnabled,
-                shouldDimWallpaperInDarkMode: shouldDimWallpaperInDarkMode,
-            )
-        {
-            return .blur(blurEffect: blurEffect)
-        }
-        let color = isDarkThemeEnabled ? UIColor(rgbHex: 0x2C2C2E) : UIColor(rgbHex: 0xE9E9E9)
+        // Asher "horizon" bubbles: incoming bubbles are flat (`color.bubble-in`)
+        // with a 1pt border (see `bubbleStroke(isIncoming:)`), wallpaper or not.
+        let color = UIColor.Signal.asherBubbleIn.resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: isDarkThemeEnabled ? .dark : .light),
+        )
         return .solidColor(color: color)
     }
 
@@ -279,7 +276,8 @@ public struct ConversationStyle {
     }
 
     public static var bubbleTextColorOutgoingThemed: ThemedColor {
-        ThemedColor(light: UIColor.white, dark: UIColor.ows_gray05)
+        // Asher `bubble.outgoing.text` / `color.text-on-atmosphere`.
+        ThemedColor(light: UIColor.Signal.asherTextOnAtmosphere, dark: UIColor.Signal.asherTextOnAtmosphere)
     }
 
     public static var bubbleTextColorIncoming: UIColor {
@@ -397,10 +395,13 @@ public struct ConversationStyle {
     ///
     /// Unlike static method above this function will only return stroke configuration if bubbles must have one.
     public func bubbleStroke(isIncoming: Bool) -> BubbleConfiguration.Stroke? {
-        // Only use stroke for incoming messages and if there's a wallpaper.
-        guard hasWallpaper, isIncoming else { return nil }
+        // Asher: incoming bubbles always carry a 1pt `color.bubble-in-border` stroke.
+        guard isIncoming else { return nil }
 
-        return ConversationStyle.bubbleStroke(isDarkThemeEnabled: isDarkThemeEnabled)
+        let strokeColor = UIColor.Signal.asherBubbleInBorder.resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: isDarkThemeEnabled ? .dark : .light),
+        )
+        return BubbleConfiguration.Stroke(color: strokeColor, width: 1)
     }
 
     // Same across all themes

@@ -342,14 +342,14 @@ async function getThemeSetting({
   if (value !== undefined) {
     log.info('got fast theme-setting value', value);
   } else if (ephemeralOnly) {
-    return 'system';
+    return 'dark';
   }
 
-  // Default to `system` if setting doesn't exist or is invalid
+  // Asher is dark-first: default to `dark` if setting doesn't exist or is invalid
   const validatedResult =
     value === 'light' || value === 'dark' || value === 'system'
       ? value
-      : 'system';
+      : 'dark';
 
   if (value !== validatedResult) {
     ephemeralConfig.set('theme-setting', validatedResult);
@@ -376,9 +376,10 @@ type GetBackgroundColorOptionsType = GetThemeSettingOptionsType &
     signalColors?: boolean;
   }>;
 
-const AXO_COLOR_BRAND_LOGO = '#3b45fd';
-const AXO_COLOR_SURFACE_PRIMARY_LIGHT = '#fafafa';
-const AXO_COLOR_SURFACE_PRIMARY_DARK = '#191919';
+// Asher tokens: atmosphere accent, cloud-white base, void background.
+const AXO_COLOR_BRAND_LOGO = '#3d8fcf';
+const AXO_COLOR_SURFACE_PRIMARY_LIGHT = '#f4f7fa';
+const AXO_COLOR_SURFACE_PRIMARY_DARK = '#05070b';
 
 async function getBackgroundColor(
   options?: GetBackgroundColorOptionsType

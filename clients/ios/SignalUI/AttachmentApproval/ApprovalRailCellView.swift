@@ -48,15 +48,16 @@ class ApprovalRailCellView: GalleryRailCellView {
         let borderWidth: CGFloat
         let focusedBorderWidth: CGFloat
         let extraPadding: CGFloat
+        // Asher `upload.thumbnail-radius` (12pt).
         if #available(iOS 26, *) {
-            cornerRadius = 8
+            cornerRadius = 12
             borderColor = .clear
             focusedBorderColor = .clear
             borderWidth = 0
             focusedBorderWidth = 0
             extraPadding = 8
         } else {
-            cornerRadius = 10
+            cornerRadius = 12
             borderColor = .white
             focusedBorderColor = .Signal.accent
             borderWidth = 1.5

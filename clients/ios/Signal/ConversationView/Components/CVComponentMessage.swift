@@ -469,7 +469,11 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
 
     private var sendFailureBadgeSize: CGFloat { conversationStyle.hasWallpaper ? 40 : 24 }
 
-    public static let bubbleSharpCornerRadius: CGFloat = 4
+    // Asher "horizon" bubbles (`radius.bubble` / `radius.bubble-grouped`):
+    // 18pt corners; the corners shared with the previous/next message of the
+    // same sender (Signal's "sharp" corners) use 6pt. Signal bubbles have no
+    // tail, so the 4pt `radius.bubble-tail` has no counterpart here.
+    public static let bubbleSharpCornerRadius: CGFloat = 6
     public static let bubbleWideCornerRadius: CGFloat = 18
 
     public func configureForRendering(

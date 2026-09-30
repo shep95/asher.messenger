@@ -540,10 +540,11 @@ public class TextSecurePreferences {
 
   @Deprecated
   public static @NonNull Uri getNotificationRingtone(Context context) {
-    String result = getStringPreference(context, RINGTONE_PREF, Settings.System.DEFAULT_NOTIFICATION_URI.toString());
+    // Asher: the bundled chime is the default for new installs; an explicit user choice still wins.
+    String result = getStringPreference(context, RINGTONE_PREF, NotificationChannels.getDefaultMessageSound(context).toString());
 
     if (result != null && result.startsWith("file:")) {
-      result = Settings.System.DEFAULT_NOTIFICATION_URI.toString();
+      result = NotificationChannels.getDefaultMessageSound(context).toString();
     }
 
     return Uri.parse(result);

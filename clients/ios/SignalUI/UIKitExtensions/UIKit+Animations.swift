@@ -5,6 +5,61 @@
 
 import SignalServiceKit
 
+// MARK: - Asher motion
+
+/// Asher `motion` tokens (brands/asher/design/tokens.json): the orbital ease-out
+/// and the 160/240/400ms durations. Everything collapses to crossfades under
+/// Reduce Motion; callers check `UIAccessibility.isReduceMotionEnabled` before
+/// adding transforms.
+public enum AsherMotion {
+    /// 160ms: crossfades, status glyph changes, pops.
+    public static let fast: TimeInterval = 0.16
+    /// 240ms: message send/receive, screen transitions.
+    public static let base: TimeInterval = 0.24
+    /// 400ms: sheets, progress steps.
+    public static let slow: TimeInterval = 0.40
+    /// 1200ms: ambient drift.
+    public static let drift: TimeInterval = 1.2
+    /// 2s: breathing pulse period (scene indicator).
+    public static let breath: TimeInterval = 2.0
+
+    /// cubic-bezier(0.2, 0.8, 0.2, 1)
+    public static var easeOut: CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+    }
+
+    /// cubic-bezier(0.65, 0, 0.35, 1)
+    public static var easeInOut: CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.65, 0, 0.35, 1)
+    }
+
+    public static var easeOutTiming: UICubicTimingParameters {
+        UICubicTimingParameters(controlPoint1: CGPoint(x: 0.2, y: 0.8), controlPoint2: CGPoint(x: 0.2, y: 1))
+    }
+
+    public static var easeInOutTiming: UICubicTimingParameters {
+        UICubicTimingParameters(controlPoint1: CGPoint(x: 0.65, y: 0), controlPoint2: CGPoint(x: 0.35, y: 1))
+    }
+
+    /// Runs `animations` with the orbital ease-out over `duration` (default `base`).
+    @discardableResult
+    public static func animate(
+        duration: TimeInterval = base,
+        delay: TimeInterval = 0,
+        animations: @escaping () -> Void,
+        completion: ((UIViewAnimatingPosition) -> Void)? = nil,
+    ) -> UIViewPropertyAnimator {
+        let animator = UIViewPropertyAnimator(duration: duration, timingParameters: easeOutTiming)
+        animator.isUserInteractionEnabled = true
+        animator.addAnimations(animations)
+        if let completion {
+            animator.addCompletion(completion)
+        }
+        animator.startAnimation(afterDelay: delay)
+        return animator
+    }
+}
+
 public extension UIViewPropertyAnimator {
 
     convenience init(
@@ -104,7 +159,7 @@ public extension UIView {
     }
 
     func setIsHidden(_ isHidden: Bool, animated: Bool, completion: ((Bool) -> Void)? = nil) {
-        setIsHidden(isHidden, withAnimationDuration: animated ? 0.2 : 0, completion: completion)
+        setIsHidden(isHidden, withAnimationDuration: animated ? AsherMotion.fast : 0, completion: completion)
     }
 
     func setIsHidden(_ isHidden: Bool, withAnimationDuration duration: TimeInterval, completion: ((Bool) -> Void)? = nil) {

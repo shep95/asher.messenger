@@ -61,12 +61,15 @@ fun AvatarImage(
   contentDescription: String?,
   modifier: Modifier = Modifier
 ) {
+  // Asher: every avatar carries the rim-light ring (drawn after the caller's clip).
+  val rimModifier = modifier.asherRimLight()
+
   // The avatar is either a vector, text, or a photo or a resource
   when (avatar) {
-    is Avatar.Photo -> AvatarPhoto(avatar, contentDescription, modifier)
-    is Avatar.Resource -> AvatarResource(avatar, contentDescription, modifier)
-    is Avatar.Text -> AvatarText(avatar, contentDescription, modifier)
-    is Avatar.Vector -> AvatarVector(avatar, contentDescription, modifier)
+    is Avatar.Photo -> AvatarPhoto(avatar, contentDescription, rimModifier)
+    is Avatar.Resource -> AvatarResource(avatar, contentDescription, rimModifier)
+    is Avatar.Text -> AvatarText(avatar, contentDescription, rimModifier)
+    is Avatar.Vector -> AvatarVector(avatar, contentDescription, rimModifier)
   }
 }
 

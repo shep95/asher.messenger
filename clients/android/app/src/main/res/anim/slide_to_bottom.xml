@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<set xmlns:android="http://schemas.android.com/apk/res/android" >
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+     android:interpolator="@interpolator/asher_ease_out">
     <translate
-            android:duration="350"
+            android:duration="@integer/asher_motion_base"
             android:fromYDelta="0%"
             android:toYDelta="100%" />
 </set>

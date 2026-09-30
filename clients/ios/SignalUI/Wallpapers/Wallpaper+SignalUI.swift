@@ -55,6 +55,9 @@ extension Wallpaper {
 
         if case .photo = wallpaper, let customPhoto = customPhoto() {
             return .customPhoto(customPhoto, shouldDimInDarkMode: shouldDimInDarkTheme)
+        } else if let imageName = wallpaper.builtInImageName, let builtInPhoto = UIImage(named: imageName) {
+            // Asher built-in photo wallpaper (earth.webp).
+            return .customPhoto(builtInPhoto, shouldDimInDarkMode: shouldDimInDarkTheme)
         } else if let colorOrGradientSetting = wallpaper.asColorOrGradientSetting {
             return .colorOrGradient(colorOrGradientSetting, shouldDimInDarkMode: shouldDimInDarkTheme)
         } else if case .releaseNotes = wallpaper {
@@ -142,7 +145,8 @@ public class WallpaperView {
                 let shouldDim = Theme.isDarkThemeEnabled && shouldDimInDarkTheme
                 if shouldDim {
                     let dimmingView = UIView()
-                    dimmingView.backgroundColor = .ows_blackAlpha20
+                    // Asher: ~40% void dim over photo wallpapers in dark mode.
+                    dimmingView.backgroundColor = UIColor(rgbHex: 0x05070B, alpha: 0.4)
                     self.dimmingView = dimmingView
                 }
                 return imageView

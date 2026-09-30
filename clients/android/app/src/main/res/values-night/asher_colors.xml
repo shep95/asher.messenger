@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asher design tokens, dark (the default look). See brands/asher/design/tokens.json -->
+<resources>
+    <color name="asher_bubble_in">#131C28</color>
+    <color name="asher_bubble_in_border">#1E2A3A</color>
+
+    <color name="asher_composer_fill">#111823</color>
+    <color name="asher_composer_border">#1B2533</color>
+
+    <color name="asher_typing_dot_dim">#5F7387</color>
+    <color name="asher_typing_dot_bright">#CFE6F7</color>
+
+    <color name="asher_scene_orbit">#5AA7E0</color>
+    <color name="asher_scene_mesh">#4FBF9F</color>
+    <color name="asher_scene_carrying">#E0B45A</color>
+    <color name="asher_scene_offline">#5F7387</color>
+    <color name="asher_scene_pill_fill">#111823</color>
+    <color name="asher_scene_pill_border">#1B2533</color>
+</resources>

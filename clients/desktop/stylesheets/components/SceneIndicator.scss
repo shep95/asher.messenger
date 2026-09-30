@@ -1,0 +1,78 @@
+// Copyright 2026 Asher
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Scene indicator: a pill under the conversation title that says how the two
+// of you are connected right now (docs/design-system.md, rule 7).
+// States and colours come from brands/asher/design/tokens.json
+// (scene_indicator.states).
+
+@use '../mixins';
+
+.SceneIndicator {
+  --SceneIndicator-color: #5f7387;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  height: 20px;
+  margin-top: 2px;
+  padding-inline: 8px 10px;
+  border-radius: 9999px;
+  background: light-dark(#eef3f8, #16202d);
+  color: light-dark(#4a5d70, #9bb0c3);
+  white-space: nowrap;
+  overflow: hidden;
+  @include mixins.font-micro;
+
+  &__dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--SceneIndicator-color);
+    box-shadow: 0 0 8px var(--SceneIndicator-color);
+  }
+
+  &__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &--orbit {
+    --SceneIndicator-color: #5aa7e0;
+  }
+  &--mesh {
+    --SceneIndicator-color: #4fbf9f;
+  }
+  &--carrying {
+    --SceneIndicator-color: #e0b45a;
+  }
+  &--offline {
+    --SceneIndicator-color: #5f7387;
+  }
+
+  &--active &__dot {
+    animation: SceneIndicator-breathe 2s cubic-bezier(0.65, 0, 0.35, 1)
+      infinite;
+  }
+}
+
+@keyframes SceneIndicator-breathe {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .SceneIndicator--active .SceneIndicator__dot {
+    animation: none;
+  }
+}

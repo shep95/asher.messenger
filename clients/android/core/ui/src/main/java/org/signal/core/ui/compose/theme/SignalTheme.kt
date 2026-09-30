@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
 import org.signal.core.ui.CoreUiDependencies
@@ -33,14 +34,16 @@ private val typography = Typography().run {
     titleLarge = titleLarge.copy(
       fontSize = 22.sp,
       lineHeight = 28.sp,
-      letterSpacing = 0.sp
+      letterSpacing = (-0.22).sp,
+      fontWeight = FontWeight.SemiBold
     ),
     titleMedium = titleMedium.copy(
-      fontSize = 18.sp,
-      lineHeight = 24.sp,
-      letterSpacing = 0.0125.sp,
+      fontSize = 17.sp,
+      lineHeight = 22.sp,
+      letterSpacing = 0.sp,
       fontFamily = FontFamily.SansSerif,
-      fontStyle = FontStyle.Normal
+      fontStyle = FontStyle.Normal,
+      fontWeight = FontWeight.SemiBold
     ),
     titleSmall = titleSmall.copy(
       fontSize = 16.sp,
@@ -59,7 +62,7 @@ private val typography = Typography().run {
     ),
     bodySmall = bodySmall.copy(
       fontSize = 13.sp,
-      lineHeight = 16.sp,
+      lineHeight = 18.sp,
       letterSpacing = 0.0192.sp
     ),
     labelLarge = labelLarge.copy(
@@ -73,33 +76,34 @@ private val typography = Typography().run {
       letterSpacing = 0.0192.sp
     ),
     labelSmall = labelSmall.copy(
-      fontSize = 12.sp,
-      lineHeight = 16.sp,
-      letterSpacing = 0.025.sp
+      fontSize = 11.sp,
+      lineHeight = 14.sp,
+      letterSpacing = 0.44.sp
     )
   )
 }
 
+// Asher palette (light): same hues on a cloud-white base. See brands/asher/design/tokens.json.
 private val lightColorScheme = lightColorScheme(
-  primary = Color(0xFF2C58C3),
-  primaryContainer = Color(0xFFD2DFFB),
-  secondary = Color(0xFF586071),
-  secondaryContainer = Color(0xFFDCE5F9),
-  surface = Color(0xFFFBFCFF),
-  surfaceContainerLow = Color(0xFFF2F5F9),
-  surfaceContainerHighest = Color(0xFFE7EBF3),
-  surfaceVariant = Color(0xFFE7EBF3),
-  background = Color(0xFFFBFCFF),
-  error = Color(0xFFBA1B1B),
-  errorContainer = Color(0xFFFFDAD4),
+  primary = Color(0xFF2E74AB),
+  primaryContainer = Color(0xFFD6E7F5),
+  secondary = Color(0xFF4A5D70),
+  secondaryContainer = Color(0xFFE3ECF4),
+  surface = Color(0xFFFFFFFF),
+  surfaceContainerLow = Color(0xFFF4F7FA),
+  surfaceContainerHighest = Color(0xFFEEF3F8),
+  surfaceVariant = Color(0xFFEEF3F8),
+  background = Color(0xFFF4F7FA),
+  error = Color(0xFFC94A4A),
+  errorContainer = Color(0xFFFBE3E3),
   onPrimary = Color(0xFFFFFFFF),
-  onPrimaryContainer = Color(0xFF051845),
+  onPrimaryContainer = Color(0xFF0B2A45),
   onSecondary = Color(0xFFFFFFFF),
-  onSecondaryContainer = Color(0xFF151D2C),
-  onSurface = Color(0xFF1B1B1D),
-  onSurfaceVariant = Color(0xFF545863),
-  onBackground = Color(0xFF1B1D1D),
-  outline = Color(0xFF808389)
+  onSecondaryContainer = Color(0xFF0B1017),
+  onSurface = Color(0xFF0B1017),
+  onSurfaceVariant = Color(0xFF4A5D70),
+  onBackground = Color(0xFF0B1017),
+  outline = Color(0xFF8194A6)
 )
 
 private val lightExtendedColors = ExtendedColors(
@@ -107,11 +111,11 @@ private val lightExtendedColors = ExtendedColors(
   neutralFill = Color(0x1A000000),
   colorOnCustom = Color(0xFFFFFFFF),
   colorOnCustomVariant = Color(0xB3FFFFFF),
-  colorSurface1 = Color(0xFFF2F5F9),
-  colorSurface2 = Color(0xFFEDF0F6),
-  colorSurface3 = Color(0xFFE8ECF4),
-  colorSurface4 = Color(0xFFE6EAF3),
-  colorSurface5 = Color(0xFFE3E7F1),
+  colorSurface1 = Color(0xFFF4F7FA),
+  colorSurface2 = Color(0xFFEEF3F8),
+  colorSurface3 = Color(0xFFE8EFF6),
+  colorSurface4 = Color(0xFFE3EBF3),
+  colorSurface5 = Color(0xFFDEE7F0),
   colorSurfaceVariantFill = Color(0xCCFFFFFF),
   colorTransparent1 = Color(0x14FFFFFF),
   colorTransparent2 = Color(0x29FFFFFF),
@@ -125,12 +129,12 @@ private val lightExtendedColors = ExtendedColors(
   colorTransparentInverse3 = Color(0x66000000),
   colorTransparentInverse4 = Color(0xB8000000),
   colorTransparentInverse5 = Color(0xE0000000),
-  colorNeutralInverse = Color(0xFF121212),
-  colorNeutralVariantInverse = Color(0xFF5C5C5C),
-  colorWarning = Color(0x1FB44828),
-  colorOnWarning = Color(0xFFB44828),
-  colorAlert = Color(0xFFEF5350),
-  colorAlertDisabled = Color(0x80EF5350)
+  colorNeutralInverse = Color(0xFF0B1017),
+  colorNeutralVariantInverse = Color(0xFF4A5D70),
+  colorWarning = Color(0x1FB48A28),
+  colorOnWarning = Color(0xFF8A6512),
+  colorAlert = Color(0xFFC94A4A),
+  colorAlertDisabled = Color(0x80C94A4A)
 )
 
 private val darkExtendedColors = ExtendedColors(
@@ -138,19 +142,19 @@ private val darkExtendedColors = ExtendedColors(
   neutralFill = Color(0x33FFFFFF),
   colorOnCustom = Color(0xFFFFFFFF),
   colorOnCustomVariant = Color(0x18FFFFFF),
-  colorSurface1 = Color(0xFF23242A),
-  colorSurface2 = Color(0xFF272A31),
-  colorSurface3 = Color(0xFF2C2F37),
-  colorSurface4 = Color(0xFF2E3039),
-  colorSurface5 = Color(0xFF31343E),
+  colorSurface1 = Color(0xFF111823),
+  colorSurface2 = Color(0xFF131C28),
+  colorSurface3 = Color(0xFF16202D),
+  colorSurface4 = Color(0xFF1B2533),
+  colorSurface5 = Color(0xFF1E2A3A),
   colorSurfaceVariantFill = Color(0x33FFFFFF),
   colorTransparent1 = Color(0x0AFFFFFF),
   colorTransparent2 = Color(0x1FFFFFFF),
   colorTransparent3 = Color(0x29FFFFFF),
   colorTransparent4 = Color(0x7AFFFFFF),
   colorTransparent5 = Color(0xB8FFFFFF),
-  colorNeutral = Color(0xFF121212),
-  colorNeutralVariant = Color(0xFF5C5C5C),
+  colorNeutral = Color(0xFF05070B),
+  colorNeutralVariant = Color(0xFF5F7387),
   colorTransparentInverse1 = Color(0x0A000000),
   colorTransparentInverse2 = Color(0x14000000),
   colorTransparentInverse3 = Color(0x29000000),
@@ -158,32 +162,33 @@ private val darkExtendedColors = ExtendedColors(
   colorTransparentInverse5 = Color(0xF5000000),
   colorNeutralInverse = Color(0xE0FFFFFF),
   colorNeutralVariantInverse = Color(0xA3FFFFFF),
-  colorWarning = Color(0x1FEB977D),
-  colorOnWarning = Color(0xFFEB977D),
-  colorAlert = Color(0xFFF44336),
-  colorAlertDisabled = Color(0x80F44336)
+  colorWarning = Color(0x1FE0B45A),
+  colorOnWarning = Color(0xFFE0B45A),
+  colorAlert = Color(0xFFE06B6B),
+  colorAlertDisabled = Color(0x80E06B6B)
 )
 
+// Asher palette (dark, the default): void surfaces, one atmosphere-blue accent. See brands/asher/design/tokens.json.
 private val darkColorScheme = darkColorScheme(
-  primary = Color(0xFFB6C5FA),
-  primaryContainer = Color(0xFF464B5C),
-  secondary = Color(0xFFC1C6DD),
-  secondaryContainer = Color(0xFF414659),
-  surface = Color(0xFF1B1C1F),
-  surfaceContainerLow = Color(0xFF23242A),
-  surfaceContainerHighest = Color(0xFF303133),
-  surfaceVariant = Color(0xFF303133),
-  background = Color(0xFF1B1C1F),
-  error = Color(0xFFFFB4A9),
-  errorContainer = Color(0xFF930006),
-  onPrimary = Color(0xFF1E2438),
-  onPrimaryContainer = Color(0xFFDBE1FC),
-  onSecondary = Color(0xFF2A3042),
-  onSecondaryContainer = Color(0xFFDCE1F9),
-  onSurface = Color(0xFFE2E1E5),
-  onSurfaceVariant = Color(0xFFBEBFC5),
-  onBackground = Color(0xFFE2E1E5),
-  outline = Color(0xFF5C5E65)
+  primary = Color(0xFF3D8FCF),
+  primaryContainer = Color(0xFF1E466B),
+  secondary = Color(0xFF9BB0C3),
+  secondaryContainer = Color(0xFF16202D),
+  surface = Color(0xFF0B1017),
+  surfaceContainerLow = Color(0xFF111823),
+  surfaceContainerHighest = Color(0xFF1B2533),
+  surfaceVariant = Color(0xFF111823),
+  background = Color(0xFF05070B),
+  error = Color(0xFFE06B6B),
+  errorContainer = Color(0xFF5C1F24),
+  onPrimary = Color(0xFFF4F9FD),
+  onPrimaryContainer = Color(0xFFCFE6F7),
+  onSecondary = Color(0xFF0B1017),
+  onSecondaryContainer = Color(0xFFE8EEF4),
+  onSurface = Color(0xFFE8EEF4),
+  onSurfaceVariant = Color(0xFF9BB0C3),
+  onBackground = Color(0xFFE8EEF4),
+  outline = Color(0xFF27344A)
 )
 
 private val lightSnackbarColors = SnackbarColors(

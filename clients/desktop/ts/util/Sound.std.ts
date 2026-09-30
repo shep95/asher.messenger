@@ -127,7 +127,8 @@ export class Sound {
     }
 
     if (soundStyle === SoundType.Pop) {
-      return 'sounds/pop.ogg';
+      // Asher: the arrival chime (brands/asher/design/sounds/asher_notify.wav)
+      return 'sounds/asher_notify.wav';
     }
 
     if (soundStyle === SoundType.TriTone) {
@@ -147,7 +148,8 @@ export class Sound {
     }
 
     if (soundStyle === SoundType.Whoosh) {
-      return 'sounds/whoosh.ogg';
+      // Asher: the send tick (brands/asher/design/sounds/asher_sent.wav)
+      return 'sounds/asher_sent.wav';
     }
 
     throw missingCaseError(soundStyle);
