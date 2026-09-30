@@ -1,0 +1,99 @@
+{
+  "id": "asher",
+  "_comment": "Asher Messenger. Values marked REPLACE_ME are produced when you stand up the server (docs/self-hosting.md) and must be filled in before a build can talk to it.",
+  "display_name": "Asher Messenger",
+  "short_name": "Asher",
+  "desktop_name": "Asher Desktop",
+  "organization": "Asher Messenger",
+  "support_email": "support@asher.chat",
+  "url_scheme": "asher",
+  "libsignal_override": true,
+  "urls": {
+    "website": "https://asher.chat",
+    "legal": "https://asher.chat/legal",
+    "donate": "https://asher.chat/donate",
+    "install": "https://asher.chat/install",
+    "support_center": "https://support.asher.chat/",
+    "app_store": "https://apps.apple.com/app/idREPLACE_ME",
+    "repository": "https://github.com/shep95/asher.messenger.git"
+  },
+  "hosts": {
+    "chat": "chat.asher.chat",
+    "chat_grpc": "chat.asher.chat",
+    "storage": "storage.asher.chat",
+    "cdn0": "cdn.asher.chat",
+    "cdn2": "cdn2.asher.chat",
+    "cdn3": "cdn3.asher.chat",
+    "cdsi": "cdsi.asher.chat",
+    "svr2": "svr2.asher.chat",
+    "svrb": "svrb.asher.chat",
+    "sfu": "sfu.asher.chat",
+    "sfu_test": "sfu-test.asher.chat",
+    "sfu_staging": "sfu-staging.asher.chat",
+    "updates": "updates.asher.chat",
+    "updates2": "updates.asher.chat",
+    "content_proxy": "contentproxy.asher.chat",
+    "status": "uptime.asher.chat",
+    "captcha_registration_url": "https://captcha.asher.chat/registration/generate.html",
+    "captcha_challenge_url": "https://captcha.asher.chat/challenge/generate.html"
+  },
+  "link_domains": {
+    "me": "asher.me",
+    "group": "asher.group",
+    "art": "asher.art",
+    "link": "asher.link",
+    "tube": "asher.tube",
+    "donations": "donate.asher.chat"
+  },
+  "android": {
+    "application_id": "chat.asher.messenger",
+    "archives_base_name": "Asher",
+    "maps_key": "REPLACE_ME",
+    "giphy_api_key": "REPLACE_ME",
+    "disable_static_ips": true
+  },
+  "ios": {
+    "bundle_id_prefix": "chat.asher",
+    "team_id": "REPLACE_ME",
+    "merchant_id": "chat.asher.merchant"
+  },
+  "desktop": {
+    "package_name": "asher-desktop",
+    "description": "Private messaging from your desktop",
+    "desktop_name": "asher.desktop",
+    "app_id": "chat.asher.desktop",
+    "executable_name": "asher-desktop",
+    "startup_wm_class": "asher",
+    "updates_url": "https://updates.asher.chat/desktop",
+    "updates_public_key": "REPLACE_ME",
+    "app_image_updates_public_key": "REPLACE_ME"
+  },
+  "server": {
+    "webauthn_relying_party_id": "asher.chat",
+    "attachments_domain": "asher.chat"
+  },
+  "crypto": {
+    "root_ca": "root-ca.pem",
+    "ud_trust_roots": [
+      "REPLACE_ME"
+    ],
+    "zkgroup_server_public_params": "REPLACE_ME",
+    "generic_server_public_params": "REPLACE_ME",
+    "backup_server_public_params": "REPLACE_ME",
+    "svr2_mrenclave": "REPLACE_ME",
+    "svr2_mrenclave_legacy": "REPLACE_ME",
+    "ios_svr2_enclaves": [
+      "REPLACE_ME"
+    ],
+    "cdsi_mrenclave": "REPLACE_ME",
+    "svrb_mrenclave": "REPLACE_ME",
+    "svr2_raft_group_id": null,
+    "svrb_raft_group_id": null,
+    "keytrans_signing_key": null,
+    "keytrans_vrf_key": null
+  },
+  "integrations": {
+    "stripe_publishable_key": "REPLACE_ME",
+    "default_currencies": "USD,EUR,GBP,CAD,AUD"
+  }
+}

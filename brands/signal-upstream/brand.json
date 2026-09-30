@@ -1,0 +1,101 @@
+{
+  "id": "signal-upstream",
+  "_comment": "Parity profile: reproduces Signal's own production values so `apply.py` can be verified to be a no-op against upstream. Not for shipping; see NOTICE.md.",
+  "display_name": "Signal",
+  "short_name": "Signal",
+  "desktop_name": "Signal Desktop",
+  "organization": "Signal Messenger, LLC",
+  "support_email": "support@signal.org",
+  "url_scheme": "sgnl",
+  "libsignal_override": false,
+  "urls": {
+    "website": "https://signal.org",
+    "legal": "https://signal.org/legal",
+    "donate": "https://signal.org/donate",
+    "install": "https://signal.org/install",
+    "support_center": "https://support.signal.org/",
+    "app_store": "https://itunes.apple.com/us/app/signal-private-messenger/id874139669?mt=8",
+    "repository": "https://github.com/signalapp/Signal-Desktop.git"
+  },
+  "hosts": {
+    "chat": "chat.signal.org",
+    "chat_grpc": "grpc.chat.signal.org",
+    "storage": "storage.signal.org",
+    "cdn0": "cdn.signal.org",
+    "cdn2": "cdn2.signal.org",
+    "cdn3": "cdn3.signal.org",
+    "cdsi": "cdsi.signal.org",
+    "svr2": "svr2.signal.org",
+    "svrb": "svrb.signal.org",
+    "sfu": "sfu.voip.signal.org",
+    "sfu_test": "sfu.test.voip.signal.org",
+    "sfu_staging": "sfu.staging.voip.signal.org",
+    "updates": "updates.signal.org",
+    "updates2": "updates2.signal.org",
+    "content_proxy": "contentproxy.signal.org",
+    "status": "uptime.signal.org",
+    "captcha_registration_url": "https://signalcaptchas.org/registration/generate.html",
+    "captcha_challenge_url": "https://signalcaptchas.org/challenge/generate.html"
+  },
+  "link_domains": {
+    "me": "signal.me",
+    "group": "signal.group",
+    "art": "signal.art",
+    "link": "signal.link",
+    "tube": "signal.tube",
+    "donations": "signaldonations.org"
+  },
+  "android": {
+    "application_id": "org.thoughtcrime.securesms",
+    "archives_base_name": "Signal",
+    "maps_key": "AIzaSyCSx9xea86GwDKGznCAULE9Y5a8b-TfN9U",
+    "giphy_api_key": "3o6ZsYH6U6Eri53TXy",
+    "disable_static_ips": false
+  },
+  "ios": {
+    "bundle_id_prefix": "org.whispersystems",
+    "team_id": "U68MSDN6DR",
+    "merchant_id": "org.signalfoundation"
+  },
+  "desktop": {
+    "package_name": "signal-desktop",
+    "description": "Private messaging from your desktop",
+    "desktop_name": "signal.desktop",
+    "app_id": "org.whispersystems.signal-desktop",
+    "executable_name": "signal-desktop",
+    "startup_wm_class": "signal",
+    "updates_url": "https://updates.signal.org/desktop",
+    "updates_public_key": "05fd7dd3de7149dc0a127909fee7de0f7620ddd0de061b37a2c303e37de802a401",
+    "app_image_updates_public_key": "05dc20ac83f663c517718b6057f2fe34e273b88455f2149513912f24a9a380cc63"
+  },
+  "server": {
+    "webauthn_relying_party_id": "signal.org",
+    "attachments_domain": "signal.org"
+  },
+  "crypto": {
+    "root_ca": "root-ca.der",
+    "ud_trust_roots": [
+      "BXu6QIKVz5MA8gstzfOgRQGqyLqOwNKHL6INkv3IHWMF",
+      "BUkY0I+9+oPgDCn4+Ac6Iu813yvqkDr/ga8DzLxFxuk6"
+    ],
+    "zkgroup_server_public_params": "AMhf5ywVwITZMsff/eCyudZx9JDmkkkbV6PInzG4p8x3VqVJSFiMvnvlEKWuRob/1eaIetR31IYeAbm0NdOuHH8Qi+Rexi1wLlpzIo1gstHWBfZzy1+qHRV5A4TqPp15YzBPm0WSggW6PbSn+F4lf57VCnHF7p8SvzAA2ZZJPYJURt8X7bbg+H3i+PEjH9DXItNEqs2sNcug37xZQDLm7X36nOoGPs54XsEGzPdEV+itQNGUFEjY6X9Uv+Acuks7NpyGvCoKxGwgKgE5XyJ+nNKlyHHOLb6N1NuHyBrZrgtY/JYJHRooo5CEqYKBqdFnmbTVGEkCvJKxLnjwKWf+fEPoWeQFj5ObDjcKMZf2Jm2Ae69x+ikU5gBXsRmoF94GXTLfN0/vLt98KDPnxwAQL9j5V1jGOY8jQl6MLxEs56cwXN0dqCnImzVH3TZT1cJ8SW1BRX6qIVxEzjsSGx3yxF3suAilPMqGRp4ffyopjMD1JXiKR2RwLKzizUe5e8XyGOy9fplzhw3jVzTRyUZTRSZKkMLWcQ/gv0E4aONNqs4P+NameAZYOD12qRkxosQQP5uux6B2nRyZ7sAV54DgFyLiRcq1FvwKw2EPQdk4HDoePrO/RNUbyNddnM/mMgj4FW65xCoT1LmjrIjsv/Ggdlx46ueczhMgtBunx1/w8k8V+l8LVZ8gAT6wkU5J+DPQalQguMg12Jzug3q4TbdHiGCmD9EunCwOmsLuLJkz6EcSYXtrlDEnAM+hicw7iergYLLlMXpfTdGxJCWJmP4zqUFeTTmsmhsjGBt7NiEB/9pFFEB3pSbf4iiUukw63Eo8Aqnf4iwob6X1QviCWuc8t0LUlT9vALgh/f2DPVOOmR0RW6bgRvc7DSF20V/omg+YBw==",
+    "generic_server_public_params": "AeCO67P9mIv1yUHkdeZ9JF789GDbox61GvTqq3S4kYc1ADUWxWHQygU390tv1oRWt9WjkdZlU7mKkifF59ftjE+2ZlMmxns6I+ySiLpR8FEmfu+TGpVp3zYTjNV93obJJTyBCCsSHVETCyQRbKdCyb5TMa6LGrvcZaX0Q/VAavhuNA/m4kSiRMgSnYrUjGhVekdDnF+7xioo4wvFnxjIDh7uJQrYOWD6MloNGX7St5gbysTuQQ7i/HI38b9V8x8mKazuDSXxB//BKGZx/XHkK8cHX+QK1MPxYUVM1/CBI5oW",
+    "backup_server_public_params": "AZwNSU55fsFCbgaxGRD11wO1juAs8Yr5GF8FPlGzzvdJJIKH5/4CC7ZJSOe3yL2vturVaRU2Cx0n751Vt8wkj1Y4pyiScu0/S10n647ipo+iq97JZQv+UOlwH8ThyNlGT5DfxXCwTqivxHuXvZpuezPgHk5Gxl5aC6xuNxOnwmFlmu4CeSgdhW8+Pp0vAJOQ1MsU2D0+/kzI+tU94nB3tybY/Ao1AcGW2q41uKQbnOJUWwmQaFT6s+xTISgzsg7CPox6oORGX8rnyk/9lic3DbGsUHctIVpMAl/ogJBb4aYC",
+    "svr2_mrenclave": "fdbbacdc0c043d0d53fe1440f62728de0386f45ab0a275bd8f99e03a02af355e",
+    "svr2_mrenclave_legacy": "ced8217b26228e4b210c985786999d095c4958a94faf37b14acaf25c4cbb02a4",
+    "ios_svr2_enclaves": [
+      "ced8217b26228e4b210c985786999d095c4958a94faf37b14acaf25c4cbb02a4",
+      "1240acbd4aa26974184844c8a46b1022d3957ac8a76c1fd8f5b1a15141ee0708"
+    ],
+    "cdsi_mrenclave": "15637fa1e54fe655176d3df1a9f94b87c01ed377acaa570682dc5d72c95ef07b",
+    "svrb_mrenclave": "fdbbacdc0c043d0d53fe1440f62728de0386f45ab0a275bd8f99e03a02af355e",
+    "svr2_raft_group_id": null,
+    "svrb_raft_group_id": null,
+    "keytrans_signing_key": null,
+    "keytrans_vrf_key": null
+  },
+  "integrations": {
+    "stripe_publishable_key": "pk_live_6cmGZopuTsV8novGgJJW9JpC00vLIgtQ1D",
+    "default_currencies": "EUR,AUD,GBP,CAD,CNY"
+  }
+}
