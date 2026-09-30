@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Asher offline mesh: USB serial devices that may be an RNode-class LoRa board.
+  Only native CDC-ACM ports are driven (UsbSerialLink speaks CDC directly); FTDI, CP210x and
+  CH34x bridges need a vendor driver that is not included, so they are not listed here.
+-->
+<resources>
+    <!-- Any CDC-ACM (communications class, abstract control model) device. -->
+    <usb-device class="2" subclass="2" protocol="1" />
+    <!-- Espressif ESP32-S2/S3 native USB CDC (many RNode boards). -->
+    <usb-device vendor-id="12346" product-id="4097" />
+    <!-- Raspberry Pi RP2040 CDC (RAK/other RNode ports). -->
+    <usb-device vendor-id="11914" product-id="10" />
+</resources>

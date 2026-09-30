@@ -39,6 +39,7 @@ class SignalStore(context: Application, private val store: KeyValueStore) {
   val backupValues = BackupValues(store)
   val callQualityValues = CallQualityValues(store)
   val labsValues = LabsValues(store)
+  val meshValues = MeshValues(store)
 
   companion object {
 
@@ -86,6 +87,7 @@ class SignalStore(context: Application, private val store: KeyValueStore) {
       backup.onFirstEverAppLaunch()
       callQuality.onFirstEverAppLaunch()
       labs.onFirstEverAppLaunch()
+      mesh.onFirstEverAppLaunch()
     }
 
     @JvmStatic
@@ -119,7 +121,8 @@ class SignalStore(context: Application, private val store: KeyValueStore) {
           apkUpdate.keysToIncludeInBackup +
           backup.keysToIncludeInBackup +
           callQuality.keysToIncludeInBackup +
-          labs.keysToIncludeInBackup
+          labs.keysToIncludeInBackup +
+          mesh.keysToIncludeInBackup
       }
 
     /**
@@ -287,6 +290,11 @@ class SignalStore(context: Application, private val store: KeyValueStore) {
     @get:JvmName("labs")
     val labs: LabsValues
       get() = instance!!.labsValues
+
+    @JvmStatic
+    @get:JvmName("mesh")
+    val mesh: MeshValues
+      get() = instance!!.meshValues
 
     val groupsV2AciAuthorizationCache: GroupsV2AuthorizationSignalStoreCache
       get() = GroupsV2AuthorizationSignalStoreCache.createAciCache(instance!!.store)

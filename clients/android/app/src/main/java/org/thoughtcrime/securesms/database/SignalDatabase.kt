@@ -76,6 +76,7 @@ open class SignalDatabase(private val context: Application, databaseSecret: Data
   val pollTable: PollTables = PollTables(context, this)
   val lastResortKeyTuples: LastResortKeyTupleTable = LastResortKeyTupleTable(context, this)
   val attachmentMetadataTable: AttachmentMetadataTable = AttachmentMetadataTable(context, this)
+  val meshContactTable: MeshContactTable = MeshContactTable(context, this)
 
   override fun onOpen(db: net.zetetic.database.sqlcipher.SQLiteDatabase) {
     db.setForeignKeyConstraintsEnabled(true)
@@ -134,6 +135,7 @@ open class SignalDatabase(private val context: Application, databaseSecret: Data
     db.execSQL(BackupMediaSnapshotTable.CREATE_TABLE)
     db.execSQL(LastResortKeyTupleTable.CREATE_TABLE)
     db.execSQL(AttachmentMetadataTable.CREATE_TABLE)
+    db.execSQL(MeshContactTable.CREATE_TABLE)
 
     executeStatements(db, RecipientTable.CREATE_INDEXS)
     executeStatements(db, MessageTable.CREATE_INDEXS)
@@ -156,6 +158,7 @@ open class SignalDatabase(private val context: Application, databaseSecret: Data
     executeStatements(db, ReactionTable.CREATE_INDEXES)
     executeStatements(db, KyberPreKeyTable.CREATE_INDEXES)
     executeStatements(db, ChatFolderTables.CREATE_INDEXES)
+    executeStatements(db, MeshContactTable.CREATE_INDEXES)
     executeStatements(db, NameCollisionTables.CREATE_INDEXES)
     executeStatements(db, BackupMediaSnapshotTable.CREATE_INDEXES)
     executeStatements(db, PollTables.CREATE_INDEXES)
@@ -366,6 +369,11 @@ open class SignalDatabase(private val context: Application, databaseSecret: Data
     @get:JvmName("cds")
     val cds: CdsTable
       get() = instance!!.cdsTable
+
+    @get:JvmStatic
+    @get:JvmName("meshContacts")
+    val meshContacts: MeshContactTable
+      get() = instance!!.meshContactTable
 
     @get:JvmStatic
     @get:JvmName("chatColors")

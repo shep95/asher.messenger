@@ -380,7 +380,7 @@ pub fn encode_prepared(items: &[Prepared]) -> Vec<u8> {
     w.finish()
 }
 
-/// Seventeen big-endian u64 counters in the order of the `Stats` fields.
+/// Eighteen big-endian u64 counters in the order of the `Stats` fields.
 pub fn encode_stats(s: &Stats) -> Vec<u8> {
     let mut w = Writer::new();
     for v in [

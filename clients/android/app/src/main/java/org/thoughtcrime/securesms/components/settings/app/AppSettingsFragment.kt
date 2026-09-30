@@ -70,6 +70,7 @@ import org.thoughtcrime.securesms.banner.ui.compose.Action
 import org.thoughtcrime.securesms.banner.ui.compose.DefaultBanner
 import org.thoughtcrime.securesms.banner.ui.compose.Importance
 import org.thoughtcrime.securesms.components.settings.app.routes.AppSettingsRoute
+import org.thoughtcrime.securesms.mesh.MeshTransport
 import org.thoughtcrime.securesms.components.settings.app.routes.AppSettingsRouter
 import org.thoughtcrime.securesms.components.settings.app.subscription.BadgeImageMedium
 import org.thoughtcrime.securesms.components.settings.app.subscription.InAppPaymentsRepository
@@ -116,6 +117,7 @@ class AppSettingsFragment : ComposeFragment(), Callbacks {
             is AppSettingsRoute.HelpRoute.Settings -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_helpSettingsFragment)
             is AppSettingsRoute.Invite -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_inviteFragment)
             is AppSettingsRoute.LabsRoute.Labs -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_labsSettingsFragment)
+            is AppSettingsRoute.MeshRoute.Mesh -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_meshSettingsFragment)
             is AppSettingsRoute.InternalRoute.Internal -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_internalSettingsFragment)
             is AppSettingsRoute.AccountRoute.ManageProfile -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_manageProfileActivity)
             is AppSettingsRoute.UsernameLinkRoute.UsernameLink -> findNavController().safeNavigate(R.id.action_appSettingsFragment_to_usernameLinkSettingsFragment)
@@ -518,6 +520,18 @@ private fun AppSettingsContent(
               callbacks.navigate(AppSettingsRoute.Invite)
             }
           )
+        }
+
+        if (MeshTransport.isAvailable()) {
+          item {
+            Rows.TextRow(
+              text = stringResource(R.string.MeshSettings__title),
+              icon = painterResource(R.drawable.symbol_link_24),
+              onClick = {
+                callbacks.navigate(AppSettingsRoute.MeshRoute.Mesh)
+              }
+            )
+          }
         }
 
         if (state.showInternalPreferences) {

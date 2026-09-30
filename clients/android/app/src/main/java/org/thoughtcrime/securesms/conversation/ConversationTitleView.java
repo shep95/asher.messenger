@@ -195,6 +195,19 @@ public class ConversationTitleView extends ConstraintLayout {
     }
   }
 
+  /**
+   * Asher: same as {@link #setSceneState(SceneIndicatorView.State)} with transport detail such as
+   * "1 hop" (rendered as "Mesh · 1 hop").
+   */
+  public void setSceneState(@NonNull SceneIndicatorView.State state, @Nullable CharSequence detail) {
+    if (sceneIndicator == null) {
+      return;
+    }
+
+    sceneIndicator.setState(state, detail);
+    sceneIndicator.setVisibility(View.VISIBLE);
+  }
+
   public void setGroupRecipientSubtitle(@Nullable String members) {
     this.subtitle.setText(members);
     updateSubtitleVisibility();

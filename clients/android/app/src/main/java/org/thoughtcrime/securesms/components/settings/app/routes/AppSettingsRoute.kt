@@ -122,6 +122,12 @@ sealed interface AppSettingsRoute : Parcelable {
     data object Labs : LabsRoute
   }
 
+  /** Asher offline mesh transport settings. */
+  @Parcelize
+  sealed interface MeshRoute : AppSettingsRoute {
+    data object Mesh : MeshRoute
+  }
+
   @Parcelize
   sealed interface InternalRoute : AppSettingsRoute {
     data object Internal : InternalRoute

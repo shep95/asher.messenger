@@ -40,6 +40,7 @@ public final class NotificationIds {
   public static final int MANUAL_BACKUP_NOT_CREATED         = 1205020;
   public static final int UNREAD_REMINDER                   = 1206000;
   public static final int MAX_UNREAD_REMINDER               = UNREAD_REMINDER + 100_000;
+  public static final int MESH_TRANSPORT                    = 1400_000; // Asher offline mesh foreground service
 
   private NotificationIds() { }
 

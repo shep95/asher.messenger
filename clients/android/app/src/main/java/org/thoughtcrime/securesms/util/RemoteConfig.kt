@@ -1265,6 +1265,19 @@ object RemoteConfig {
   )
 
   /**
+   * Asher: whether the offline mesh transport (meshlink over Bluetooth LE and LoRa/KISS radios) is
+   * available. Off by default; the user then turns it on in Settings > Offline mesh. See
+   * `docs/offline-mesh.md`. Internal users can override it in the remote config screen.
+   */
+  @JvmStatic
+  @get:JvmName("meshTransport")
+  val meshTransport: Boolean by remoteBoolean(
+    key = "mesh.transport",
+    defaultValue = false,
+    hotSwappable = true
+  )
+
+  /**
    * Also determines how long an unregistered/deleted record should remain in storage service
    */
   val messageQueueTime: Long by remoteValue(

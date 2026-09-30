@@ -59,6 +59,7 @@ import org.thoughtcrime.securesms.jobs.PushGroupSendJob;
 import org.thoughtcrime.securesms.jobs.ReactionSendJob;
 import org.thoughtcrime.securesms.jobs.RemoteDeleteSendJob;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.mesh.MeshOutbox;
 import org.signal.core.models.media.Media;
 import org.thoughtcrime.securesms.mms.MmsException;
 import org.thoughtcrime.securesms.mms.OutgoingMessage;
@@ -622,6 +623,10 @@ public class MessageSender {
       sendGroupPush(context, recipient, messageId, Collections.emptySet(), finalUploadJobIds);
     } else if (recipient.isDistributionList()) {
       sendDistributionList(context, recipient, messageId, Collections.emptySet(), finalUploadJobIds);
+    } else if (sendType == SendType.SIGNAL && MeshOutbox.shouldRoute(recipient)) {
+      // Asher offline mesh: the recipient is a mesh contact and the transport is on, so the message
+      // travels over meshlink instead of the chat server. Everything else is unchanged.
+      MeshOutbox.send(context, recipient, messageId);
     } else if (sendType == SendType.SIGNAL && isPushMediaSend(context, recipient)) {
       sendMediaPush(context, recipient, messageId, finalUploadJobIds);
     } else {

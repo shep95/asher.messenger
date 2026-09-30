@@ -149,6 +149,13 @@
             app:popEnterAnim="@anim/fragment_close_enter"
             app:popExitAnim="@anim/fragment_close_exit" />
         <action
+            android:id="@+id/action_appSettingsFragment_to_meshSettingsFragment"
+            app:destination="@id/meshSettingsFragment"
+            app:enterAnim="@anim/fragment_open_enter"
+            app:exitAnim="@anim/fragment_open_exit"
+            app:popEnterAnim="@anim/fragment_close_enter"
+            app:popExitAnim="@anim/fragment_close_exit" />
+        <action
             android:id="@+id/action_appSettingsFragment_to_manageDonationsFragment"
             app:destination="@id/manageDonationsFragment"
             app:enterAnim="@anim/fragment_open_enter"
@@ -987,6 +994,26 @@
         android:id="@+id/labsSettingsFragment"
         android:name="org.thoughtcrime.securesms.components.settings.app.labs.LabsSettingsFragment"
         android:label="labs_settings_fragment" />
+
+    <!-- Asher offline mesh -->
+
+    <fragment
+        android:id="@+id/meshSettingsFragment"
+        android:name="org.thoughtcrime.securesms.mesh.ui.MeshSettingsFragment"
+        android:label="mesh_settings_fragment">
+        <action
+            android:id="@+id/action_meshSettingsFragment_to_meshScanFragment"
+            app:destination="@id/meshScanFragment"
+            app:enterAnim="@anim/fragment_open_enter"
+            app:exitAnim="@anim/fragment_open_exit"
+            app:popEnterAnim="@anim/fragment_close_enter"
+            app:popExitAnim="@anim/fragment_close_exit" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/meshScanFragment"
+        android:name="org.thoughtcrime.securesms.mesh.ui.MeshScanFragment"
+        android:label="mesh_scan_fragment" />
 
     <!-- Internal Settings -->
 

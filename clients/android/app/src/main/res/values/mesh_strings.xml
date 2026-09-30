@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asher offline mesh transport (meshlink). See docs/offline-mesh.md. -->
+<resources>
+    <string name="MeshTransport__notification_title">Offline mesh is on</string>
+    <string name="MeshTransport__notification_text">Carrying messages over Bluetooth and radio</string>
+
+    <string name="MeshSettings__title">Offline mesh</string>
+    <string name="MeshSettings__navigate_up">Navigate up</string>
+    <string name="MeshSettings__enable">Offline mesh</string>
+    <string name="MeshSettings__enable_summary">Reach mesh contacts over Bluetooth and LoRa radios when there is no internet</string>
+    <string name="MeshSettings__ble">Bluetooth LE</string>
+    <string name="MeshSettings__ble_summary">Link directly with nearby phones running the mesh</string>
+    <string name="MeshSettings__usb">USB radio</string>
+    <string name="MeshSettings__usb_summary">Use an RNode LoRa board plugged in over USB</string>
+    <string name="MeshSettings__configure_radio">Configure radio on connect</string>
+    <string name="MeshSettings__configure_radio_summary">Send the EU 868 MHz long-range profile to the board. Check your local band and power limits first.</string>
+    <string name="MeshSettings__bluetooth_rationale">Asher needs Bluetooth permission to find and link with nearby phones. It never uses it for location.</string>
+    <string name="MeshSettings__camera_rationale">Asher needs the camera to scan a contact card.</string>
+    <string name="MeshSettings__my_card">My contact card</string>
+    <string name="MeshSettings__card_unavailable">Contact card not available yet</string>
+    <string name="MeshSettings__scan_card">Scan a card</string>
+    <string name="MeshSettings__broadcast_card">Broadcast card</string>
+    <string name="MeshSettings__scan_hint">Scan the contact card shown in the other phone\'s mesh settings</string>
+    <string name="MeshSettings__contact_added">Mesh contact added</string>
+    <string name="MeshSettings__not_a_card">That code is not a mesh contact card</string>
+    <string name="MeshSettings__contacts">Mesh contacts</string>
+    <string name="MeshSettings__no_contacts">No mesh contacts yet. Scan a card or wait for a beacon.</string>
+    <string name="MeshSettings__links">Links</string>
+    <string name="MeshSettings__running">Mesh running</string>
+    <string name="MeshSettings__stopped">Mesh stopped</string>
+    <string name="MeshSettings__no_links">No links right now</string>
+    <!-- Counters from the node: frames received, bundles received, bundles forwarded, messages delivered, messages awaiting an ack, bundles carried, kilobytes carried -->
+    <string name="MeshSettings__stats">Frames in %1$d · bundles in %2$d · forwarded %3$d · delivered %4$d · awaiting ack %5$d · carrying %6$d bundles (%7$d KiB)</string>
+</resources>

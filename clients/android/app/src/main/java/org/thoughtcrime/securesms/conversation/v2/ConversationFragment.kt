@@ -182,6 +182,7 @@ import org.thoughtcrime.securesms.components.InputPanel
 import org.thoughtcrime.securesms.components.ProgressCardDialogFragment
 import org.thoughtcrime.securesms.components.RotatedTiledDrawable
 import org.thoughtcrime.securesms.components.SceneIndicatorView
+import org.thoughtcrime.securesms.mesh.MeshStatus
 import org.thoughtcrime.securesms.components.ScrollToPositionDelegate
 import org.thoughtcrime.securesms.components.SendButton
 import org.thoughtcrime.securesms.components.SignalProgressDialog
@@ -476,6 +477,9 @@ class ConversationFragment :
       "image/avif"
     )
   }
+
+  /** Asher offline mesh: the last mesh-derived scene, or null when this recipient is not a mesh contact. */
+  private var meshScene: MeshStatus.Scene? = null
 
   private val args: ConversationArgs by lazy {
     ConversationIntents.readArgsFromBundle(requireArguments())
@@ -1660,8 +1664,25 @@ class ConversationFragment :
       .distinctUntilChanged()
       .observeOn(AndroidSchedulers.mainThread())
       .subscribeBy(onNext = { online ->
-        binding.conversationTitleView.root.setSceneState(if (online) SceneIndicatorView.State.ORBIT else SceneIndicatorView.State.OUT_OF_RANGE)
+        if (meshScene == null) {
+          binding.conversationTitleView.root.setSceneState(if (online) SceneIndicatorView.State.ORBIT else SceneIndicatorView.State.OUT_OF_RANGE)
+        }
       })
+
+    // Asher offline mesh: for a mesh contact the indicator follows the mesh instead: Mesh · 1 hop when
+    // the contact is a neighbour, Mesh · N nearby when others can carry, Carrying while bundles are
+    // unacknowledged, Out of range otherwise. Non-mesh recipients keep the connectivity state above.
+    viewLifecycleOwner.lifecycleScope.launch {
+      viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        MeshStatus.state.collect { snapshot ->
+          val scene = withContext(Dispatchers.IO) { MeshStatus.sceneFor(viewModel.recipientSnapshot, snapshot) }
+          meshScene = scene
+          if (scene != null) {
+            binding.conversationTitleView.root.setSceneState(scene.state, scene.detail)
+          }
+        }
+      }
+    }
 
     disposables += viewModel
       .groupMemberServiceIds

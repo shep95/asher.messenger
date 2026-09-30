@@ -98,6 +98,7 @@ import org.thoughtcrime.securesms.jobs.StoryOnboardingDownloadJob;
 import org.thoughtcrime.securesms.keyvalue.KeepMessagesDuration;
 import org.thoughtcrime.securesms.keyvalue.PlainTextKeyValueStore;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.mesh.MeshTransport;
 import org.thoughtcrime.securesms.logging.CustomSignalProtocolLogger;
 import org.thoughtcrime.securesms.logging.PersistentLogger;
 import org.thoughtcrime.securesms.logsubmit.SubmitDebugLogActivity;
@@ -238,6 +239,7 @@ public class ApplicationContext extends Application implements AppForegroundObse
               .addPostRender(() -> AppDependencies.getDeletedCallEventManager().scheduleIfNecessary())
               .addPostRender(() -> RateLimitUtil.retryAllRateLimitedMessages(this))
               .addPostRender(this::initializeExpiringMessageManager)
+              .addPostRender(() -> MeshTransport.startIfEnabled(this))
               .addPostRender(this::initializeTrimThreadsByDateManager)
               .addPostRender(RefreshSvrCredentialsJob::enqueueIfNecessary)
               .addPostRender(() -> DownloadLatestEmojiDataJob.scheduleIfNecessary(this))
