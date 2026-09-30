@@ -1,0 +1,53 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+syntax = "proto3";
+
+package svr2.client;
+option optimize_for = LITE_RUNTIME;
+
+import "client.proto";
+import "client3.proto";
+import "client4.proto";
+import "client5.proto";
+
+// Log2 is the logged message used by the SVR2 (db2) database.
+message Log2 {
+  bytes backup_id = 1;
+  client.Request req = 2;
+}
+
+// Log3 is the logged message used by the SVR3 (db3) database.
+message Log3 {
+  bytes backup_id = 1;
+  client.Request3 req = 2;
+  // If req.create(), then we need to generate new keys.
+  // These fields will be filled in with the generated keys.
+  bytes create_privkey = 3;
+}
+
+// Log4 is the logged message used by the SVR4 (db4) database.
+message Log4 {
+  bytes backup_id = 1;
+  client.Request4 req = 2;
+}
+
+// Log5 is the logged message used by the SVR5 (db5) database.
+message Log5 {
+  bytes backup_id = 1;
+  client.Request5 req = 2;
+}
+
+// Effect4 is the effect of applying a Log4 on a SVR4 (db4) database.
+message Effect4 {
+  client.Response4 resp = 1;
+  message Restore2State {
+    bytes auth_commitment = 1;
+    bytes encryption_secretshare = 2;
+    bytes new_encryption_secretshare = 3;
+    fixed64 version = 4;
+    fixed64 new_version = 5;
+    bytes blinded_point = 6;
+  }
+  Restore2State restore2_client_state = 2;
+}

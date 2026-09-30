@@ -1,0 +1,177 @@
+# syntax=docker/dockerfile:1
+# To build use:
+# docker build -t oebuild .
+FROM amd64/debian:bookworm@sha256:f2c0a2c38468521a54160b3e6105d4be0afa9f0c70eddc45def08aa75c8b4404 AS base
+
+LABEL description="linux build environment for sgx."
+
+COPY docker/apt.conf docker/sources.list /etc/apt/
+RUN rm -rf /etc/apt/sources.list.d/*
+COPY docker/sgx_runtime_libraries.sh /tmp/
+RUN /tmp/sgx_runtime_libraries.sh
+
+ARG OPENENCLAVE_VERSION=0.19.17
+ARG OPENENCLAVE_HASH=b5636751273fd094e21de61ae91a7fdedb507001ebe19f9b2b28088b0927ce52
+ADD --checksum=sha256:${OPENENCLAVE_HASH} \
+    https://github.com/openenclave/openenclave/releases/download/v${OPENENCLAVE_VERSION}/Ubuntu_2204_open-enclave_${OPENENCLAVE_VERSION}_amd64.deb ./
+RUN dpkg -i Ubuntu_2204_open-enclave_${OPENENCLAVE_VERSION}_amd64.deb
+
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023.8.20250908.0@sha256:0afbc075facf7bb19482cd244d037222d6f998e8a443106fe245d23008910452 AS amazon
+
+FROM amazon AS nsmbuild
+ENV HOST_MACHINE=x86_64
+ENV RUST_VERSION=1.89.0
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN yum install -y gcc
+
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs/ | sh -s -- --profile minimal --default-toolchain ${RUST_VERSION} -y ; \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \
+    rustup --version; \
+    cargo --version; \
+    rustc --version
+
+COPY docker/aws-nitro-enclaves-nsm-api /build
+COPY docker/aws-nitro.Cargo.lock /build/Cargo.lock
+WORKDIR /build 
+
+RUN set -eux; \
+    (cd nsm-lib && cargo build --release --locked)
+RUN ar mD target/release/libnsm.a $(ar t target/release/libnsm.a | env -u LANG LC_ALL=C sort)
+
+FROM base AS builder
+
+RUN mkdir /src && \
+    while true; do apt-get update && break; done && \
+    while true; do apt-get install -y \
+      libssl-dev \
+      gdb \
+      libtool \
+      bison \
+      automake \
+      flex \
+      libcurl4 \
+      pkg-config \
+      make \
+      unzip \
+      git \
+      gcc \
+      libgtest-dev \
+      cmake \
+      valgrind \
+      xz-utils \
+      libstdc++-12-dev \
+    && break; done && apt-get clean
+
+ARG PROTOBUF_PLATFORM=linux-x86_64
+ARG PROTOBUF_VERSION=21.8
+ARG PROTOBUF_BASE=protoc-${PROTOBUF_VERSION}-${PROTOBUF_PLATFORM}
+
+ADD --checksum=sha256:f90d0dd59065fef94374745627336d622702b67f0319f96cee894d41a974d47a https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/${PROTOBUF_BASE}.zip ./
+RUN mkdir -p ${PROTOBUF_BASE} \
+	&& cd ${PROTOBUF_BASE} \
+  && unzip -o ../${PROTOBUF_BASE}.zip \
+  && cd .. \
+  && mv ${PROTOBUF_BASE} /opt/protobuf
+
+ARG GOLANG_PLATFORM=linux-amd64
+ARG GOLANG_VERSION=1.25.5
+ARG GOLANG_TAR_GZ=go${GOLANG_VERSION}.${GOLANG_PLATFORM}.tar.gz
+
+ADD --checksum=sha256:9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b https://go.dev/dl/${GOLANG_TAR_GZ} ./
+RUN tar xzf ${GOLANG_TAR_GZ} \
+  && mv go /opt/
+
+# Rather than ADD --checksum=xxx this file, we wget it within a RUN so the file itself,
+# which is quite large, doesn't show up in any intermediate layers.
+ARG CLANG_VERSION=11.1.0
+ARG LATEST_CLANG_11=${CLANG_VERSION}-x86_64-linux-gnu-ubuntu-20.10
+COPY docker/clang+llvm-${LATEST_CLANG_11}.tar.xz.sha256 /tmp
+RUN cd /tmp && \
+    wget -nv https://github.com/llvm/llvm-project/releases/download/llvmorg-${CLANG_VERSION}/clang+llvm-${LATEST_CLANG_11}.tar.xz && \
+    sha256sum -c clang+llvm-${LATEST_CLANG_11}.tar.xz.sha256 && \
+    tar xvf clang+llvm-${LATEST_CLANG_11}.tar.xz \
+        clang+llvm-${LATEST_CLANG_11}/bin/clang-11 \
+        clang+llvm-${LATEST_CLANG_11}/lib/clang/${CLANG_VERSION}/include && \
+    mv clang+llvm-${LATEST_CLANG_11} /opt/clang && \
+    ln -s /opt/clang/bin/clang-11 /opt/clang/bin/clang++-11 && \
+    rm -fv clang+llvm-${LATEST_CLANG_11}.tar.xz
+
+ENV PATH="/opt/clang/bin:/opt/openenclave/bin:/opt/go/bin:/opt/protobuf/bin:${PATH}"
+ENV GOROOT="/opt/go"
+ENV GOBIN="/opt/go/bin"
+ENV PKG_CONFIG_PATH="/opt/openenclave/share/pkgconfig"
+
+ARG PROTOC_GEN_GO_GITREV=96a179180f0ad6bba9b1e7b6e38d0affb0168e9a
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_GITREV}
+RUN echo "export PS1='buildenv: \w$ '" >> /etc/bash.bashrc
+
+# Set this after `go install` so we don't use the same cache as root.
+ENV GOPATH="/src/.gopath"
+ENV GOCACHE="/src/.gocache"
+ENV CARGO_HOME="/src/.cargohome"
+ENV CARGO_TARGET_DIR="/src/.cargotarget"
+
+WORKDIR /src
+COPY --from=nsmbuild /build/target/release/libnsm.a /opt/nsm/libnsm.a
+COPY --from=nsmbuild /build/target/release/nsm.h    /opt/nsm/nsm.h
+
+ARG RUST_VERSION=1.92.0
+ADD --checksum=sha256:d2ccef59dd9f7439f2c694948069f789a044dc1addcc0803613232af8f88ee0c https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz /tmp/
+RUN apt-get install -y xz-utils && \
+    (cd /tmp && tar xJf /tmp/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz) && \
+    (cd /tmp/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu && ./install.sh --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu) && \
+    (rm -fv /tmp/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz && \
+     rm -rf /tmp/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu)
+
+CMD ["/bin/bash"]
+
+FROM base AS sgxrun
+
+RUN apt-get update && apt-get install -y \
+    libsgx-dcap-default-qpl=1.26.100.1-jammy1 \
+    libsgx-dcap-default-qpl-dev=1.26.100.1-jammy1 \
+    libcurl4 && apt-get clean
+COPY host/main /bin/svr2
+COPY enclave/releases/sgx /enclaves
+COPY host/cmd/control/control /bin/svr3control
+RUN ln -s /bin/svr3control /bin/svr2control
+
+ENTRYPOINT ["/bin/svr2"]
+
+FROM amazon AS nsmrun
+ADD --chown=0:0 enclave/build/enclave.nsm /bin/svr2
+ENTRYPOINT ["/bin/svr2", "--sock_type=af_vsock"]
+
+FROM alpine@sha256:ff6bdca1701f3a8a67e328815ff2346b0e4067d32ec36b7992c1fdc001dc8517 AS sevrun
+COPY enclave/build/enclave.sev /bin/svr2
+EXPOSE 27427
+ENTRYPOINT ["/bin/svr2", "--sock_type=af_inet"]
+
+FROM amazon AS nsmeif
+RUN yum install -y \
+    aws-nitro-enclaves-cli.x86_64 \
+    aws-nitro-enclaves-cli-devel.x86_64 \
+    perl \
+    docker \
+    jq
+ENV DOCKER_IMAGE svr2_nsmrun:latest
+ENV OUTPUT_FILE /tmp/svr2.eif
+ENV CHOWN_TO 0:0
+COPY docker/build_eif.sh build_eif.sh
+ENTRYPOINT ./build_eif.sh
+
+FROM amazon AS nsmhost
+RUN yum install -y \
+    aws-nitro-enclaves-cli.x86_64 \
+    jq
+COPY docker/nitro_start.sh nitro_start.sh
+RUN mkdir /releases
+COPY enclave/releases/nitro/* /releases
+COPY host/main /bin/svr2
+COPY host/cmd/control/control /bin/svr3control
+RUN ln -s /bin/svr3control /bin/svr2control
+ENTRYPOINT ["./nitro_start.sh"]

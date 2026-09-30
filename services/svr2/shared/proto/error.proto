@@ -1,0 +1,324 @@
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+syntax = "proto3";
+
+package svr2.error;
+option go_package = "github.com/signalapp/svr2/proto";
+option optimize_for = LITE_RUNTIME;
+
+// Namespaces are of size 1000 and are suffixed with "_NS". They should not be returned.
+enum Error {
+  OK = 0;
+
+  General_NS = 100;
+  General_Unimplemented = 101;
+  Generic_Unknown = 102;
+
+  Core_NS = 200;
+  Core_ConfigProtobufParse = 201;
+  Core_ReInit = 202;
+  Core_SendSerialize = 203;
+  Core_ReceiveProtobufParse = 204;
+  Core_NoInit = 205;
+  Core_ClientNotFound = 206;
+  Core_InitClientDHState = 207;
+  Core_SerializeClientLog = 208;
+  Core_RaftState = 209;
+  Core_E2EResponseWithoutCallback = 210;
+  Core_ReceivedEmptyReplicaGroup = 211;
+  Core_VotingRequestedForNonMember = 212;
+  Core_VotingRequestedForVotingMember = 213;
+  Core_LeaderUnknown = 214;
+  Core_E2ETransactionTimeout = 215;
+  Core_NotEnoughVotingReplicas = 216;
+  Core_HostToEnclaveTransactionID = 217;
+  Core_JoinRaftWriteNotCommitted = 218;
+  Core_LogTransactionCancelled = 219;
+  Core_RemovedFromRaft = 220;
+  Core_TransactionPostconditionsInvalid = 221;
+  Core_InvalidLogLevel = 222;
+  Core_RefreshClientAttestationWithoutRaftConfig = 223;
+  Core_BackupIDSecretMismatch = 224;
+  Core_ClientSetBackupID = 225;
+  Core_DuplicateMembershipPeer = 226;
+  Core_LeaderRemovingSelf = 227;
+  Core_RemoveNonexistentMember = 228;
+  Core_ReplicatedLogSerialization = 229;
+  Core_ReplicationOutOfOrder = 230;
+  Core_LogNotFoundAtCommitIndex = 231;
+  Core_DBRRMissing = 232;
+  Core_DeserializeHostDatabaseRequest = 233;
+  Core_InvalidLogTransactionHashChain = 234;
+  Core_IncorrectE2EResponseType = 235;
+  Core_GroupConfigMismath = 236;
+  Core_RaftGroupConfigMinReplicasGreaterThanMaxReplicas = 237;
+  Core_RaftGroupConfigMinReplicasTooSmall = 238;
+  Core_DBVersionInvalid = 239;
+  Core_RaftGroupConfigAttestationTimeoutTooSmall = 240;
+  Core_SerializeRaftWrite = 241;
+  Core_DeserializeRaftWrite = 242;
+  Core_E2ETransactionReset = 243;
+  Core_RefusingWithoutQuorumTimestamp = 244;
+
+  Env_NS = 300;
+  Env_SerializeCustomClaims = 301;
+  Env_GetEvidence = 302;
+  Env_SendMessage = 303;
+  Env_RandomBytes = 304;
+  Env_AttestationFailure = 305;
+  Env_Zero = 306;
+  Env_WrongMRENCLAVE = 307;
+  Env_CustomClaimsMissing = 308;
+  Env_CustomClaimsDeserialize = 309;
+  Env_AttestationPubkeyMissing = 310;
+  Env_AttestationPubkeyInvalidSize = 311;
+  Env_MissingMRENCLAVE = 312;
+  Env_SerializeConfigForEvidence = 313;
+  Env_MallinfoFailure = 314;
+  Env_SerializeMinimumsForEvidence = 315;
+  Env_ParseEvidence = 316;
+  Env_ParseEndorsements = 317;
+  Env_SerializeAttestationData = 318;
+  Env_MetadataNotSupported = 319;
+
+  Peers_NS = 400;
+  Peers_SendBeforeConnect = 401;
+  Peers_RecvBeforeConnect = 402;
+  Peers_NewKey = 403;
+  Peers_NewKeyGenerate = 404;
+  Peers_NewKeyPublic = 405;
+  Peers_SendConnect = 406;
+  Peers_ReInit = 407;
+  Peers_NoInit = 408;
+  Peers_HandshakeState = 409;
+  Peers_CopyDHState = 410;
+  Peers_SetRemotePublicKey = 411;
+  Peers_HandshakeStart = 412;
+  Peers_ConnectWriteHandshake = 413;
+  Peers_ConnectSerializeHandshake = 414;
+  Peers_AcceptParseHandshake = 415;
+  Peers_AcceptReadHandshake = 416;
+  Peers_AcceptWriteHandshake = 417;
+  Peers_AcceptSerializeHandshake = 418;
+  Peers_AcceptIDMismatch = 419;
+  Peers_AcceptSplit = 420;
+  Peers_InvalidID = 421;
+  Peers_DataNotConnected = 422;
+  Peers_FinishParseHandshake = 423;
+  Peers_FinishReadHandshake = 424;
+  Peers_FinishSplit = 425;
+  Peers_Encrypt = 426;
+  Peers_Decrypt = 427;
+  Peers_EncryptSerialize = 428;
+  Peers_DecryptParse = 429;
+  Peers_FinishIDMismatch = 430;
+  Peers_SynAckNotConnecting = 431;
+  Peers_InvalidMsg = 432;
+  Peers_ResetMissingPeer = 433;
+  Peers_AttestationKeyChanged = 434;
+  Peers_DecryptEmpty = 435;
+
+  Raft_NS = 500;
+  Raft_LogOutOfSpace = 501;
+  Raft_LogEntryTooLarge = 502;
+  Raft_AllEntriesBeforeLastAppliedTruncated = 503;
+  Raft_AppendEntryNotLeader = 504;
+  Raft_CancelingBeforeFirst = 505;
+  Raft_AppendWithoutTerm = 506;
+  Raft_MembershipAlreadyChanging = 507;
+  Raft_NoHashChainInAppend = 508;
+  Raft_FollowerNotFound = 509;
+  Raft_SetNextOnNonemptyLog = 510;
+  Raft_MsgNotPeer = 511;
+  Raft_MsgWrongGroup = 512;
+  Raft_MsgInvalidType = 513;
+  Raft_MsgHashMismatch = 514;
+  Raft_MsgTruncated = 515;
+  Raft_MsgInFuture = 516;
+  Raft_MsgTermPromised = 517;
+  Raft_MsgAppendEntryIndex = 518;
+  Raft_MsgLogIndexOrdering = 519;
+  Raft_MembershipChangePriorToFirstCommit = 520;
+
+  DB2_NS = 600;
+  DB2_ClientRequestCase = 601;
+  DB2_ClientPinSize = 602;
+  DB2_ClientTriesTooHigh = 603;
+  DB2_ClientTriesZero = 604;
+  DB2_ClientDataSize = 605;
+  DB2_ClientBackupIDSize = 606;
+  DB2_ReplicationInvalidRow = 607;
+  DB2_ReplicationOutOfOrder = 608;
+  DB2_BackupIDSize = 609;
+  DB2_LoadedRowsAlreadyInDB = 610;
+  DB2_InvalidRequestType = 611;
+  DB2_ClientTokenSize = 612;
+
+  Client_NS = 700;
+  Client_HandshakeState = 701;
+  Client_CopyDHState = 702;
+  Client_HandshakeStart = 703;
+  Client_ExtractPublicKey = 704;
+  Client_DecryptState = 705;
+  Client_EncryptState = 706;
+  Client_FinishReadHandshake = 707;
+  Client_FinishWriteHandshake = 708;
+  Client_FinishSplit = 709;
+  Client_DecryptParse = 710;
+  Client_EncryptSerialize = 711;
+  Client_TransactionCancelled = 712;
+  Client_TransactionInvalid = 713;
+  Client_AlreadyClosed = 714;
+  Client_ResponseFromEffect = 715;
+  Client_FinishHandshakeHash = 716;
+
+  Config_NS = 800;
+  Config_ElectionTicks = 801;
+  Config_HeartbeatVsElectionTicks = 802;
+  Config_ReplicationChunk = 803;
+  Config_ReplicaTimeout = 804;
+  Config_E2ETransactionTimeout = 805;
+  Config_ChangeSimulate = 806;
+  Config_BackupIDInvalid = 807;
+  Config_LogMaxBytes = 808;
+  Config_ReplicationPipeline = 809;
+
+  Membership_NS = 900;
+  Membership_TooManyMembershipChanges = 901;
+  Membership_NoMembershipChanges = 902;
+  Membership_LeaderRemovedFromVoting = 903;
+  Membership_LeaderRemovedFromAll = 904;
+  Membership_VotingNotSubset = 905;
+  Membership_EmptySet = 906;
+  Membership_DuplicateReplicaInReplicaGroup = 907;
+  Membership_SuperMajorityLost = 908;
+
+  Replicate_NS = 1000;
+  Replicate_RaftState = 1001;
+  Replicate_GroupMismatch = 1002;
+  Replicate_LogIndexMismatch = 1003;
+  Replicate_MissingCommittedMembership = 1004;
+  Replicate_ReplicationID = 1005;
+  Replicate_ReplicationSequence = 1006;
+
+  Util_NS = 1100;
+  Util_ArrayCopyTooBig = 1101;
+  Util_HexCharInvalid = 1102;
+  Util_HexBytesSize = 1103;
+  Util_Base64InvalidChar = 1104;
+  Util_Base64InvalidPadding = 1105;
+
+  DB3_NS = 1200;
+  DB3_ScalarMultFailure = 1201;
+  DB3_BackupIDSize = 1202;
+  DB3_MaxTriesOutOfRange = 1203;
+  DB3_BlindedElementSize = 1204;
+  DB3_ToplevelRequestType = 1205;
+  DB3_RequestInvalid = 1206;
+  DB3_LogPrivateKeyInvalid = 1207;
+  DB3_ReplicationInvalidRow = 1208;
+  DB3_LoadedRowsAlreadyInDB = 1209;
+  DB3_ReplicationOutOfOrder = 1210;
+
+  Socket_NS = 1300;
+  Socket_ReadEOF = 1301;
+  Socket_Read = 1302;
+  Socket_Write = 1303;
+  Socket_ParseIncoming = 1304;
+  Socket_WriteTooBig = 1305;
+  Socket_ReadTooBig = 1306;
+  Socket_WriteNotInitialized = 1307;
+
+  SocketMain_NS = 1400;
+  SocketMain_SocketCreation = 1401;
+  SocketMain_SocketBind = 1402;
+  SocketMain_SocketAccept = 1403;
+  SocketMain_SocketListen = 1404;
+  SocketMain_InboundNotInit = 1405;
+  SocketMain_InboundMessageParse = 1406;
+  SocketMain_InboundNotMessage = 1407;
+  SocketMain_UnsupportedSockType = 1408;
+  SocketMain_SocketSetOpt = 1409;
+
+  AttestationNitro_NS = 1500;
+  AttestationNitro_CborError = 1501;
+  AttestationNitro_CoseFormat = 1502;
+  AttestationNitro_CoseSignatureEncode = 1503;
+  AttestationNitro_AttestationParse = 1504;
+  AttestationNitro_CertificateDecode = 1505;
+  AttestationNitro_CryptoAllocate = 1506;
+  AttestationNitro_CryptoStoreInit = 1507;
+  AttestationNitro_CertificateChainVerify = 1508;
+  AttestationNitro_CryptoMessageDigest = 1509;
+  AttestationNitro_CoseSignatureVerify = 1510;
+  AttestationNitro_CertificateNotEC = 1511;
+
+  Sev_NS = 1600;
+  // Errors here have been removed due to removed code, up to 1603.
+
+  AttestationSEV_NS = 1700;
+  // Errors here have been removed due to removed code, up to 1716.
+  
+  Merkle_NS = 1800;
+  Merkle_VerifyLeaf = 1801;
+  Merkle_VerifyNode = 1802;
+
+  Minimums_NS = 1900;
+  Minimums_KeyMissing = 1901;
+  Minimums_LimitDecreased = 1902;
+  Minimums_SizeMismatch = 1903;
+  Minimums_EntryEmpty = 1904;
+  Minimums_KeyEmpty = 1905;
+  Minimums_ValueTooLow = 1906;
+  Minimums_ValueSize = 1907;
+  Minimums_ValueEmpty = 1908;
+
+  AttestationTPM2_NS = 2000;
+  // Errors here have been removed due to removed code, up to 2009.
+
+  AttestationTPM2SNP_NS = 2100;
+  // Errors here have been removed due to removed code, up to 2112.
+
+  GCPSNP_NS = 2200;
+  // Errors here have been removed due to removed code, up to 2205.
+
+  FS_NS = 2300;
+  FS_TmpDirAlreadyInitiated = 2301;
+  FS_Mkdir = 2302;
+  FS_OpenFile = 2303;
+
+  DB4_NS = 2400;
+  DB4_BackupIDSize = 2401;
+  DB4_ToplevelRequestType = 2402;
+  DB4_RequestInvalid = 2403;
+  DB4_LogRequestType = 2404;
+  DB4_Restore2StateMissing = 2405;
+  DB4_ReplicationInvalidRow = 2406;
+  DB4_LoadedRowsAlreadyInDB = 2407;
+  DB4_ReplicationOutOfOrder = 2408;
+
+  DB5_NS = 2500;
+  DB5_BackupIDSize = 2501;
+  DB5_LoadedRowsAlreadyInDB = 2502;
+  DB5_ReplicationOutOfOrder = 2503;
+  DB5_ReplicationInvalidRow = 2504;
+  DB5_ClientRequestCase = 2505;
+  DB5_ClientPasswordSize = 2506;
+  DB5_ClientDataSize = 2507;
+  DB5_ClientBackupIDSize = 2508;
+  DB5_InvalidRequestType = 2509;
+
+  AttestationSGX_NS = 2600;
+  AttestationSGX_MissingSignerId = 2601;
+  AttestationSGX_WrongSignerId = 2602;
+  AttestationSGX_MissingAttributes = 2603;
+  AttestationSGX_DebugEnabled = 2604;
+  AttestationSGX_MissingProductId = 2605;
+  AttestationSGX_WrongProductId = 2606;
+  AttestationSGX_MissingSecurityVersion = 2607;
+  AttestationSGX_WrongSecurityVersion = 2608;
+  AttestationSGX_MissingIdVersion = 2609;
+  AttestationSGX_WrongIdVersion = 2610;
+  AttestationSGX_RemoteCapable = 2611;
+};

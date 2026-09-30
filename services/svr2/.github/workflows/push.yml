@@ -1,0 +1,69 @@
+name: Build and push Docker image
+
+on:
+  release:
+    types: [published]
+
+env:
+  DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha
+  DOCKER_BUILDKIT: 1
+  BUILDX_CONTAINER: container
+  V: 1
+  MAKE_ARGS: GOFLAGS=-buildvcs=false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # This is required for requesting the JWT
+      contents: read  # This is required for actions/checkout
+
+    steps:
+      - name: Checkout main project
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Show releases
+        run: find enclave/releases -ls
+
+      - name: Expose Docker environmental variables for gha cache
+        # This action takes in the ID tokens etc provided by the permissions,
+        # as well as some environmental data, and exposes them to future steps
+        # in the correct locations and formats for their use with the `gha`
+        # GitHub Actions cache for Docker.
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+      - name: Setup Docker
+        run: docker buildx create --use --name container --driver docker-container
+
+      - name: 'Az CLI login'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # Azure Login Action v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 'Docker login'
+        run:
+          az acr login --name ${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}
+
+      # https://github.com/actions/runner-images/issues/2840#issuecomment-790492173
+      - name: Clear some disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Build binaries
+        run: |
+          make docker_enclave_test || make DOCKER_MAKE_ARGS=-j1 docker_enclave_test
+          make || make DOCKER_MAKE_ARGS=-j1
+
+      - name: Build and push container image
+        run: |
+          make enclave_release
+          docker tag svr2_sgxrun:latest "${{ secrets.REGISTRY_LOGIN_SERVER }}/svr2:${GITHUB_REF_NAME}"
+          docker push "${{ secrets.REGISTRY_LOGIN_SERVER }}/svr2:${GITHUB_REF_NAME}"

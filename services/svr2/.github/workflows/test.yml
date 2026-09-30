@@ -1,0 +1,44 @@
+name: CI
+on: [push]
+
+env:
+  DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha
+  DOCKER_BUILDKIT: 1
+  BUILDX_CONTAINER: container
+  V: 1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout main project
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Expose Docker environmental variables for gha cache
+        # This action takes in the ID tokens etc provided by the permissions,
+        # as well as some environmental data, and exposes them to future steps
+        # in the correct locations and formats for their use with the `gha`
+        # GitHub Actions cache for Docker.
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+      - name: Setup Docker
+        run: docker buildx create --use --name container --driver docker-container
+
+      - name: Test
+        run: make docker_enclave_test
+
+      - name: Build
+        run: make
+
+      - name: Validate
+        run: make docker_validate
+
+      - name: Valgrind
+        run: make docker_enclave_valgrind

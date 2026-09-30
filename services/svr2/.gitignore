@@ -1,0 +1,10 @@
+*.sw?
+.gocache
+.gopath
+.cargohome
+.cargotarget
+**/.devcontainer
+**/.vscode
+**/*.code-workspace
+.tool-versions
+.idea

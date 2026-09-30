@@ -1,0 +1,19 @@
+[package]
+name = "rustclient"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+snow = { version = "0.9.6", features = ["hfs", "pqclean_kyber1024"] }
+tokio-tungstenite = "0.26.2"
+prost = "0.13.1"
+simple-error = "0.3.1"
+base64 = "0.22.1"
+hmac = "0.12.1"
+sha2 = "0.10.8"
+hex = "0.4.3"
+
+[build-dependencies]
+prost-build = "0.13.1"
