@@ -1,0 +1,617 @@
+//
+// Copyright 2024 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import CryptoKit
+import Foundation
+
+/// Represents an attachment; a file on local disk and/or a pointer to a file on a CDN.
+public class Attachment {
+
+    public typealias IDType = Int64
+
+    /// SQLite row id.
+    public let id: IDType
+
+    /// For incoming attachments, the blurHash value sent alongside the pointer.
+    /// For outgoing attachments, generated locally.
+    /// Nil for non-visual media.
+    public let blurHash: String?
+
+    /// MIME type we get from the attachment's sender, known even before downloading the attachment.
+    /// **If undownloaded, unverified (spoofable by the sender) and may not match the type of the actual bytes.**
+    /// If downloaded, check ``AttachmentStream/contentType`` for a validated representation of the type..
+    public let mimeType: String
+
+    /// A reduction of `mimeType`.
+    public let contentType: ContentType
+
+    /// Encryption key used for the local file AND media tier.
+    /// If from an incoming message, we get this from the proto, and can reuse it for local and media backup encryption.
+    /// If outgoing, we generate the key ourselves when we create the attachment.
+    public var encryptionKey: Data
+
+    public var streamInfo: StreamInfo?
+
+    /// Information for the latest transit tier upload, if known to be uploaded.
+    /// The encryption key may not match the tip-level encryption key used for the local file;
+    /// they may differ if the attachment was reuploaded for forwarding.
+    public var latestTransitTierInfo: TransitTierInfo?
+
+    /// Information for a transit tier upload using the local encryption key, if known to be uploaded.
+    /// Always uses the local encryption key; will be nil if no upload at the same encryption key is known.
+    public var originalTransitTierInfo: TransitTierInfo?
+
+    /// Used for quoted reply thumbnail attachments.
+    /// The id of the quoted reply's target message's attachment that is to be thumbnail'ed.
+    /// Only relevant for non-streams. At "download" time instead of using the transit tier info
+    /// as the source we use the original attachment's file. Once this attachment is a stream,
+    /// this field should be set to nil (but should just be ignored regardless).
+    public let originalAttachmentIdForQuotedReply: Attachment.IDType?
+
+    /// Validated Sha256 hash of the plaintext of the media content. Used to deduplicate incoming media.
+    /// Nonnull if downloaded OR possibly if restored from a backup (which we trust to have validated).
+    public var plaintextHash: Data?
+
+    /// MediaName used for backups (but assigned even if backups disabled).
+    /// Nonnull if downloaded OR if restored from a backup.
+    public var mediaName: String? {
+        return self.plaintextHash.map {
+            return Attachment.mediaName(plaintextHash: $0, encryptionKey: self.encryptionKey)
+        }
+    }
+
+    /// If null, the resource has not been uploaded to the media tier.
+    public var mediaTierInfo: MediaTierInfo?
+
+    /// Not to be confused with thumbnails used for rendering, or those created for quoted message replies.
+    /// This thumbnail is exclusively used for backup purposes.
+    /// If null, the thumbnail resource has not been uploaded to the media tier.
+    public var thumbnailMediaTierInfo: ThumbnailMediaTierInfo?
+
+    /// Filepath to the encrypted thumbnail file on local disk.
+    /// Not to be confused with thumbnails used for rendering, or those created for quoted message replies.
+    /// This thumbnail is exclusively used for backup purposes.
+    public var localRelativeFilePathThumbnail: String?
+
+    /// The last time the user viewed this attachment ("fullscreen", which really means "not just scrolling past it
+    /// in a conversation"). Set if viewing in the media gallery, story viewer, etc.
+    /// Not set when viewing a thread wallpaper.
+    /// May not be set for e.g. attachments that were viewed before we started tracking this; do not use
+    /// this for anything that would rely on this being historically correct.
+    public var lastFullscreenViewTimestamp: UInt64?
+
+    // MARK: - Inner structs
+
+    /// Information supporting "streaming" video, which requires computing an
+    /// "incremental" MAC rather than one big HMAC verification on the
+    /// fully-downloaded file.
+    public struct IncrementalMacInfo: Equatable {
+        public let mac: Data
+        public let chunkSize: UInt32
+
+        // NOTE: Incremental mac is unsupported on iOS, the columns are
+        // vestigial. When we add video streaming support, we can make
+        // this init public and start setting it, but we must also
+        // validate the incremental mac on every download (streamed or not)
+        // and reject the download if it is invalid, thus ensuring the
+        // invariant that the incremental mac is valid if set
+        // for all downloaded attachments, same as the digest.
+        private init(mac: Data, chunkSize: UInt32) {
+            self.mac = mac
+            self.chunkSize = chunkSize
+        }
+    }
+
+    /// Information for the "stream" (the attachment downloaded and locally available).
+    public struct StreamInfo {
+        /// Sha256 hash of the plaintext of the media content. Used to deduplicate incoming media.
+        public let plaintextHash: Data
+
+        /// MediaName used for backups (but assigned even if backups disabled).
+        public let mediaName: String
+
+        /// Byte count of the encrypted fullsize resource
+        public let encryptedByteCount: UInt32
+        ///  Byte count of the decrypted fullsize resource
+        public let unencryptedByteCount: UInt32
+
+        /// A cached pixel size for this attachment, if it is visual media.
+        public var cachedMediaSizePixels: CGSize?
+
+        /// A cached duration for this attachment, if it is video.
+        public var cachedVideoDuration: TimeInterval?
+        /// A file path to a cached image file encrypted with this attachment's
+        /// `encryptionKey`, if it is video.
+        public var cachedVideoStillFrameRelativeFilePath: String?
+
+        /// A cached duration for this attachment, if it is audio.
+        public var cachedAudioDuration: TimeInterval?
+        /// A file path to a cached ``AudioWaveform`` file encrypted with this
+        /// attachment's `encryptionKey`, if it is audio.
+        public var cachedAudioWaveformRelativeFilePath: String?
+
+        /// File digest info.
+        ///
+        /// SHA256Hash(iv + cyphertext + hmac),
+        /// (iv + cyphertext + hmac) is the thing we actually upload to the CDN server, which uses
+        /// the ``encryptionKey`` field.
+        ///
+        /// Generated locally for outgoing attachments.
+        /// Validated for downloaded attachments.
+        public let ciphertextDigest: Data
+
+        /// Filepath to the encrypted fullsize media file on local disk.
+        public let localRelativeFilePath: String
+
+        init(pendingAttachment: PendingAttachment) {
+            self.init(
+                plaintextHash: pendingAttachment.plaintextHash,
+                encryptionKey: pendingAttachment.encryptionKey,
+                encryptedByteCount: pendingAttachment.encryptedByteCount,
+                unencryptedByteCount: pendingAttachment.unencryptedByteCount,
+                cachedMediaSizePixels: pendingAttachment.mediaPixelSize,
+                cachedVideoDuration: pendingAttachment.videoDuration,
+                cachedVideoStillFrameRelativeFilePath: pendingAttachment.videoStillFrameRelativeFilePath,
+                cachedAudioDuration: pendingAttachment.audioDuration,
+                cachedAudioWaveformRelativeFilePath: pendingAttachment.audioWaveformRelativeFilePath,
+                ciphertextDigest: pendingAttachment.ciphertextDigest,
+                localRelativeFilePath: pendingAttachment.localRelativeFilePath,
+            )
+        }
+
+        init(
+            plaintextHash: Data,
+            encryptionKey: Data,
+            encryptedByteCount: UInt32,
+            unencryptedByteCount: UInt32,
+            cachedMediaSizePixels: CGSize?,
+            cachedVideoDuration: TimeInterval?,
+            cachedVideoStillFrameRelativeFilePath: String?,
+            cachedAudioDuration: TimeInterval?,
+            cachedAudioWaveformRelativeFilePath: String?,
+            ciphertextDigest: Data,
+            localRelativeFilePath: String,
+        ) {
+            self.plaintextHash = plaintextHash
+            self.mediaName = Attachment.mediaName(plaintextHash: plaintextHash, encryptionKey: encryptionKey)
+            self.encryptedByteCount = encryptedByteCount
+            self.unencryptedByteCount = unencryptedByteCount
+            self.cachedMediaSizePixels = cachedMediaSizePixels
+            self.cachedVideoDuration = cachedVideoDuration
+            self.cachedVideoStillFrameRelativeFilePath = cachedVideoStillFrameRelativeFilePath
+            self.cachedAudioDuration = cachedAudioDuration
+            self.cachedAudioWaveformRelativeFilePath = cachedAudioWaveformRelativeFilePath
+            self.ciphertextDigest = ciphertextDigest
+            self.localRelativeFilePath = localRelativeFilePath
+        }
+    }
+
+    public struct TransitTierInfo: Equatable {
+        /// CDN number for the upload in the transit tier (or nil if not uploaded).
+        public let cdnNumber: UInt32
+
+        /// CDN key for the upload in the transit tier (or nil if not uploaded).
+        public let cdnKey: String
+
+        /// If outgoing: Local time the attachment was uploaded to the transit tier, or nil if not uploaded.
+        /// If incoming: timestamp on the message the attachment came in on.
+        /// Used to determine whether reuploading is necessary for e.g. forwarding.
+        public let uploadTimestamp: UInt64
+
+        /// Encryption key used on this transit tier upload.
+        /// May be the same as the local stream encryption key, or may have been rotated for sending.
+        public let encryptionKey: Data
+
+        /// Expected byte count after decrypting the resource off the transit tier (and removing padding).
+        /// Provided by the sender of incoming attachments.
+        public let unencryptedByteCount: UInt32
+
+        /// Generated locally for outgoing attachments.
+        /// For incoming attachments, taken off the service proto. If validation fails, the download is rejected.
+        public var integrityCheck: AttachmentIntegrityCheck
+
+        /// Incremental mac info used for streaming, if available. Only set for streamable types.
+        public let incrementalMacInfo: IncrementalMacInfo?
+
+        /// Timestamp we last tried (and failed) to download from the transit tier.
+        /// Nil if we have not tried or have successfully downloaded.
+        public var lastDownloadAttemptTimestamp: UInt64?
+    }
+
+    public struct MediaTierInfo {
+        /// CDN number for the fullsize upload in the media tier.
+        /// If nil, that means there _might_ be an upload from a prior device that happened after
+        /// that device generated the backup this was restored from. The cdn number (and presence
+        /// of the upload) can be discovered via the list endpoint.
+        public let cdnNumber: UInt32?
+
+        /// Expected byte count after decrypting the resource off the media tier (and removing padding).
+        /// Provided by the sender of incoming attachments.
+        public let unencryptedByteCount: UInt32
+
+        /// Sha256 hash of the plaintext of the media content.
+        ///
+        /// Equivalent to `StreamInfo.plaintextHash`, but may be available
+        /// if the rest of `StreamInfo` is unavailable (e.g. after a restore).
+        public let plaintextHash: Data
+
+        /// Incremental mac info used for streaming, if available. Only set for streamable mime types.
+        public let incrementalMacInfo: IncrementalMacInfo?
+
+        /// If the value in this column doesn’t match the current Backup Subscription Era,
+        /// it should also be considered un-uploaded.
+        /// Set to the current era when uploaded.
+        public let uploadEra: String
+
+        /// Timestamp we last tried (and failed) to download from the media tier.
+        /// Nil if we have not tried or have successfully downloaded.
+        public var lastDownloadAttemptTimestamp: UInt64?
+    }
+
+    public struct ThumbnailMediaTierInfo {
+        /// CDN number for the thumbnail upload in the media tier.
+        /// If nil, that means there _might_ be an upload from a prior device that happened after
+        /// that device generated the backup this was restored from. The cdn number (and presence
+        /// of the upload) can be discovered via the list endpoint.
+        public let cdnNumber: UInt32?
+
+        /// If the value in this column doesn’t match the current Backup Subscription Era,
+        /// it should also be considered un-uploaded.
+        /// Set to the current era when uploaded.
+        public let uploadEra: String
+
+        /// Timestamp we last tried (and failed) to download the thumbnail from the media tier.
+        /// Nil if we have not tried or have successfully downloaded.
+        public var lastDownloadAttemptTimestamp: UInt64?
+    }
+
+    // MARK: - Init
+
+    init(record: Attachment.Record) {
+        guard let id = record.sqliteId else {
+            owsFail("Attachment can only be instantiated from a record with an ID!")
+        }
+
+        self.id = id
+        self.blurHash = record.blurHash
+        self.mimeType = record.mimeType
+        self.contentType = record.contentType
+        self.encryptionKey = record.encryptionKey
+        self.originalAttachmentIdForQuotedReply = record.originalAttachmentIdForQuotedReply
+        self.plaintextHash = record.plaintextHash
+        self.localRelativeFilePathThumbnail = record.localRelativeFilePathThumbnail
+        self.lastFullscreenViewTimestamp = record.lastFullscreenViewTimestamp
+
+        if
+            let plaintextHash = record.plaintextHash,
+            let encryptedByteCount = record.encryptedByteCount,
+            let unencryptedByteCount = record.unencryptedByteCount,
+            let ciphertextDigest = record.ciphertextDigest,
+            let localRelativeFilePath = record.localRelativeFilePath
+        {
+            self.streamInfo = StreamInfo(
+                plaintextHash: plaintextHash,
+                encryptionKey: self.encryptionKey,
+                encryptedByteCount: encryptedByteCount,
+                unencryptedByteCount: unencryptedByteCount,
+                cachedMediaSizePixels: {
+                    if
+                        let width = record.cachedMediaWidthPixels.map({ Int($0) }),
+                        let height = record.cachedMediaHeightPixels.map({ Int($0) })
+                    {
+                        return CGSize(width: width, height: height)
+                    } else {
+                        return nil
+                    }
+                }(),
+                cachedVideoDuration: record.cachedVideoDurationSeconds,
+                cachedVideoStillFrameRelativeFilePath: record.videoStillFrameRelativeFilePath,
+                cachedAudioDuration: record.cachedAudioDurationSeconds,
+                cachedAudioWaveformRelativeFilePath: record.audioWaveformRelativeFilePath,
+                ciphertextDigest: ciphertextDigest,
+                localRelativeFilePath: localRelativeFilePath,
+            )
+        } else {
+            self.streamInfo = nil
+        }
+
+        let latestTransitTierInfo = TransitTierInfo(
+            cdnNumber: record.latestTransitCdnNumber,
+            cdnKey: record.latestTransitCdnKey,
+            uploadTimestamp: record.latestTransitUploadTimestamp,
+            encryptionKey: record.latestTransitEncryptionKey,
+            unencryptedByteCount: record.latestTransitUnencryptedByteCount,
+            ciphertextDigest: record.latestTransitCiphertextDigest,
+            plaintextHash: record.plaintextHash,
+            lastDownloadAttemptTimestamp: record.latestTransitLastDownloadAttemptTimestamp,
+            incrementalMac: record.latestTransitTierIncrementalMac,
+            incrementalMacChunkSize: record.latestTransitTierIncrementalMacChunkSize,
+        )
+        self.latestTransitTierInfo = latestTransitTierInfo
+
+        // At read time, we populate "original" transit tier info with _any_ transit
+        // tier info we have in the database row that matches the encryption key.
+        if
+            // If we have a latest transit info on disk
+            let latestTransitTierInfo,
+            // It uses the primary encryption key
+            latestTransitTierInfo.encryptionKey == encryptionKey,
+            // And represents the same file (same iv -> same digest,
+            // or we have no local digest which means we will use the
+            // transit download as the file when its done, or we have
+            // only plaintext integrity check which means it always matches.)
+
+            record.latestTransitCiphertextDigest == record.ciphertextDigest
+            || record.ciphertextDigest == nil
+            || record.latestTransitCiphertextDigest == nil
+
+        {
+            self.originalTransitTierInfo = latestTransitTierInfo
+        } else {
+            self.originalTransitTierInfo = TransitTierInfo(
+                cdnNumber: record.originalTransitCdnNumber,
+                cdnKey: record.originalTransitCdnKey,
+                uploadTimestamp: record.originalTransitUploadTimestamp,
+                encryptionKey: record.encryptionKey,
+                unencryptedByteCount: record.originalTransitUnencryptedByteCount,
+                ciphertextDigest: record.originalTransitCiphertextDigest,
+                plaintextHash: record.plaintextHash,
+                lastDownloadAttemptTimestamp: nil,
+                incrementalMac: record.originalTransitTierIncrementalMac,
+                incrementalMacChunkSize: record.originalTransitTierIncrementalMacChunkSize,
+            )
+        }
+        self.mediaTierInfo = MediaTierInfo(
+            cdnNumber: record.mediaTierCdnNumber,
+            unencryptedByteCount: record.mediaTierUnencryptedByteCount ?? record.unencryptedByteCount,
+            plaintextHash: record.plaintextHash,
+            uploadEra: record.mediaTierUploadEra,
+            lastDownloadAttemptTimestamp: record.lastMediaTierDownloadAttemptTimestamp,
+            incrementalMac: record.mediaTierIncrementalMac,
+            incrementalMacChunkSize: record.mediaTierIncrementalMacChunkSize,
+        )
+        self.thumbnailMediaTierInfo = ThumbnailMediaTierInfo(
+            cdnNumber: record.thumbnailCdnNumber,
+            uploadEra: record.thumbnailUploadEra,
+            lastDownloadAttemptTimestamp: record.lastThumbnailDownloadAttemptTimestamp,
+        )
+    }
+
+    public func asStream() -> AttachmentStream? {
+        return AttachmentStream(attachment: self)
+    }
+
+    public func asTransitTierPointer() -> AttachmentTransitPointer? {
+        return AttachmentTransitPointer(attachment: self)
+    }
+
+    public func asBackupTierPointer() -> AttachmentBackupPointer? {
+        return AttachmentBackupPointer(attachment: self)
+    }
+
+    public func asAnyPointer() -> AttachmentPointer? {
+        return AttachmentPointer(attachment: self)
+    }
+
+    public func asBackupThumbnail() -> AttachmentBackupThumbnail? {
+        return AttachmentBackupThumbnail(attachment: self)
+    }
+
+    public static func mediaName(plaintextHash: Data, encryptionKey: Data) -> String {
+        // We use the hexadecimal-encoded [plaintext hash | encryptionKey] as the media name.
+        // This ensures media name collisions occur only between the
+        // same attachment contents encrypted with the same key.
+        var mediaName = Data()
+        mediaName.append(plaintextHash)
+        mediaName.append(encryptionKey)
+        return mediaName.hexadecimalString
+    }
+
+    /// Unencrypted byte count on CDN of the fullsize attachment _before_ encryption and padding,
+    /// as obtained either from the sender or ourselves.
+    /// Media and transit tier byte counts should be interchangeable.
+    /// Still, we shouldn't rely on this for anything critical; assume the value can be spoofed.
+    /// Safe to use for size estimation, UI progress display, etc.
+    public var anyPointerFullsizeUnencryptedByteCount: UInt32? {
+        return mediaTierInfo?.unencryptedByteCount ?? latestTransitTierInfo?.unencryptedByteCount
+    }
+
+    public enum TransitUploadStrategy {
+        case reuseExistingUpload(Upload.ReusedUploadMetadata)
+        case reuseStreamEncryption(Upload.LocalUploadMetadata)
+        case freshUpload(AttachmentStream)
+        case missingLocalFile
+    }
+
+    public func transitUploadStrategy(dateProvider: DateProvider) -> TransitUploadStrategy {
+        // We never allow uploads of data we don't have locally.
+        guard let stream = self.asStream() else {
+            return .missingLocalFile
+        }
+
+        let metadata = Upload.LocalUploadMetadata(
+            fileUrl: stream.fileURL,
+            key: encryptionKey,
+            digest: stream.ciphertextDigest,
+            encryptedDataLength: stream.encryptedByteCount,
+            plaintextDataLength: stream.unencryptedByteCount,
+        )
+
+        if
+            // We have a prior upload
+            let latestTransitTierInfo,
+            // That upload includes a digest (if we restore from a backup
+            // with no digest, we can't forward that transit tier info
+            // even though we know about it and its maybe recent).
+            case .ciphertextDigest(let digest) = latestTransitTierInfo.integrityCheck,
+            // And we are still in the window to reuse it
+            dateProvider().timeIntervalSince(
+                Date(millisecondsSince1970: latestTransitTierInfo.uploadTimestamp),
+            ) <= Upload.Constants.uploadReuseWindow
+        {
+            // We have unexpired transit tier info. Reuse that upload.
+            return .reuseExistingUpload(
+                .init(
+                    cdnKey: latestTransitTierInfo.cdnKey,
+                    cdnNumber: latestTransitTierInfo.cdnNumber,
+                    key: latestTransitTierInfo.encryptionKey,
+                    digest: digest,
+                    plaintextDataLength: latestTransitTierInfo.unencryptedByteCount,
+                    // Encrypted length is the same regardless of the key used.
+                    encryptedDataLength: metadata.encryptedDataLength,
+                ),
+            )
+        } else if
+            // This device has never uploaded
+            latestTransitTierInfo == nil,
+            // No media tier info either
+            mediaTierInfo == nil
+        {
+            // Reuse our local encryption for sending.
+            // Without this, we'd have to reupload all our outgoing attacments
+            // in order to copy them to the media tier.
+            return .reuseStreamEncryption(metadata)
+        } else {
+            // Upload from scratch
+            return .freshUpload(stream)
+        }
+    }
+}
+
+// MARK: -
+
+private extension Attachment.TransitTierInfo {
+    init?(
+        cdnNumber: UInt32?,
+        cdnKey: String?,
+        uploadTimestamp: UInt64?,
+        encryptionKey: Data?,
+        unencryptedByteCount: UInt32?,
+        ciphertextDigest: Data?,
+        plaintextHash: Data?,
+        lastDownloadAttemptTimestamp: UInt64?,
+        incrementalMac: Data?,
+        incrementalMacChunkSize: UInt32?,
+    ) {
+        let integrityCheck: AttachmentIntegrityCheck?
+        if let ciphertextDigest {
+            // This is slightly load-bearing but we want to use digest if we
+            // have it because we can only _send_ attachments with digests.
+            // Other mechanisms will ensure we never get to the send flow
+            // without first doing a transit tier upload that sets the
+            // digest, so we just have to ensure we _read_ that digest here
+            // instead of the plaintext hash.
+            integrityCheck = .ciphertextDigest(ciphertextDigest)
+        } else if let plaintextHash {
+            integrityCheck = .plaintextHash(plaintextHash)
+        } else {
+            integrityCheck = nil
+        }
+        guard
+            let cdnNumber,
+            let cdnKey,
+            let uploadTimestamp,
+            let encryptionKey,
+            let integrityCheck
+        else {
+            // Don't include encryptionKey/plaintextHash here; they're provided
+            // sometimes. Do include unencryptedByteCount here because it's optional
+            // but should never be present when the required fields are missing.
+            owsAssertDebug(
+                cdnNumber == nil
+                    && cdnKey == nil
+                    && uploadTimestamp == nil
+                    && unencryptedByteCount == nil
+                    && ciphertextDigest == nil,
+                "Have partial transit cdn info!",
+            )
+            return nil
+        }
+        self.cdnNumber = cdnNumber
+        self.cdnKey = cdnKey
+        self.uploadTimestamp = uploadTimestamp
+        self.lastDownloadAttemptTimestamp = lastDownloadAttemptTimestamp
+        self.encryptionKey = encryptionKey
+        // Old clients may have incorrectly persisted `nil` when `0` was provided.
+        self.unencryptedByteCount = unencryptedByteCount ?? 0
+        self.integrityCheck = integrityCheck
+        if let incrementalMac, let incrementalMacChunkSize {
+            self.incrementalMacInfo = .init(mac: incrementalMac, chunkSize: incrementalMacChunkSize)
+        } else {
+            owsAssertDebug(
+                incrementalMac == nil && incrementalMacChunkSize == nil,
+                "Have partial transit tier incremental mac info!",
+            )
+            self.incrementalMacInfo = nil
+        }
+    }
+}
+
+private extension Attachment.MediaTierInfo {
+    init?(
+        cdnNumber: UInt32?,
+        unencryptedByteCount: UInt32?,
+        plaintextHash: Data?,
+        uploadEra: String?,
+        lastDownloadAttemptTimestamp: UInt64?,
+        incrementalMac: Data?,
+        incrementalMacChunkSize: UInt32?,
+    ) {
+        guard
+            let uploadEra,
+            let unencryptedByteCount,
+            let plaintextHash
+        else {
+            return nil
+        }
+        self.cdnNumber = cdnNumber
+        self.unencryptedByteCount = unencryptedByteCount
+        self.plaintextHash = plaintextHash
+        self.uploadEra = uploadEra
+        self.lastDownloadAttemptTimestamp = lastDownloadAttemptTimestamp
+        if let incrementalMac, let incrementalMacChunkSize {
+            self.incrementalMacInfo = .init(mac: incrementalMac, chunkSize: incrementalMacChunkSize)
+        } else {
+            owsAssertDebug(
+                incrementalMac == nil && incrementalMacChunkSize == nil,
+                "Have partial media tier incremental mac info!",
+            )
+            self.incrementalMacInfo = nil
+        }
+    }
+}
+
+private extension Attachment.ThumbnailMediaTierInfo {
+    init?(
+        cdnNumber: UInt32?,
+        uploadEra: String?,
+        lastDownloadAttemptTimestamp: UInt64?,
+    ) {
+        guard
+            let uploadEra
+        else {
+            owsAssertDebug(
+                uploadEra == nil,
+                "Have partial thumbnail media cdn info!",
+            )
+            return nil
+        }
+        self.cdnNumber = cdnNumber
+        self.uploadEra = uploadEra
+        self.lastDownloadAttemptTimestamp = lastDownloadAttemptTimestamp
+    }
+}
+
+private extension Attachment.IncrementalMacInfo {
+    init?(
+        mac: Data?,
+        chunkSize: UInt32?,
+    ) {
+        guard let mac, let chunkSize else { return nil }
+
+        self.mac = mac
+        self.chunkSize = chunkSize
+    }
+}

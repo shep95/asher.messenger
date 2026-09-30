@@ -1,0 +1,1211 @@
+//
+// Copyright 2020 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import ContactsUI
+import LibSignalClient
+import SignalServiceKit
+import SignalUI
+
+public enum ConversationSettingsPresentationMode: UInt {
+    case `default`
+    case showVerification
+    case showMemberRequests
+    case showAllMedia
+}
+
+// MARK: -
+
+public protocol ConversationSettingsViewDelegate: AnyObject {
+    func conversationSettingsDidRequestConversationSearch()
+    func deleteConversation()
+    func toggleConversationArchived()
+}
+
+// MARK: -
+
+class ConversationSettingsViewController: OWSTableViewController2, BadgeCollectionDataSource, MemberLabelViewControllerPresenter {
+
+    weak var conversationSettingsViewDelegate: ConversationSettingsViewDelegate?
+
+    private(set) var threadViewModel: ThreadViewModel
+    private(set) var isSystemContact: Bool
+    let spoilerState: SpoilerRenderState
+    private(set) var callRecords: [CallRecord]
+    typealias CallExpiration = CallsListViewController.CallViewModel.CallExpiration
+    let callExpirations: [CallRecord.ID: CallExpiration]
+    let isCallDetails: Bool
+    var memberLabelCoordinator: MemberLabelCoordinator?
+
+    let backgroundContainer = CVBackgroundContainer()
+
+    var thread: TSThread {
+        threadViewModel.threadRecord
+    }
+
+    // Group model reflecting the last known group state.
+    // This is updated as we change group membership, etc.
+    var currentGroupModel: TSGroupModel? {
+        guard let groupThread = thread as? TSGroupThread else {
+            return nil
+        }
+        return groupThread.groupModel
+    }
+
+    var groupViewHelper: GroupViewHelper
+
+    var showVerificationOnAppear = false
+
+    var disappearingMessagesConfiguration: DisappearingMessagesConfigurationRecord
+    var avatarView: ConversationAvatarView?
+
+    var isShowingAllGroupMembers = false
+    var isShowingAllMutualGroups = false
+
+    var shouldRefreshAttachmentsOnReappear = false
+
+    init(
+        threadViewModel: ThreadViewModel,
+        isSystemContact: Bool,
+        spoilerState: SpoilerRenderState,
+        callRecords: [CallRecord] = [],
+        callExpirations: [CallRecord.ID: CallExpiration] = [:],
+        memberLabelCoordinator: MemberLabelCoordinator?,
+    ) {
+        self.threadViewModel = threadViewModel
+        self.isSystemContact = isSystemContact
+        self.spoilerState = spoilerState
+        self.callRecords = callRecords
+        self.callExpirations = callExpirations
+        // Set this now because it's still a call details page
+        // even if the calls disappear while it's open.
+        self.isCallDetails = !callRecords.isEmpty
+        self.memberLabelCoordinator = memberLabelCoordinator
+        groupViewHelper = GroupViewHelper(threadViewModel: threadViewModel, memberLabelCoordinator: memberLabelCoordinator)
+
+        disappearingMessagesConfiguration = SSKEnvironment.shared.databaseStorageRef.read { tx in
+            let dmConfigurationStore = DependenciesBridge.shared.disappearingMessagesConfigurationStore
+            return dmConfigurationStore.fetchOrBuildDefault(for: .thread(threadViewModel.threadRecord), tx: tx)
+        }
+
+        super.init()
+
+        AppEnvironment.shared.callService.callServiceState.addObserver(self, syncStateImmediately: false)
+        DependenciesBridge.shared.databaseChangeObserver.appendDatabaseChangeDelegate(self)
+        SUIEnvironment.shared.contactsViewHelperRef.addObserver(self)
+        groupViewHelper.delegate = self
+    }
+
+    private func observeNotifications() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(identityStateDidChange(notification:)),
+            name: .identityStateDidChange,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(otherUsersProfileDidChange(notification:)),
+            name: UserProfileNotifications.otherUsersProfileDidChange,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(profileWhitelistDidChange(notification:)),
+            name: UserProfileNotifications.profileWhitelistDidChange,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(blocklistDidChange(notification:)),
+            name: BlockingManager.blockListDidChange,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(attachmentsAddedOrRemoved(notification:)),
+            name: MediaGalleryChangeInfo.newAttachmentsAvailableNotification,
+            object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(attachmentsAddedOrRemoved(notification:)),
+            name: MediaGalleryChangeInfo.didRemoveAttachmentsNotification,
+            object: nil,
+        )
+    }
+
+    // MARK: - Accessors
+
+    var isGroupV1Thread: Bool {
+        groupViewHelper.isGroupV1Thread
+    }
+
+    var canEditConversationAttributes: Bool {
+        groupViewHelper.canEditConversationAttributes
+    }
+
+    var canEditConversationMembership: Bool {
+        groupViewHelper.canEditConversationMembership
+    }
+
+    // Can local user edit group access.
+    var canEditPermissions: Bool {
+        groupViewHelper.canEditPermissions
+    }
+
+    var isLocalUserFullMember: Bool {
+        groupViewHelper.isLocalUserFullMember
+    }
+
+    var isLocalUserFullOrInvitedMember: Bool {
+        groupViewHelper.isLocalUserFullOrInvitedMember
+    }
+
+    var isGroupThread: Bool {
+        thread.isGroupThread
+    }
+
+    var isTerminatedGroup: Bool {
+        groupViewHelper.isTerminatedGroup
+    }
+
+    // MARK: - View Lifecycle
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        defaultSeparatorInsetLeading = Self.cellHInnerMargin + 24 + OWSTableItem.iconSpacing
+
+        tableView.register(ContactTableViewCell.self, forCellReuseIdentifier: ContactTableViewCell.reuseIdentifier)
+
+        observeNotifications()
+
+        DependenciesBridge.shared.db.read { tx in
+            updateRecentAttachments(tx: tx)
+            updateMutualGroupThreads(tx: tx)
+        }
+        reloadThreadAndUpdateContent()
+
+        updateNavigationBar()
+
+        if thread.isReleaseNotesThread {
+            // Makes tableView clear so the wallpaper can show through.
+            backgroundStyle = .clear
+
+            if Theme.isDarkThemeEnabled {
+                overrideCellBackgroundColor = UIColor(rgbHex: 0x424757, alpha: 1)
+            }
+
+            let backgroundContainer = self.backgroundContainer
+            view.insertSubview(backgroundContainer, belowSubview: tableView)
+            backgroundContainer.autoPinEdgesToSuperviewEdges()
+            backgroundContainer.set(wallpaperView: WallpaperViewBuilder.releaseNotes.build())
+        }
+    }
+
+    func updateNavigationBar() {
+        guard canEditConversationAttributes, isGroupThread, !isTerminatedGroup else {
+            navigationItem.rightBarButtonItem = nil
+            return
+        }
+
+        navigationItem.rightBarButtonItem = .systemItem(.edit) { [weak self] in
+            guard let self else { return }
+            owsAssertDebug(self.canEditConversationAttributes)
+            self.showGroupAttributesView(editAction: .none)
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        if showVerificationOnAppear {
+            showVerificationOnAppear = false
+            if isGroupThread {
+                showAllGroupMembers()
+            } else {
+                showVerificationView()
+            }
+        }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        if let selectedPath = tableView.indexPathForSelectedRow {
+            // HACK to unselect rows when swiping back
+            // http://stackoverflow.com/questions/19379510/uitableviewcell-doesnt-get-deselected-when-swiping-back-quickly
+            tableView.deselectRow(at: selectedPath, animated: animated)
+        }
+
+        if shouldRefreshAttachmentsOnReappear {
+            DependenciesBridge.shared.db.read { tx in
+                updateRecentAttachments(tx: tx)
+            }
+        }
+        updateTableContents()
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate { _ in } completion: { _ in
+            self.updateTableContents()
+        }
+    }
+
+    /// The base implementation of this reloads the table contents, which does
+    /// not update header/footer views. Since we need those to be updated, we
+    /// instead recreate the table contents wholesale.
+    override func themeDidChange() {
+        super.themeDidChange()
+        updateTableContents()
+    }
+
+    /// The base implementation of this reloads the table contents, which does
+    /// not update header/footer views. Since we need those to be updated, we
+    /// instead recreate the table contents wholesale.
+    override func contentSizeCategoryDidChange() {
+        super.contentSizeCategoryDidChange()
+        updateTableContents()
+    }
+
+    // iOS 26 adds a large leading safe area under the side column in split
+    // views. The safe area isn't updated right away so the header gets squished
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateTableContents()
+    }
+
+    // MARK: -
+
+    private(set) var groupMemberStateMap = [SignalServiceAddress: VerificationState]()
+    private(set) var sortedGroupMembers = [SignalServiceAddress]()
+    func updateGroupMembers(transaction tx: DBReadTransaction) {
+        guard
+            let groupModel = currentGroupModel,
+            !groupModel.isPlaceholder,
+            let localAddress = DependenciesBridge.shared.tsAccountManager.localIdentifiersWithMaybeSneakyTransaction?.aciAddress
+        else {
+            groupMemberStateMap = [:]
+            sortedGroupMembers = []
+            return
+        }
+
+        let groupMembership = groupModel.groupMembership
+        let allMembers = groupMembership.fullMembers
+        var allMembersSorted = [SignalServiceAddress]()
+        var verificationStateMap = [SignalServiceAddress: VerificationState]()
+
+        let identityManager = DependenciesBridge.shared.identityManager
+        for memberAddress in allMembers {
+            verificationStateMap[memberAddress] = identityManager.verificationState(for: memberAddress, tx: tx)
+        }
+        allMembersSorted = SSKEnvironment.shared.contactManagerImplRef.sortSignalServiceAddresses(allMembers, transaction: tx)
+
+        var membersToRender = [SignalServiceAddress]()
+        if groupMembership.isFullMember(localAddress) {
+            // Make sure local user is first.
+            membersToRender.insert(localAddress, at: 0)
+        }
+        // Admin users are second.
+        let adminMembers = allMembersSorted.filter { $0 != localAddress && groupMembership.isFullMemberAndAdministrator($0) }
+        membersToRender += adminMembers
+        // Non-admin users are third.
+        let nonAdminMembers = allMembersSorted.filter { $0 != localAddress && !groupMembership.isFullMemberAndAdministrator($0) }
+        membersToRender += nonAdminMembers
+
+        self.groupMemberStateMap = verificationStateMap
+        self.sortedGroupMembers = membersToRender
+    }
+
+    func reloadThreadAndUpdateContent() {
+        var groupNameColors: GroupNameColors?
+        let didUpdate = SSKEnvironment.shared.databaseStorageRef.read { tx -> Bool in
+            guard let newThread = TSThread.fetchViaCache(uniqueId: self.thread.uniqueId, transaction: tx) else {
+                return false
+            }
+            let newThreadViewModel = ThreadViewModel(thread: newThread, forChatList: false, transaction: tx)
+            self.threadViewModel = newThreadViewModel
+            self.isSystemContact = {
+                guard let contactThread = newThread as? TSContactThread else {
+                    return false
+                }
+                let address = contactThread.contactAddress
+                return SSKEnvironment.shared.contactManagerRef.fetchSignalAccount(for: address, transaction: tx) != nil
+            }()
+            groupNameColors = GroupNameColors.forThread(newThread)
+
+            self.groupViewHelper = GroupViewHelper(threadViewModel: newThreadViewModel, memberLabelCoordinator: memberLabelCoordinator)
+            self.groupViewHelper.delegate = self
+
+            self.updateGroupMembers(transaction: tx)
+
+            return true
+        }
+
+        if !didUpdate {
+            owsFailDebug("Invalid thread.")
+            navigationController?.popViewController(animated: true)
+            return
+        }
+
+        updateTableContents()
+        updateNavigationBar()
+
+        if
+            let groupModelV2 = currentGroupModel as? TSGroupModelV2,
+            let groupNameColors
+        {
+            self.memberLabelCoordinator?.updateWithNewThreadInfo(
+                groupModel: groupModelV2,
+                groupNameColors: groupNameColors,
+            )
+        }
+    }
+
+    // MARK: -
+
+    func didSelectGroupMember(_ memberAddress: SignalServiceAddress) {
+        guard memberAddress.isValid else {
+            owsFailDebug("Invalid address.")
+            return
+        }
+
+        var memberLabel: MemberLabelForRendering?
+        if
+            let groupThread = thread as? TSGroupThread,
+            let memberAci = memberAddress.aci,
+            let memberLabelString = groupThread.groupModel.groupMembership.memberLabel(for: memberAci)?.labelForRendering()
+        {
+            let groupNameColors = GroupNameColors.forThread(groupThread)
+            memberLabel = MemberLabelForRendering(label: memberLabelString, groupNameColor: groupNameColors.color(for: memberAci))
+        }
+
+        ProfileSheetSheetCoordinator(
+            address: memberAddress,
+            groupViewHelper: groupViewHelper,
+            spoilerState: spoilerState,
+            memberLabel: memberLabel,
+        )
+        .presentAppropriateSheet(from: self)
+    }
+
+    func showAddToSystemContactsActionSheet(contactThread: TSContactThread) {
+        let actionSheet = ActionSheetController()
+        let createNewTitle = OWSLocalizedString(
+            "CONVERSATION_SETTINGS_NEW_CONTACT",
+            comment: "Label for 'new contact' button in conversation settings view.",
+        )
+        actionSheet.addAction(ActionSheetAction(
+            title: createNewTitle,
+            style: .default,
+            handler: { [weak self] _ in
+                self?.presentCreateOrEditContactViewController(address: contactThread.contactAddress, editImmediately: true)
+            },
+        ))
+
+        let addToExistingTitle = OWSLocalizedString(
+            "CONVERSATION_SETTINGS_ADD_TO_EXISTING_CONTACT",
+            comment: "Label for 'new contact' button in conversation settings view.",
+        )
+        actionSheet.addAction(ActionSheetAction(
+            title: addToExistingTitle,
+            style: .default,
+            handler: { [weak self] _ in
+                self?.presentAddToExistingContactFlow(address: contactThread.contactAddress)
+            },
+        ))
+
+        actionSheet.addAction(OWSActionSheets.cancelAction)
+
+        presentActionSheet(actionSheet)
+    }
+
+    // MARK: - Actions
+
+    func presentStoryViewController() {
+        let vc = StoryPageViewController(context: thread.storyContext, spoilerState: spoilerState)
+        present(vc, animated: true)
+    }
+
+    func didTapBadge() {
+        guard avatarView != nil else { return }
+        presentPrimaryBadgeSheet()
+    }
+
+    func showVerificationView() {
+        guard let contactThread = thread as? TSContactThread else {
+            owsFailDebug("Invalid thread.")
+            return
+        }
+        let contactAddress = contactThread.contactAddress
+        FingerprintViewController.present(for: contactAddress.aci, from: self)
+    }
+
+    func showColorAndWallpaperSettingsView() {
+        let vc = ColorAndWallpaperSettingsViewController(thread: thread)
+        navigationController?.pushViewController(vc, animated: true)
+    }
+
+    func showSoundAndNotificationsSettingsView() {
+        let vc = SoundAndNotificationsSettingsViewController(threadViewModel: threadViewModel)
+        navigationController?.pushViewController(vc, animated: true)
+    }
+
+    func showPermissionsSettingsView() {
+        let vc = GroupPermissionsSettingsViewController(threadViewModel: threadViewModel, delegate: self)
+        presentFormSheet(OWSNavigationController(rootViewController: vc), animated: true)
+    }
+
+    func showAllGroupMembers(revealingIndices: [IndexPath]? = nil) {
+        isShowingAllGroupMembers = true
+        updateForSeeAll(revealingIndices: revealingIndices)
+    }
+
+    func showAllMutualGroups(revealingIndices: [IndexPath]? = nil) {
+        isShowingAllMutualGroups = true
+        updateForSeeAll(revealingIndices: revealingIndices)
+    }
+
+    func updateForSeeAll(revealingIndices: [IndexPath]? = nil) {
+        if let revealingIndices, !revealingIndices.isEmpty, let firstIndex = revealingIndices.first {
+            tableView.beginUpdates()
+
+            // Delete the "See All" row.
+            tableView.deleteRows(at: [IndexPath(row: firstIndex.row, section: firstIndex.section)], with: .top)
+
+            // Insert the new rows.
+            tableView.insertRows(at: revealingIndices, with: .top)
+
+            updateTableContents(shouldReload: false)
+            tableView.endUpdates()
+        } else {
+            updateTableContents()
+        }
+    }
+
+    func showGroupAttributesView(editAction: GroupAttributesViewController.EditAction) {
+        guard canEditConversationAttributes else {
+            owsFailDebug("!canEditConversationAttributes")
+            return
+        }
+
+        assert(conversationSettingsViewDelegate != nil)
+
+        guard let groupThread = thread as? TSGroupThread else {
+            owsFailDebug("Invalid thread.")
+            return
+        }
+        let groupAttributesViewController = GroupAttributesViewController(
+            groupThread: groupThread,
+            editAction: editAction,
+            delegate: self,
+        )
+        navigationController?.pushViewController(groupAttributesViewController, animated: true)
+    }
+
+    func showAddMembersView() {
+        guard canEditConversationMembership else {
+            owsFailDebug("Can't edit membership.")
+            return
+        }
+        guard
+            let groupThread = thread as? TSGroupThread,
+            let groupModel = groupThread.groupModel as? TSGroupModelV2
+        else {
+            owsFailDebug("Invalid thread.")
+            return
+        }
+        let addGroupMembersViewController = AddGroupMembersViewController(groupThread: groupThread, groupModel: groupModel)
+        addGroupMembersViewController.addGroupMembersViewControllerDelegate = self
+        navigationController?.pushViewController(addGroupMembersViewController, animated: true)
+    }
+
+    func showGroupMemberSearch() {
+        guard let groupModel = currentGroupModel as? TSGroupModelV2 else {
+            owsFailDebug("Invalid group model.")
+            return
+        }
+        let viewController = GroupMemberSearchViewController(
+            groupModel: groupModel,
+            thread: thread,
+            groupViewHelper: groupViewHelper,
+            spoilerState: spoilerState,
+            canEditConversationMembership: canEditConversationMembership,
+            isTerminatedGroup: isTerminatedGroup,
+            delegate: self,
+        )
+        presentFormSheet(OWSNavigationController(rootViewController: viewController), animated: true)
+    }
+
+    func showAddToGroupView() {
+        guard let thread = thread as? TSContactThread else {
+            return owsFailDebug("Tried to present for unexpected thread")
+        }
+        let vc = AddToGroupViewController(address: thread.contactAddress)
+        presentFormSheet(OWSNavigationController(rootViewController: vc), animated: true)
+    }
+
+    func showMemberRequestsAndInvitesView() {
+        guard let viewController = buildMemberRequestsAndInvitesView() else {
+            owsFailDebug("Invalid thread.")
+            return
+        }
+        navigationController?.pushViewController(viewController, animated: true)
+    }
+
+    func buildMemberRequestsAndInvitesView() -> UIViewController? {
+        guard let groupThread = thread as? TSGroupThread else {
+            owsFailDebug("Invalid thread.")
+            return nil
+        }
+        let groupMemberRequestsAndInvitesViewController = GroupMemberRequestsAndInvitesViewController(
+            groupThread: groupThread,
+            groupViewHelper: groupViewHelper,
+            spoilerState: spoilerState,
+        )
+        groupMemberRequestsAndInvitesViewController.groupMemberRequestsAndInvitesViewControllerDelegate = self
+        return groupMemberRequestsAndInvitesViewController
+    }
+
+    func showGroupLinkView() {
+        guard
+            let groupThread = thread as? TSGroupThread,
+            let groupModel = groupThread.groupModel as? TSGroupModelV2,
+            let secretParams = try? groupModel.secretParams()
+        else {
+            owsFailDebug("Invalid thread.")
+            return
+        }
+        let groupLinkViewController = GroupLinkViewController(secretParams: secretParams)
+        groupLinkViewController.groupLinkViewControllerDelegate = self
+        navigationController?.pushViewController(groupLinkViewController, animated: true)
+    }
+
+    func presentCreateOrEditContactViewController(address: SignalServiceAddress, editImmediately: Bool) {
+        SUIEnvironment.shared.contactsViewHelperRef.presentSystemContactsFlow(
+            CreateOrEditContactFlow(address: address, editImmediately: editImmediately),
+            from: self,
+            completion: {
+                self.updateTableContents()
+            },
+        )
+    }
+
+    func presentAvatarViewController() {
+        guard let avatarView, avatarView.primaryImage != nil else { return }
+        guard
+            let vc = SSKEnvironment.shared.databaseStorageRef.read(block: { readTx in
+                AvatarViewController(thread: self.thread, renderLocalUserAsNoteToSelf: true, readTx: readTx)
+            })
+        else {
+            return
+        }
+
+        present(vc, animated: true)
+    }
+
+    func presentPrimaryBadgeSheet() {
+        guard let contactAddress = (thread as? TSContactThread)?.contactAddress else { return }
+        guard let primaryBadge = availableBadges.first?.badge else { return }
+        let contactShortName = SSKEnvironment.shared.databaseStorageRef.read {
+            return SSKEnvironment.shared.contactManagerRef.displayName(for: contactAddress, tx: $0).resolvedValue(useShortNameIfAvailable: true)
+        }
+
+        let badgeSheet = BadgeDetailsSheet(focusedBadge: primaryBadge, owner: .remote(shortName: contactShortName))
+        present(badgeSheet, animated: true, completion: nil)
+    }
+
+    private func presentAddToExistingContactFlow(address: SignalServiceAddress) {
+        SUIEnvironment.shared.contactsViewHelperRef.presentSystemContactsFlow(
+            AddToExistingContactFlow(address: address),
+            from: self,
+            completion: {
+                self.updateTableContents()
+            },
+        )
+    }
+
+    func didTapLeaveGroup() {
+        guard
+            let groupThread = thread as? TSGroupThread,
+            let groupModel = groupThread.groupModel as? TSGroupModelV2,
+            let localAci = DependenciesBridge.shared.tsAccountManager.localIdentifiersWithMaybeSneakyTransaction?.aci
+        else {
+            owsFailDebug("Invalid state!")
+            return
+        }
+
+        LeaveGroupCoordinator(
+            groupThread: groupThread,
+            groupModel: groupModel,
+            localAci: localAci,
+            onSuccess: { [weak self] in
+                self?.navigationController?.popViewController(animated: true)
+            },
+        ).startLeaveGroupFlow(rootViewController: self)
+    }
+
+    func showEndGroupConfirmation(title: String?, description: String, action: @escaping () -> Void) {
+        let alert = ActionSheetController(
+            title: title,
+            message: description,
+        )
+
+        alert.addAction(ActionSheetAction(
+            title: OWSLocalizedString(
+                "END_GROUP_LABEL",
+                comment: "Label in conversation settings to end a group",
+            ),
+            style: .destructive,
+            handler: { _ in
+                action()
+            },
+        ))
+
+        alert.addAction(OWSActionSheets.cancelAction)
+        presentActionSheet(alert)
+    }
+
+    func didTapEndGroup() {
+        guard let groupModelV2 = currentGroupModel as? TSGroupModelV2 else {
+            return
+        }
+
+        let confirmationTitle = String.nonPluralLocalizedStringWithFormat(
+            OWSLocalizedString(
+                "END_GROUP_LABEL_SPECIFIC",
+                comment: "End group confirmation title for a specific group. Embeds {{ group name }}",
+            ),
+            groupModelV2.groupNameOrDefault,
+        )
+
+        let confirmationDescription1 = OWSLocalizedString(
+            "END_GROUP_DESCRIPTION",
+            comment: "End group confirmation description",
+        )
+
+        showEndGroupConfirmation(
+            title: confirmationTitle,
+            description: confirmationDescription1,
+            action: { [weak self] in
+                guard let self else { return }
+
+                let finalConfirmationDescription = OWSLocalizedString(
+                    "END_GROUP_DESCRIPTION_FINAL_CONFIRMATION",
+                    comment: "Description for final confirmation screen when user tries to end a group",
+                )
+
+                showEndGroupConfirmation(title: nil, description: finalConfirmationDescription, action: {
+                    Task { @MainActor in
+                        do {
+                            try await ModalActivityIndicatorViewController.presentAndPropagateResult(
+                                from: self,
+                                title: CommonStrings.updatingModal,
+                            ) {
+                                try await GroupManager.terminateGroup(groupModel: groupModelV2)
+                            }
+                            self.reloadThreadAndUpdateContent()
+                        } catch {
+                            OWSActionSheets.showActionSheet(
+                                title: nil,
+                                message: OWSLocalizedString(
+                                    "END_GROUP_ERROR_DESCRIPTION",
+                                    comment: "Body for error sheet shown if the group failed to end",
+                                ),
+                            )
+                        }
+                    }
+                })
+            },
+        )
+    }
+
+    func didTapUnblockThread(completion: @escaping () -> Void = {}) {
+        BlockListUIUtils.showUnblockThreadActionSheet(thread, from: self) { [weak self] _ in
+            self?.reloadThreadAndUpdateContent()
+            completion()
+        }
+    }
+
+    func didTapBlockThread() {
+        // Blocking auto-leaves the group on its own.
+        BlockListUIUtils.showBlockThreadActionSheet(thread, from: self) { [weak self] _ in
+            self?.reloadThreadAndUpdateContent()
+        }
+    }
+
+    func didTapReportSpam() {
+        ReportSpamUIUtils.showReportSpamActionSheet(
+            from: self,
+            forThread: thread,
+            isBlocked: threadViewModel.isBlocked,
+            onSuccess: { [weak self] responseType in
+                self?.reloadThreadAndUpdateContent()
+                self?.presentToast(text: ReportSpamUIUtils.successfulReportText(didBlock: responseType.shouldBlockThread))
+            },
+        )
+    }
+
+    func didTapInternalSettings() {
+        let view = ConversationInternalViewController(thread: thread)
+        navigationController?.pushViewController(view, animated: true)
+    }
+
+    class func muteUnmuteMenu(
+        for threadViewModel: ThreadViewModel,
+        from viewController: UIViewController,
+        actionExecuted: @escaping () -> Void,
+    ) -> UIMenu {
+        let menuTitle = muteUnmuteMenuTitle(for: threadViewModel)
+        let actions = muteUnmuteActions(for: threadViewModel, from: viewController, actionExecuted: actionExecuted)
+        return UIMenu(title: menuTitle ?? "", children: actions)
+    }
+
+    private class func muteUnmuteMenuTitle(for threadViewModel: ThreadViewModel) -> String? {
+        guard threadViewModel.isMuted else {
+            return OWSLocalizedString(
+                "CONVERSATION_SETTINGS_MUTE_ACTION_SHEET_TITLE",
+                comment: "Title for the mute action sheet",
+            )
+        }
+
+        guard threadViewModel.mutedUntilTimestamp != TSThread.alwaysMutedTimestamp else {
+            return OWSLocalizedString(
+                "CONVERSATION_SETTINGS_MUTED_ALWAYS_UNMUTE",
+                comment: "Indicates that this thread is muted forever.",
+            )
+        }
+
+        let now = Date()
+        guard let mutedUntilDate = threadViewModel.mutedUntilDate, mutedUntilDate > now else {
+            return nil
+        }
+
+        let calendar = Calendar.current
+        let muteUntilComponents = calendar.dateComponents([.year, .month, .day], from: mutedUntilDate)
+        let nowComponents = calendar.dateComponents([.year, .month, .day], from: now)
+        let dateFormatter = DateFormatter()
+        if
+            nowComponents.year != muteUntilComponents.year
+            || nowComponents.month != muteUntilComponents.month
+            || nowComponents.day != muteUntilComponents.day
+        {
+
+            dateFormatter.dateStyle = .short
+            dateFormatter.timeStyle = .short
+        } else {
+            dateFormatter.dateStyle = .none
+            dateFormatter.timeStyle = .short
+        }
+
+        let formatString = OWSLocalizedString(
+            "CONVERSATION_SETTINGS_MUTED_UNTIL_UNMUTE_FORMAT",
+            comment: "Indicates that this thread is muted until a given date or time. Embeds {{The date or time which the thread is muted until}}.",
+        )
+        return String.nonPluralLocalizedStringWithFormat(formatString, dateFormatter.string(from: mutedUntilDate))
+    }
+
+    private class func muteUnmuteActions(
+        for threadViewModel: ThreadViewModel,
+        from viewController: UIViewController,
+        actionExecuted: @escaping () -> Void,
+    ) -> [UIAction] {
+        let muteManager = ConversationMuteManager()
+
+        guard !threadViewModel.isMuted else {
+            return [UIAction(title: OWSLocalizedString(
+                "CONVERSATION_SETTINGS_UNMUTE_ACTION",
+                comment: "Label for button to unmute a thread.",
+            )) { _ in
+                muteManager.unmute(threadViewModel)
+                actionExecuted()
+            }]
+        }
+
+        return ConversationMuteChoice.Option.all.map { option in
+            UIAction(title: option.title) { [weak viewController] _ in
+                switch option {
+                case .preset(let preset):
+                    muteManager.mute(threadViewModel, choice: .preset(preset))
+                    actionExecuted()
+                case .forever:
+                    muteManager.mute(threadViewModel, choice: .forever)
+                    actionExecuted()
+                case .custom:
+                    let sheet = MuteUntilSheet { endDate in
+                        muteManager.mute(threadViewModel, choice: .custom(endDate: endDate))
+                        actionExecuted()
+                    }
+                    viewController?.present(sheet, animated: true)
+                }
+            }
+        }
+    }
+
+    func showMediaGallery() {
+        Logger.debug("")
+
+        let tileVC = AllMediaViewController(
+            thread: thread,
+            spoilerState: spoilerState,
+            name: threadViewModel.name,
+        )
+        navigationController?.pushViewController(tileVC, animated: true)
+    }
+
+    func showMediaPageView(for referencedAttachment: ReferencedAttachment) {
+        guard
+            let vc = MediaPageViewController(
+                initialMediaAttachment: referencedAttachment,
+                thread: thread,
+                spoilerState: spoilerState,
+            )
+        else {
+            // Failed to load the item. Could be because it was deleted just as
+            // we tried to show it.
+            return
+        }
+
+        present(vc, animated: true)
+    }
+
+    let maximumRecentMedia = 4
+    private(set) var recentMedia = [ReferencedAttachment]() {
+        didSet { AssertIsOnMainThread() }
+    }
+
+    // Populated lazily as thumbnails are displayed. Used for zoom transition.
+    private(set) var recentMediaThumbnailViews = [AttachmentReferenceId: UIImageView]()
+
+    func createThumbnailView(for referencedAttachment: ReferencedAttachment) -> UIImageView {
+        let imageView = UIImageView()
+        imageView.clipsToBounds = true
+        if #available(iOS 26, *) {
+            imageView.layer.cornerCurve = .continuous
+            imageView.layer.cornerRadius = 11
+        } else {
+            imageView.layer.cornerRadius = 4
+        }
+        imageView.contentMode = .scaleAspectFill
+        imageView.backgroundColor = .Signal.backdrop
+        imageView.image = referencedAttachment.getThumbnailImageSync(quality: .small)
+
+        recentMediaThumbnailViews[referencedAttachment.reference.referenceId] = imageView
+
+        return imageView
+    }
+
+    private lazy var mediaGalleryFinder = MediaGalleryAttachmentFinder(
+        threadId: thread.grdbId!.int64Value,
+        filter: .defaultMediaType(for: AllMediaCategory.defaultValue),
+    )
+
+    func updateRecentAttachments(tx: DBReadTransaction) {
+        recentMedia = mediaGalleryFinder.recentMediaAttachments(limit: maximumRecentMedia, tx: tx)
+        shouldRefreshAttachmentsOnReappear = false
+    }
+
+    private(set) var mutualGroupThreads = [TSGroupThread]() {
+        didSet { AssertIsOnMainThread() }
+    }
+
+    private(set) var hasGroupThreads = false {
+        didSet { AssertIsOnMainThread() }
+    }
+
+    func updateMutualGroupThreads(tx: DBReadTransaction) {
+        guard let contactThread = thread as? TSContactThread else { return }
+        self.hasGroupThreads = ThreadFinder().existsGroupThread(transaction: tx)
+        self.mutualGroupThreads = TSGroupThread.mutualVisibleGroupThreads(
+            withFullMember: contactThread.contactAddress,
+            tx: tx,
+        )
+    }
+
+    func tappedConversationSearch() {
+        conversationSettingsViewDelegate?.conversationSettingsDidRequestConversationSearch()
+    }
+
+    // MARK: - Notifications
+
+    @objc
+    private func blocklistDidChange(notification: Notification) {
+        AssertIsOnMainThread()
+        reloadThreadAndUpdateContent()
+    }
+
+    @objc
+    private func identityStateDidChange(notification: Notification) {
+        AssertIsOnMainThread()
+
+        updateTableContents()
+    }
+
+    @objc
+    private func otherUsersProfileDidChange(notification: Notification) {
+        AssertIsOnMainThread()
+
+        guard
+            let address = notification.userInfo?[UserProfileNotifications.profileAddressKey] as? SignalServiceAddress,
+            address.isValid
+        else {
+            owsFailDebug("Missing or invalid address.")
+            return
+        }
+        guard let contactThread = thread as? TSContactThread else {
+            return
+        }
+
+        if contactThread.contactAddress == address {
+            updateTableContents()
+        }
+    }
+
+    @objc
+    private func profileWhitelistDidChange(notification: Notification) {
+        AssertIsOnMainThread()
+
+        // If profile whitelist just changed, we may need to refresh the view.
+        if
+            let address = notification.userInfo?[UserProfileNotifications.profileAddressKey] as? SignalServiceAddress,
+            let contactThread = thread as? TSContactThread,
+            contactThread.contactAddress == address
+        {
+            updateTableContents()
+        }
+
+        if
+            let groupId = notification.userInfo?[UserProfileNotifications.profileGroupIdKey] as? Data,
+            let groupThread = thread as? TSGroupThread,
+            groupThread.groupModel.groupId == groupId
+        {
+            updateTableContents()
+        }
+    }
+
+    @objc
+    private func attachmentsAddedOrRemoved(notification: Notification) {
+        AssertIsOnMainThread()
+
+        let attachments = notification.object as! [MediaGalleryChangeInfo]
+        guard attachments.contains(where: { $0.threadGrdbId == thread.sqliteRowId }) else {
+            return
+        }
+
+        if view.window == nil {
+            // If we're currently hidden (in particular, behind the All Media view), defer this update.
+            shouldRefreshAttachmentsOnReappear = true
+        } else {
+            DependenciesBridge.shared.db.read { tx in
+                updateRecentAttachments(tx: tx)
+            }
+            updateTableContents()
+        }
+    }
+
+    // MARK: - BadgeCollectionDataSource
+
+    // These are updated when building the table contents
+    // Selected badge index is unused, but a protocol requirement.
+    // TODO: Adjust ConversationBadgeDataSource to remove requirement for a readwrite selectedBadgeIndex
+    // when selection behavior is non-mutating
+    var availableBadges: [OWSUserProfileBadgeInfo] = []
+    var selectedBadgeIndex = 0
+
+    // MARK: - MemberLabelViewControllerPresenter
+
+    func reloadMemberLabelIfNeeded() {
+        self.reloadThreadAndUpdateContent()
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: ContactsViewHelperObserver {
+
+    func contactsViewHelperDidUpdateContacts() {
+        updateTableContents()
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: GroupAttributesViewControllerDelegate {
+    func groupAttributesDidUpdate() {
+        reloadThreadAndUpdateContent()
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: AddGroupMembersViewControllerDelegate {
+    func addGroupMembersViewDidUpdate() {
+        reloadThreadAndUpdateContent()
+    }
+}
+
+// MARK: - GroupMemberSearchViewControllerDelegate
+
+extension ConversationSettingsViewController: GroupMemberSearchViewControllerDelegate {
+    func groupMemberSearchViewControllerRequestAddMembers(_ viewController: GroupMemberSearchViewController) {
+        dismiss(animated: true) { [weak self] in
+            self?.showAddMembersView()
+        }
+    }
+
+    func groupMemberSearchViewControllerRequestShareGroupLink(_ viewController: GroupMemberSearchViewController) {
+        dismiss(animated: true) { [weak self] in
+            self?.showGroupLinkView()
+        }
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: GroupMemberRequestsAndInvitesViewControllerDelegate {
+    func requestsAndInvitesViewDidUpdate() {
+        reloadThreadAndUpdateContent()
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: GroupLinkViewControllerDelegate {
+    func groupLinkViewViewDidUpdate() {
+        reloadThreadAndUpdateContent()
+    }
+}
+
+// MARK: -
+
+extension ConversationSettingsViewController: GroupViewHelperDelegate {
+    func groupViewHelperDidUpdateGroup() {
+        reloadThreadAndUpdateContent()
+    }
+
+    var fromViewController: UIViewController? {
+        return self
+    }
+}
+
+extension ConversationSettingsViewController: MediaPresentationContextProvider {
+    func mediaPresentationContext(item: Media, in coordinateSpace: UICoordinateSpace) -> MediaPresentationContext? {
+        let mediaView: UIView
+        let mediaViewShape: MediaViewShape
+        switch item {
+        case .gallery(let galleryItem):
+            guard let imageView = recentMediaThumbnailViews[galleryItem.referencedAttachment.reference.referenceId] else { return nil }
+            mediaView = imageView
+            mediaViewShape = .rectangle(imageView.layer.cornerRadius)
+        case .image:
+            guard let avatarView else { return nil }
+            mediaView = avatarView
+            if case .circular = avatarView.configuration.shape {
+                mediaViewShape = .circle
+            } else {
+                mediaViewShape = .rectangle(0)
+            }
+        }
+
+        guard let mediaSuperview = mediaView.superview else {
+            owsFailDebug("mediaSuperview was unexpectedly nil")
+            return nil
+        }
+
+        let presentationFrame = coordinateSpace.convert(mediaView.frame, from: mediaSuperview)
+        let clippingAreaInsets = UIEdgeInsets(top: tableView.adjustedContentInset.top, leading: 0, bottom: 0, trailing: 0)
+
+        return MediaPresentationContext(
+            mediaView: mediaView,
+            presentationFrame: presentationFrame,
+            mediaViewShape: mediaViewShape,
+            clippingAreaInsets: clippingAreaInsets,
+        )
+    }
+}
+
+extension ConversationSettingsViewController: GroupPermissionsSettingsDelegate {
+    func groupPermissionSettingsDidUpdate() {
+        reloadThreadAndUpdateContent()
+    }
+}
+
+extension ConversationSettingsViewController: DatabaseChangeDelegate {
+
+    func databaseChangesDidUpdate(databaseChanges: DatabaseChanges) {
+        let didUpdateGroupsOrThreads = databaseChanges.didUpdate(tableName: TSGroupMember.databaseTableName) || databaseChanges.didUpdateThreads
+
+        let shouldCheckForDisappearedCalls = databaseChanges.didUpdateInteractions && !callRecords.isEmpty
+
+        var callRecordsDidChange = false
+        if didUpdateGroupsOrThreads || shouldCheckForDisappearedCalls {
+            DependenciesBridge.shared.db.read { tx in
+                if didUpdateGroupsOrThreads {
+                    updateMutualGroupThreads(tx: tx)
+                }
+                if shouldCheckForDisappearedCalls {
+                    callRecordsDidChange = removeDisappearedCalls(tx: tx)
+                }
+            }
+        }
+
+        if didUpdateGroupsOrThreads {
+            updateTableContents()
+            reloadThreadAndUpdateContent()
+        } else if callRecordsDidChange {
+            updateTableContents()
+        }
+    }
+
+    func databaseChangesDidUpdateExternally() {
+        DependenciesBridge.shared.db.read { tx in
+            updateRecentAttachments(tx: tx)
+            updateMutualGroupThreads(tx: tx)
+            removeDisappearedCalls(tx: tx)
+        }
+        updateTableContents()
+    }
+
+    func databaseChangesDidReset() {
+        DependenciesBridge.shared.db.read { tx in
+            updateRecentAttachments(tx: tx)
+            updateMutualGroupThreads(tx: tx)
+            removeDisappearedCalls(tx: tx)
+        }
+        updateTableContents()
+    }
+
+    /// Returns `true` if any call records were removed
+    @discardableResult
+    private func removeDisappearedCalls(tx: DBReadTransaction) -> Bool {
+        guard !callRecords.isEmpty else { return false }
+
+        let callRecordStore = DependenciesBridge.shared.callRecordStore
+        let callRecords: [CallRecord] = self.callRecords.compactMap { callRecord -> CallRecord? in
+            switch callRecord.interactionReference {
+            case .thread(_, let interactionRowId):
+                // Optional return of a call record that may be disappeared
+                callRecordStore.fetch(interactionRowId: interactionRowId, tx: tx)
+            case .none:
+                // Call link
+                callRecord
+            }
+        }
+
+        if callRecords.count < self.callRecords.count {
+            self.callRecords = callRecords
+            return true
+        }
+
+        return false
+    }
+}
+
+extension ConversationSettingsViewController: CallServiceStateObserver {
+    func didUpdateCall(from oldValue: SignalCall?, to newValue: SignalCall?) {
+        updateTableContents()
+    }
+}

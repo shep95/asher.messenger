@@ -1,0 +1,278 @@
+//
+// Copyright 2022 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+import UIKit
+
+final class RotationControl: UIControl, UIScrollViewDelegate {
+
+    private var previousAngle: CGFloat = 0
+    private var _angle: CGFloat = 0
+    /**
+     * Measured in degrees.
+     */
+    var angle: CGFloat {
+        get {
+            _angle
+        }
+        set {
+            setAngle(newValue, updateScrollViewOffset: true)
+        }
+    }
+
+    /**
+     * Rotation angle as user sees it, ie not taking into account 90 degree rotations that might have been made.
+     */
+    private var normalizedAngle: CGFloat {
+        return angle - canvasRotation
+    }
+
+    /**
+     * Scroll view's content offset does not need to be updated if user is scrolling.
+     */
+    private func setAngle(_ angle: CGFloat, updateScrollViewOffset: Bool = true) {
+        previousAngle = _angle
+        _angle = angle
+        canvasRotation = angle - angle.remainder(dividingBy: 90)
+        updateAppearance()
+        if updateScrollViewOffset {
+            updateScrollViewContentOffset()
+        }
+        // Haptic feedback.
+        if isTracking {
+            let roundingRule: FloatingPointRoundingRule
+            if abs(angle) > abs(previousAngle) {
+                // Moving away from zero.
+                roundingRule = .towardZero
+            } else {
+                // Moving towards zero
+                roundingRule = .awayFromZero
+            }
+
+            let angleRounded = angle.rounded(roundingRule)
+            let previousAngleRounded = previousAngle.rounded(roundingRule)
+            if previousAngleRounded != angleRounded, angleRounded.truncatingRemainder(dividingBy: Constants.stepValue) == 0 {
+                hapticFeedbackGenerator.selectionChanged()
+            }
+        }
+    }
+
+    /**
+     * Measured in degrees.
+     */
+    private var canvasRotation: CGFloat = 0
+
+    init() {
+        super.init(frame: .zero)
+
+        layoutMargins = .zero
+        tintColor = .Signal.label
+
+        // Text Label
+        textLabel.isUserInteractionEnabled = true
+        textLabel.setCompressionResistanceVerticalHigh()
+        textLabel.setContentHuggingVerticalHigh()
+        textLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(textLabel)
+        NSLayoutConstraint.activate([
+            textLabel.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor),
+            textLabel.centerXAnchor.constraint(equalTo: layoutMarginsGuide.centerXAnchor),
+        ])
+        textLabel.addGestureRecognizer({
+            let gestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+            gestureRecognizer.numberOfTapsRequired = 2
+            return gestureRecognizer
+        }())
+
+        // Band
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.frameLayoutGuide.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 8),
+            scrollView.frameLayoutGuide.heightAnchor.constraint(equalToConstant: Constants.bandHeight),
+            scrollView.frameLayoutGuide.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
+            scrollView.frameLayoutGuide.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
+            scrollView.frameLayoutGuide.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor),
+        ])
+        initializeRuler()
+
+        // Current Value Marking
+        currentValueMark.backgroundColor = UIColor(rgbHex: 0x62E87A)
+        currentValueMark.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(currentValueMark)
+        NSLayoutConstraint.activate([
+            currentValueMark.topAnchor.constraint(equalTo: scrollView.frameLayoutGuide.topAnchor),
+            currentValueMark.widthAnchor.constraint(equalToConstant: Constants.markingWidth),
+            currentValueMark.centerXAnchor.constraint(equalTo: layoutMarginsGuide.centerXAnchor),
+            currentValueMark.bottomAnchor.constraint(equalTo: scrollView.frameLayoutGuide.bottomAnchor),
+        ])
+
+        updateFont()
+        if #available(iOS 17, *) {
+            registerForTraitChanges(
+                [UITraitPreferredContentSizeCategory.self],
+                handler: { (view: UIView, _) in
+                    guard let view = view as? RotationControl else { return }
+                    view.updateFont()
+                },
+            )
+        }
+        updateColors()
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if !scrollView.isDragging {
+            updateScrollViewLayout()
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        guard #unavailable(iOS 17) else { return }
+        if traitCollection.preferredContentSizeCategory != previousTraitCollection?.preferredContentSizeCategory {
+            updateFont()
+        }
+    }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        updateColors()
+    }
+
+    override var isTracking: Bool {
+        scrollView.isTracking
+    }
+
+    private lazy var hapticFeedbackGenerator = SelectionHapticFeedback()
+
+    // MARK: - Layout
+
+    private let numberFormatter: NumberFormatter = {
+        let numberFormatter = NumberFormatter()
+        numberFormatter.numberStyle = .decimal
+        return numberFormatter
+    }()
+
+    private let textLabel = UILabel()
+    private let scrollView = UIScrollView()
+    private let rulerView = UIView()
+    private let currentValueMark = UIView()
+
+    private enum Constants {
+        static let stepRange = -45...45 // 45 degrees each direction
+        static let stepValue: CGFloat = 3 // 1 mark = 3 degrees
+        static let stepWidth: CGFloat = 12 // distance between markings
+        static let markingWidth: CGFloat = UITraitCollection.current.hairlineWidthFraction(2)
+        static let bandHeight: CGFloat = 32
+        static let markingHeight: CGFloat = 12
+    }
+
+    private func updateFont() {
+        textLabel.font = .dynamicTypeSubheadlineClamped.monospaced()
+    }
+
+    private func updateColors() {
+        textLabel.textColor = tintColor
+    }
+
+    private func updateAppearance() {
+        var roundedAngle = normalizedAngle.rounded()
+        if roundedAngle == 0, roundedAngle.sign == .minus {
+            roundedAngle = 0
+        }
+        textLabel.text = numberFormatter.string(for: roundedAngle)
+        currentValueMark.isHidden = abs(angle) < .epsilon
+    }
+
+    @objc
+    private func handleDoubleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+        UIView.animate(withDuration: 0.2) {
+            self.setAngle(self.canvasRotation, updateScrollViewOffset: true)
+            self.sendActions(for: .valueChanged)
+        }
+    }
+
+    // MARK: - Scroll View
+
+    private func initializeRuler() {
+        scrollView.delegate = self
+        scrollView.bounces = false
+        scrollView.showsHorizontalScrollIndicator = false
+
+        let numberOfSteps = (Constants.stepRange.upperBound - Constants.stepRange.lowerBound) / Int(Constants.stepValue)
+        let rulerWidth = CGFloat(numberOfSteps) * (Constants.stepWidth + Constants.markingWidth)
+        rulerView.bounds.size = CGSize(width: rulerWidth, height: Constants.bandHeight)
+        let markingSize = CGSize(width: Constants.markingWidth, height: Constants.markingHeight)
+        let markingOriginY = rulerView.bounds.height - markingSize.height
+        for i in 0...numberOfSteps {
+            let marking = UIView(frame: CGRect(origin: .zero, size: markingSize))
+            marking.backgroundColor = .Signal.label
+            marking.alpha = i % 5 == 0 ? 1 : 0.5
+            rulerView.addSubview(marking)
+            marking.frame.origin = CGPoint(
+                x: CGFloat(i) * (Constants.stepWidth + Constants.markingWidth) - 0.5 * Constants.markingWidth,
+                y: markingOriginY,
+            )
+            if i == numberOfSteps / 2 {
+                marking.frame.origin.y = 0
+                marking.frame.size.height = Constants.bandHeight
+            }
+        }
+        scrollView.addSubview(rulerView)
+        updateScrollViewLayout()
+    }
+
+    private func updateScrollViewLayout() {
+        scrollView.contentSize = CGSize(
+            width: rulerView.bounds.width + scrollView.frame.width,
+            height: rulerView.height,
+        )
+        rulerView.frame.origin = CGPoint(x: 0.5 * scrollView.frame.width, y: 0)
+        updateScrollViewContentOffset()
+    }
+
+    private func updateScrollViewContentOffset(animated: Bool = false) {
+        scrollView.setContentOffset(scrollViewOffset(for: normalizedAngle), animated: animated)
+    }
+
+    private func scrollViewOffset(for normalizedAngle: CGFloat) -> CGPoint {
+        let zeroBasedAngle = normalizedAngle - CGFloat(Constants.stepRange.lowerBound)
+        let horizontalOffset = zeroBasedAngle / Constants.stepValue * (Constants.stepWidth + Constants.markingWidth)
+        return CGPoint(x: horizontalOffset, y: 0)
+    }
+
+    private func currentRulerAngle() -> CGFloat {
+        let horizontalOffset = scrollView.contentOffset.x
+        let zeroBasedAngle = Constants.stepValue * horizontalOffset / (Constants.stepWidth + Constants.markingWidth)
+        return zeroBasedAngle + CGFloat(Constants.stepRange.lowerBound)
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        sendActions(for: .editingDidBegin)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        sendActions(for: .editingDidEnd)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView.isTracking else { return }
+        let angle = currentRulerAngle() + canvasRotation
+        setAngle(angle, updateScrollViewOffset: false)
+        sendActions(for: .valueChanged)
+    }
+
+    func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+        // Kill inertia scrolling.
+        updateScrollViewContentOffset(animated: true)
+    }
+}

@@ -1,0 +1,453 @@
+//
+// Copyright 2019 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import GRDB
+import LibSignalClient
+
+public class ThreadFinder {
+    public init() {}
+
+    private func requiredVisibleThreadsClause(forThreadIds threadIds: Set<String>) -> String {
+        if threadIds.isEmpty {
+            return ""
+        } else {
+            let threadIdsExpression = threadIds.lazy.map { "'\($0)'" }.joined(separator: ", ")
+            return "OR \(threadColumnFullyQualified: .uniqueId) IN (\(threadIdsExpression))"
+        }
+    }
+
+    /// Fetch a thread with the given SQLite row ID, if one exists.
+    public func fetch(rowId: Int64, tx: DBReadTransaction) -> TSThread? {
+        guard
+            let thread = TSThread.anyFetch(
+                sql: """
+                    SELECT *
+                    FROM \(TSThread.databaseTableName)
+                    WHERE \(threadColumn: .id) = ?
+                """,
+                arguments: [rowId],
+                transaction: tx,
+            )
+        else {
+            owsFailDebug("Missing thread with row ID - how did we get this row ID?")
+            return nil
+        }
+
+        return thread
+    }
+
+    public func fetchUniqueIds(tx: DBReadTransaction) -> [String] {
+        return failIfThrows {
+            do {
+                return try String.fetchAll(
+                    tx.database,
+                    sql: "SELECT \(threadColumn: .uniqueId) FROM \(TSThread.databaseTableName)",
+                )
+            } catch {
+                throw error.grdbErrorForLogging
+            }
+        }
+    }
+
+    /// Enumerates through all story thread (distribution lists)
+    /// - Parameter block
+    /// A block executed for each enumerated thread. Returns `true` if
+    /// enumeration should continue, and `false` otherwise.
+    public func enumerateStoryThreads<E: Error>(
+        tx: DBReadTransaction,
+        block: (TSPrivateStoryThread) throws(E) -> Bool,
+    ) throws(E) {
+        let sql = """
+            SELECT *
+            FROM \(TSThread.databaseTableName)
+            WHERE \(threadColumn: .recordType) = \(TSThreadType.privateStoryThread.rawValue)
+        """
+
+        var cursor = FailIfThrowsRecordCursor {
+            try TSPrivateStoryThread.fetchCursor(
+                tx.database,
+                sql: sql,
+            )
+        }
+
+        while let storyThread = cursor.next(), try block(storyThread) {}
+    }
+
+    /// Enumerates group threads in "last interaction" order.
+    /// - Parameter block
+    /// A block executed for each enumerated thread. Returns `true` if
+    /// enumeration should continue, and `false` otherwise.
+    public func enumerateGroupThreads<E: Error>(
+        tx: DBReadTransaction,
+        block: (TSGroupThread) throws(E) -> Bool,
+    ) throws(E) {
+        let sql = """
+            SELECT *
+            FROM \(TSThread.databaseTableName)
+            WHERE \(threadColumn: .recordType) = \(TSThreadType.groupThread.rawValue)
+            ORDER BY \(threadColumn: .lastInteractionRowId) DESC
+        """
+
+        var cursor = FailIfThrowsRecordCursor {
+            return try TSGroupThread.fetchCursor(
+                tx.database,
+                sql: sql,
+            )
+        }
+
+        while let groupThread = cursor.next(), try block(groupThread) {}
+    }
+
+    /// Enumerates all non-story threads in arbitrary order.
+    /// - Parameter block
+    /// A block executed for each enumerated thread. Returns `true` if
+    /// enumeration should continue, and `false` otherwise.
+    public func enumerateNonStoryThreads<E: Error>(
+        tx: DBReadTransaction,
+        block: (TSThread) throws(E) -> Bool,
+    ) throws(E) {
+        let sql = """
+            SELECT *
+            FROM \(TSThread.databaseTableName)
+            WHERE \(threadColumn: .recordType) IS NOT ?
+        """
+
+        var cursor = FailIfThrowsRecordCursor {
+            return try TSThread.fetchCursor(
+                tx.database,
+                sql: sql,
+                arguments: [TSThreadType.privateStoryThread.rawValue],
+            )
+        }
+
+        while let thread = cursor.next(), try block(thread) {}
+    }
+
+    public func visibleThreadCount(
+        isArchived: Bool,
+        transaction: DBReadTransaction,
+    ) -> UInt {
+        let sql = """
+        SELECT COUNT(*)
+        FROM \(TSThread.databaseTableName)
+        WHERE \(threadColumn: .shouldThreadBeVisible) = 1
+        AND \(threadColumn: .isArchived) = ?
+        """
+
+        return failIfThrows {
+            return try UInt.fetchOne(transaction.database, sql: sql, arguments: [isArchived])
+        }.owsFailUnwrap("must exist")
+    }
+
+    public func enumerateVisibleThreads(
+        isArchived: Bool,
+        transaction: DBReadTransaction,
+        block: (TSThread) -> Void,
+    ) {
+        let sql = """
+        SELECT *
+        FROM \(TSThread.databaseTableName)
+        WHERE \(threadColumn: .shouldThreadBeVisible) = 1
+        AND \(threadColumn: .isArchived) = ?
+        ORDER BY \(threadColumn: .lastInteractionRowId) DESC
+        """
+
+        failIfThrows {
+            try TSThread.fetchCursor(
+                transaction.database,
+                sql: sql,
+                arguments: [isArchived],
+            ).forEach { thread in
+                block(thread)
+            }
+        }
+    }
+
+    public func fetchContactSyncThreadRowIds(tx: DBReadTransaction) throws -> [Int64] {
+        let sql = """
+        SELECT \(threadColumn: .id)
+        FROM \(TSThread.databaseTableName)
+        WHERE \(threadColumn: .shouldThreadBeVisible) = 1
+        ORDER BY \(threadColumn: .lastInteractionRowId) DESC
+        """
+        do {
+            return try Int64.fetchAll(tx.database, sql: sql)
+        } catch {
+            throw error.grdbErrorForLogging
+        }
+    }
+
+    public func hasPendingMessageRequest(
+        thread: TSThread,
+        transaction: DBReadTransaction,
+    ) -> Bool {
+        // TODO: Should we consult isRequestingMember() here?
+        if let groupThread = thread as? TSGroupThread, groupThread.isGroupV2Thread, groupThread.groupModel.groupMembership.isLocalUserInvitedMember {
+            return true
+        }
+
+        // If we're creating the thread, don't show the message request view
+        if !thread.shouldThreadBeVisible {
+            return false
+        }
+
+        // If this thread is blocked AND we're still in the thread, show the message
+        // request view regardless of if we have sent messages or not.
+        if SSKEnvironment.shared.blockingManagerRef.isThreadBlocked(thread, transaction: transaction) {
+            return true
+        }
+
+        let isGroupThread = thread is TSGroupThread
+        let isLocalUserInGroup = (thread as? TSGroupThread)?.groupModel.groupMembership.isLocalUserFullOrInvitedMember == true
+
+        // If this is a group thread and we're not a member, never show the message request.
+        if isGroupThread, !isLocalUserInGroup {
+            return false
+        }
+
+        let interactionFinder = InteractionFinder(threadUniqueId: thread.uniqueId)
+
+        let recipientDatabaseTable = DependenciesBridge.shared.recipientDatabaseTable
+        let recipientHidingManager = DependenciesBridge.shared.recipientHidingManager
+        if
+            let contactThread = thread as? TSContactThread,
+            let signalRecipient = recipientDatabaseTable.fetchRecipient(
+                contactThread: contactThread,
+                tx: transaction,
+            ),
+            let hiddenRecipient = recipientHidingManager.fetchHiddenRecipient(
+                recipientId: signalRecipient.id,
+                tx: transaction,
+            )
+        {
+            return recipientHidingManager.isHiddenRecipientThreadInMessageRequest(
+                hiddenRecipient: hiddenRecipient,
+                contactThread: contactThread,
+                tx: transaction,
+            )
+        }
+
+        // If the thread is already whitelisted, do nothing. The user has already
+        // accepted the request for this thread.
+        if SSKEnvironment.shared.profileManagerRef.isThread(inProfileWhitelist: thread, transaction: transaction) {
+            return false
+        }
+
+        // At this point, we know this is an un-whitelisted group thread.
+        // If someone added us to the group, there will be a group update info message
+        // in which case we want to show a pending message request. If the thread
+        // is otherwise empty, we don't want to show the message request.
+        if isGroupThread, interactionFinder.hasGroupUpdateInfoMessage(transaction: transaction) {
+            return true
+        }
+
+        // This thread is likely only visible because of system messages like so-and-so
+        // is on signal or sync status. Some of the "possibly" incoming messages might
+        // actually have been triggered by us, but if we sent one of these then the thread
+        // should be in our profile white list and not make it to this check.
+        return interactionFinder.possiblyHasIncomingMessages(transaction: transaction)
+    }
+
+    /// Whether we should set the default timer for the given contact thread.
+    ///
+    /// - Note
+    /// We never set the default timer for group threads, which are instead set
+    /// during group creation.
+    public func shouldSetDefaultDisappearingMessageTimer(
+        contactThread: TSContactThread,
+        transaction tx: DBReadTransaction,
+    ) -> Bool {
+        let dmConfigurationStore = DependenciesBridge.shared.disappearingMessagesConfigurationStore
+
+        // Make sure the universal timer is enabled.
+        guard
+            dmConfigurationStore.fetchOrBuildDefault(
+                for: .universal,
+                tx: tx,
+            ).isEnabled
+        else {
+            return false
+        }
+
+        // Make sure the current timer is disabled.
+        guard
+            !dmConfigurationStore.fetchOrBuildDefault(
+                for: .thread(contactThread),
+                tx: tx,
+            ).isEnabled
+        else {
+            return false
+        }
+
+        // Make sure there has been no user initiated interactions.
+        return !InteractionFinder(threadUniqueId: contactThread.uniqueId)
+            .hasUserInitiatedInteraction(transaction: tx)
+    }
+
+    public func existsGroupThread(transaction: DBReadTransaction) -> Bool {
+        let sql = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM \(TSThread.databaseTableName)
+                WHERE \(threadColumn: .recordType) = ?
+                LIMIT 1
+            )
+        """
+        let arguments: StatementArguments = [TSThreadType.groupThread.rawValue]
+        return failIfThrows {
+            return try Bool.fetchOne(
+                transaction.database,
+                sql: sql,
+                arguments: arguments,
+            ) ?? false
+        }
+    }
+
+    public func storyThreads(
+        includeImplicitGroupThreads: Bool,
+        transaction: DBReadTransaction,
+    ) -> [TSThread] {
+        var allowedDefaultThreadIds = [String]()
+
+        if includeImplicitGroupThreads {
+            // Prefetch the group thread uniqueIds that currently have stories
+            let storyMessageGroupIdsSQL = """
+                SELECT DISTINCT \(StoryMessage.columnName(.groupId))
+                FROM \(StoryMessage.databaseTableName)
+                WHERE \(StoryMessage.columnName(.groupId)) IS NOT NULL
+            """
+
+            var groupIdCursor = FailIfThrowsValueCursor {
+                return try Data.fetchCursor(
+                    transaction.database,
+                    sql: storyMessageGroupIdsSQL,
+                )
+            }
+
+            while
+                let groupIdData = groupIdCursor.next(),
+                let groupId = try? GroupIdentifier(contents: groupIdData),
+                let threadUniqueId = TSGroupThread.threadUniqueId(forGroupIdData: groupId.serialize(), tx: transaction)
+            {
+                allowedDefaultThreadIds.append(threadUniqueId)
+            }
+        }
+
+        let sql = """
+            SELECT *
+            FROM \(TSThread.databaseTableName)
+            WHERE \(threadColumn: .storyViewMode) != \(TSThreadStoryViewMode.disabled.rawValue)
+            AND \(threadColumn: .storyViewMode) != \(TSThreadStoryViewMode.default.rawValue)
+            OR (
+                \(threadColumn: .storyViewMode) = \(TSThreadStoryViewMode.default.rawValue)
+                AND \(threadColumn: .recordType) = \(TSThreadType.groupThread.rawValue)
+                AND \(threadColumn: .uniqueId) IN (\(allowedDefaultThreadIds.map { "\"\($0)\"" }.joined(separator: ", ")))
+            )
+            ORDER BY \(threadColumn: .lastSentStoryTimestamp) DESC
+        """
+
+        var threads = [TSThread]()
+        TSThread.anyEnumerate(
+            transaction: transaction,
+            sql: sql,
+            arguments: [],
+            block: { thread, stop in
+                if let groupThread = thread as? TSGroupThread {
+                    guard groupThread.isStorySendEnabled(transaction: transaction) else {
+                        return
+                    }
+                }
+                threads.append(thread)
+            },
+        )
+        return threads
+    }
+
+    public func threadsWithRecentInteractions(
+        limit: UInt,
+        transaction: DBReadTransaction,
+    ) -> [TSThread] {
+        let sql = """
+            SELECT *
+            FROM \(TSThread.databaseTableName)
+            ORDER BY \(threadColumn: .lastInteractionRowId) DESC
+            LIMIT \(limit)
+        """
+
+        var threads = [TSThread]()
+        TSThread.anyEnumerate(
+            transaction: transaction,
+            sql: sql,
+            arguments: [],
+            block: { thread, stop in
+                threads.append(thread)
+            },
+        )
+        return threads
+    }
+
+    // MARK: -
+
+    public func visibleInboxThreadUniqueIds(
+        filteredBy inboxFilter: InboxFilter? = nil,
+        requiredVisibleThreadIds: Set<String> = [],
+        transaction: DBReadTransaction,
+    ) -> [String] {
+        let inboxFilterClause: String = switch inboxFilter {
+        case .unread:
+            """
+            AND (
+                \(threadColumn: .isMarkedUnread) = 1
+                OR EXISTS (
+                    SELECT 1
+                    FROM \(InteractionRecord.databaseTableName)
+                    \(DEBUG_INDEXED_BY("index_model_TSInteraction_UnreadMessages"))
+                    WHERE \(interactionColumn: .threadUniqueId) = \(threadColumnFullyQualified: .uniqueId)
+                    AND \(InteractionFinder.sqlClauseForUnreadInteractionCounts())
+                )
+                \(requiredVisibleThreadsClause(forThreadIds: requiredVisibleThreadIds))
+            )
+            """
+        case .unfiltered, nil:
+            ""
+        }
+
+        let sql = """
+        SELECT \(threadColumn: .uniqueId)
+        FROM \(TSThread.databaseTableName)
+        WHERE \(threadColumn: .shouldThreadBeVisible) = 1
+        AND \(threadColumn: .isArchived) = 0
+        \(inboxFilterClause)
+        ORDER BY
+            CASE WHEN \(threadColumn: .lastDraftInteractionRowId) > \(threadColumn: .lastInteractionRowId)
+                THEN \(threadColumn: .lastDraftInteractionRowId) ELSE \(threadColumn: .lastInteractionRowId)
+            END DESC,
+            \(threadColumn: .lastDraftUpdateTimestamp) DESC
+        """
+        return failIfThrows {
+            return try String.fetchAll(transaction.database, sql: sql)
+        }
+    }
+
+    public func visibleArchivedThreadUniqueIds(
+        transaction: DBReadTransaction,
+    ) -> [String] {
+        let sql = """
+        SELECT \(threadColumn: .uniqueId)
+        FROM \(TSThread.databaseTableName)
+        WHERE \(threadColumn: .shouldThreadBeVisible) = 1
+        AND \(threadColumn: .isArchived) = 1
+        ORDER BY
+            CASE WHEN \(threadColumn: .lastDraftInteractionRowId) > \(threadColumn: .lastInteractionRowId)
+                THEN \(threadColumn: .lastDraftInteractionRowId) ELSE \(threadColumn: .lastInteractionRowId)
+            END DESC,
+            \(threadColumn: .lastDraftUpdateTimestamp) DESC
+        """
+
+        return failIfThrows {
+            return try String.fetchAll(transaction.database, sql: sql)
+        }
+    }
+}

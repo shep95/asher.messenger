@@ -1,0 +1,328 @@
+//
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+import SignalServiceKit
+
+extension RegistrationCoordinatorImpl {
+
+    enum Service {
+
+        enum SVR2AuthCheckResponse {
+            case success(RegistrationServiceResponses.SVR2AuthCheckResponse)
+            case networkError
+            case genericError
+        }
+
+        static func makeSVR2AuthCheckRequest(
+            e164: E164,
+            candidateCredentials: [SVR2AuthCredential],
+            signalService: OWSSignalServiceProtocol,
+            logger: PrefixedLogger,
+        ) async -> SVR2AuthCheckResponse {
+            let request = RegistrationRequestFactory.svr2AuthCredentialCheckRequest(
+                e164: e164,
+                credentials: candidateCredentials,
+                logger: logger,
+            )
+            return await makeRequest(
+                { try await signalService.urlSessionForMainSignalService().performRequest(request) },
+                handler: self.handleSVR2AuthCheckResponse(statusCode:retryAfterHeader:bodyData:logger:),
+                fallbackError: .genericError,
+                networkFailureError: .networkError,
+                logger: logger,
+            )
+        }
+
+        private static func handleSVR2AuthCheckResponse(
+            statusCode: Int,
+            retryAfterHeader: TimeInterval?,
+            bodyData: Data?,
+            logger: PrefixedLogger,
+        ) -> SVR2AuthCheckResponse {
+            let statusCode = RegistrationServiceResponses.SVR2AuthCheckResponseCodes(rawValue: statusCode)
+            switch statusCode {
+            case .success:
+                guard let bodyData else {
+                    Logger.warn("Got empty KBS auth check response")
+                    return .genericError
+                }
+                guard let response = try? JSONDecoder().decode(RegistrationServiceResponses.SVR2AuthCheckResponse.self, from: bodyData) else {
+                    Logger.warn("Unable to parse KBS auth check response from response")
+                    return .genericError
+                }
+
+                return .success(response)
+            case .malformedRequest, .invalidJSON:
+                Logger.error("Malformed kbs auth check request")
+                return .genericError
+            case .none, .unexpectedError:
+                return .genericError
+            }
+        }
+
+        static func makeCreateAccountRequest(
+            _ verificationMethod: RegistrationRequestFactory.VerificationMethod,
+            authPassword: String,
+            accountAttributes: AccountAttributes,
+            skipDeviceTransfer: Bool,
+            apnRegistrationId: RegistrationRequestFactory.ApnRegistrationId?,
+            aciPreKeyBundle: RegistrationPreKeyUploadBundle,
+            pniPreKeyBundle: RegistrationPreKeyUploadBundle,
+            signalService: OWSSignalServiceProtocol,
+            logger: PrefixedLogger,
+        ) async -> AccountResponse {
+            let request = RegistrationRequestFactory.createAccountRequest(
+                verificationMethod: verificationMethod,
+                authPassword: authPassword,
+                accountAttributes: accountAttributes,
+                skipDeviceTransfer: skipDeviceTransfer,
+                apnRegistrationId: apnRegistrationId,
+                aciPreKeyBundle: aciPreKeyBundle,
+                pniPreKeyBundle: pniPreKeyBundle,
+                logger: logger,
+            )
+            return await makeRequest(
+                { try await signalService.urlSessionForMainSignalService().performRequest(request) },
+                handler: {
+                    self.handleCreateAccountResponse(
+                        authPassword: authPassword,
+                        statusCode: $0,
+                        retryAfterHeader: $1,
+                        bodyData: $2,
+                        logger: $3,
+                    )
+                },
+                fallbackError: .genericError,
+                networkFailureError: .networkError,
+                logger: logger,
+            )
+        }
+
+        private static func handleCreateAccountResponse(
+            authPassword: String,
+            statusCode: Int,
+            retryAfterHeader: TimeInterval?,
+            bodyData: Data?,
+            logger: PrefixedLogger,
+        ) -> AccountResponse {
+            let statusCode = RegistrationServiceResponses.AccountCreationResponseCodes(rawValue: statusCode)
+            switch statusCode {
+            case .success:
+                guard let bodyData else {
+                    Logger.warn("Got empty create account response")
+                    return .genericError
+                }
+                guard let response = try? JSONDecoder().decode(RegistrationServiceResponses.AccountIdentityResponse.self, from: bodyData) else {
+                    Logger.warn("Unable to parse Account identity from response")
+                    return .genericError
+                }
+                return .success(AccountIdentity(
+                    aci: response.aci,
+                    pni: response.pni,
+                    e164: response.e164,
+                    hasPreviouslyUsedSVR: response.hasPreviouslyUsedSVR,
+                    authPassword: authPassword,
+                ))
+
+            case .deviceTransferPossible:
+                return .deviceTransferPossible
+
+            case .regRecoveryPasswordRejected:
+                Logger.warn("Reg recovery password rejected when creating account.")
+                return .rejectedVerificationMethod
+
+            case .reglockFailed:
+                guard let bodyData else {
+                    Logger.warn("Got empty create account response")
+                    return .genericError
+                }
+                guard
+                    let response = try? JSONDecoder().decode(
+                        RegistrationServiceResponses.RegistrationLockFailureResponse.self,
+                        from: bodyData,
+                    )
+                else {
+                    Logger.warn("Unable to parse ReglockFailure from response")
+                    return .genericError
+                }
+                return .reglockFailure(response)
+
+            case .retry:
+                return .retryAfter(retryAfterHeader)
+
+            case .unauthorized:
+                Logger.warn("Got unauthorized response for create account")
+                return .rejectedVerificationMethod
+
+            case .invalidArgument:
+                Logger.warn("Got invalid argument response for create account")
+                return .genericError
+
+            case .malformedRequest:
+                Logger.warn("Got malformed request response for create account")
+                return .genericError
+
+            case .none, .unexpectedError:
+                return .genericError
+            }
+        }
+
+        static func makeChangeNumberRequest(
+            _ verificationMethod: RegistrationRequestFactory.VerificationMethod,
+            reglockToken: RegistrationLock?,
+            authPassword: String,
+            pniChangeNumberParameters: PniDistribution.Parameters,
+            networkManager: any NetworkManagerProtocol,
+            logger: PrefixedLogger,
+        ) async -> AccountResponse {
+            let request = RegistrationRequestFactory.changeNumberRequest(
+                verificationMethod: verificationMethod,
+                reglockToken: reglockToken,
+                pniChangeNumberParameters: pniChangeNumberParameters,
+                logger: logger,
+            )
+            return await makeRequest(
+                { try await networkManager.asyncRequest(request) },
+                handler: {
+                    return self.handleChangeNumberResponse(authPassword: authPassword, statusCode: $0, retryAfterHeader: $1, bodyData: $2, logger: $3)
+                },
+                fallbackError: .genericError,
+                networkFailureError: .networkError,
+                logger: logger,
+            )
+        }
+
+        private static func handleChangeNumberResponse(
+            authPassword: String,
+            statusCode: Int,
+            retryAfterHeader: TimeInterval?,
+            bodyData: Data?,
+            logger: PrefixedLogger,
+        ) -> AccountResponse {
+            let statusCode = RegistrationServiceResponses.ChangeNumberResponseCodes(rawValue: statusCode)
+            switch statusCode {
+            case .success:
+                guard let bodyData else {
+                    Logger.warn("Got empty create account response")
+                    return .genericError
+                }
+                guard let response = try? JSONDecoder().decode(RegistrationServiceResponses.AccountIdentityResponse.self, from: bodyData) else {
+                    Logger.warn("Unable to parse Account identity from response")
+                    return .genericError
+                }
+                return .success(AccountIdentity(
+                    aci: response.aci,
+                    pni: response.pni,
+                    e164: response.e164,
+                    hasPreviouslyUsedSVR: response.hasPreviouslyUsedSVR,
+                    authPassword: authPassword,
+                ))
+
+            case .reglockFailed:
+                guard let bodyData else {
+                    Logger.warn("Got empty create account response")
+                    return .genericError
+                }
+                guard
+                    let response = try? JSONDecoder().decode(
+                        RegistrationServiceResponses.RegistrationLockFailureResponse.self,
+                        from: bodyData,
+                    )
+                else {
+                    Logger.warn("Unable to parse ReglockFailure from response")
+                    return .genericError
+                }
+                return .reglockFailure(response)
+
+            case .retry:
+                return .retryAfter(retryAfterHeader)
+
+            case .unauthorized, .regRecoveryPasswordRejected:
+                return .rejectedVerificationMethod
+
+            case .malformedRequest:
+                Logger.error("Got malformed request for change number")
+                return .genericError
+
+            case .invalidArgument:
+                Logger.error("Got invalid argument for change number")
+                return .genericError
+
+            case .mismatchedDevicesToNotify, .mismatchedDevicesToNotifyRegistrationIds:
+                // TODO[PNP]: What should be done about this category of error?
+                Logger.error("Got mismatched device list information for change number")
+                return .genericError
+
+            case .none, .unexpectedError:
+                return .genericError
+            }
+        }
+
+        enum WhoAmIResponse {
+            case success(WhoAmIRequestFactory.Responses.WhoAmI)
+            case networkError
+            case genericError
+        }
+
+        static func makeWhoAmIRequest(
+            auth: ChatServiceAuth,
+            networkManager: any NetworkManagerProtocol,
+        ) async -> WhoAmIResponse {
+            do {
+                return try await Retry.performWithBackoff(
+                    maxAttempts: RegistrationCoordinatorImpl.Constants.networkErrorRetries + 1,
+                    isRetryable: { $0.isNetworkFailureOrTimeout },
+                ) {
+                    let request = WhoAmIRequestFactory.whoAmIRequest(auth: auth)
+                    let response = try await networkManager.asyncRequest(request)
+                    guard response.responseStatusCode >= 200, response.responseStatusCode < 300 else {
+                        return .genericError
+                    }
+                    guard let bodyData = response.responseBodyData else {
+                        Logger.error("Got empty whoami response")
+                        return .genericError
+                    }
+                    guard let response = try? JSONDecoder().decode(WhoAmIRequestFactory.Responses.WhoAmI.self, from: bodyData) else {
+                        Logger.error("Unable to parse whoami response from response")
+                        return .genericError
+                    }
+                    return .success(response)
+                }
+            } catch {
+                return error.isNetworkFailureOrTimeout ? .networkError : .genericError
+            }
+        }
+
+        private static func makeRequest<ResponseType>(
+            _ makeRequest: () async throws -> HTTPResponse,
+            handler: (_ statusCode: Int, _ retryAfterHeader: TimeInterval?, _ bodyData: Data?, _ logger: PrefixedLogger) -> ResponseType,
+            fallbackError: ResponseType,
+            networkFailureError: ResponseType,
+            logger: PrefixedLogger,
+        ) async -> ResponseType {
+            do {
+                let response = try await makeRequest()
+                return handler(
+                    response.responseStatusCode,
+                    response.headers.retryAfterTimeInterval,
+                    response.responseBodyData,
+                    logger,
+                )
+            } catch where error.isNetworkFailureOrTimeout {
+                return networkFailureError
+            } catch let error as OWSHTTPError {
+                return handler(
+                    error.responseStatusCode,
+                    error.responseHeaders?.retryAfterTimeInterval,
+                    error.httpResponseData,
+                    logger,
+                )
+            } catch {
+                return fallbackError
+            }
+        }
+    }
+}

@@ -1,0 +1,120 @@
+//
+// Copyright 2022 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+
+extension ImageEditorViewController {
+
+    func updateStrokeWidthSliderValue() {
+        strokeWidthSlider.value = strokeWidthValues[currentStrokeType] ?? 1
+        updateStrokeWidthPreviewSize()
+    }
+
+    private func setupStrokeWidthPreviewIfNecessary() {
+        guard strokeWidthSliderIsTrackingObservation == nil else { return }
+
+        strokeWidthPreviewDot.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(strokeWidthPreviewDot)
+        NSLayoutConstraint.activate([
+            strokeWidthPreviewDot.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            strokeWidthPreviewDot.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+
+        strokeWidthSliderIsTrackingObservation = strokeWidthSlider.observe(\.isTracking, options: [.new]) { [weak self] _, _ in
+            self?.updateStrokeWidthPreviewVisibility()
+        }
+        updateStrokeWidthPreviewVisibility()
+    }
+
+    private func updateStrokeWidthPreviewVisibility() {
+        strokeWidthPreviewDot.alpha = strokeWidthSlider.isTracking ? 1 : 0
+    }
+
+    func updateStrokeWidthPreviewSize() {
+        guard let strokeWidthPreviewDotSize else { return }
+
+        let unitStrokeWidth = currentStrokeUnitWidth()
+        let viewSize = imageEditorView.gestureReferenceView.bounds.size
+        let strokeWidth = ImageEditorStrokeItem.strokeWidth(
+            forUnitStrokeWidth: unitStrokeWidth,
+            dstSize: viewSize,
+        )
+        var dotSize = max(strokeWidth, 1)
+        if currentStrokeType != .blur {
+            dotSize += 2 * strokeWidthPreviewDot.layer.borderWidth
+        }
+        strokeWidthPreviewDotSize.constant = dotSize
+    }
+
+    func updateStrokeWidthPreviewColor() {
+        switch currentStrokeType {
+        case .pen: strokeWidthPreviewDot.backgroundColor = model.color.color
+        case .highlighter: strokeWidthPreviewDot.backgroundColor = model.color.color.withAlphaComponent(Self.highligherStrokeOpacity)
+        case .blur: strokeWidthPreviewDot.backgroundColor = .white
+        }
+    }
+
+    func didTapStrokeTypeButton() {
+        owsAssertDebug(currentStroke == nil)
+        drawToolbar.toggleStrokeType()
+        currentStrokeType = drawToolbar.strokeType
+    }
+
+    @objc
+    func handleSliderContainerTap(_ gesture: UITapGestureRecognizer) {
+        setStrokeWidthSlider(revealed: !strokeWidthSliderRevealed)
+
+        // Hide slider after delay if user doesn't interact with it.
+        if strokeWidthSliderRevealed {
+            owsAssertDebug(hideStrokeWidthSliderTimer == nil)
+
+            hideStrokeWidthSliderTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+                guard let self else { return }
+
+                self.setStrokeWidthSlider(revealed: false)
+            }
+        }
+    }
+
+    func handleSliderTouchEvents(_ slider: UISlider) {
+        guard slider.isTracking != strokeWidthSliderRevealed else { return }
+
+        setStrokeWidthSlider(revealed: slider.isTracking)
+    }
+
+    func handleSliderValueChanged(value: Float) {
+        strokeWidthValues[currentStrokeType] = value
+        updateStrokeWidthPreviewSize()
+    }
+
+    func setStrokeWidthSlider(revealed: Bool) {
+        guard strokeWidthSliderRevealed != revealed else { return }
+
+        strokeWidthSliderRevealed = revealed
+        updateStrokeWidthSliderPosition()
+
+        if strokeWidthSliderRevealed {
+            setupStrokeWidthPreviewIfNecessary()
+        }
+
+        if let timer = hideStrokeWidthSliderTimer {
+            timer.invalidate()
+            hideStrokeWidthSliderTimer = nil
+        }
+    }
+
+    private func updateStrokeWidthSliderPosition() {
+        strokeWidthSliderPosition?.constant = strokeWidthSliderRevealed
+            ? strokeWidthSliderContainer.bounds.height / 2 - 12
+            : 0
+        UIView.animate(withDuration: 0.2) {
+            if !self.strokeWidthSliderRevealed {
+                self.strokeWidthPreviewDot.alpha = 0
+            }
+            self.view.setNeedsLayout()
+            self.view.layoutIfNeeded()
+        }
+    }
+}

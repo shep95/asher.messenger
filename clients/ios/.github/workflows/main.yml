@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - release/*
+
+# On PRs, "head_ref" is defined and is consistent across updates. On
+# pushes, it's not defined, so we use "run_id", which is unique across
+# every run; as a result, all actions on pushes will run to completion.
+#
+# Reference: https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  # Path format pulled from https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md#xcode
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    timeout-minutes: 20
+    runs-on: macos-26-xlarge
+    env:
+      FASTLANE_XCODEBUILD_SETTINGS_RETRIES: 7
+
+    strategy:
+      matrix:
+        # Add additional Xcode versions here if necessary.
+        xcode: ["Xcode_26.6"]
+
+    steps:
+      - name: Set Xcode version
+        run: |
+          echo DEVELOPER_DIR=/Applications/${{matrix.xcode}}.app >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v6
+
+      - name: Check Xcode version
+        run: |
+          Scripts/check_xcode_version.py --relaxed
+
+      - name: Download Metal toolchain
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+
+      - name: Download iOS runtime
+        run: |
+          xcodebuild -downloadPlatform iOS
+
+      - uses: ./.github/actions/clone-everything
+        with:
+          access-token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1 # Reads .ruby-version file by default
+        with:
+          bundler-cache: true
+
+      - name: Build and Test
+        run: Scripts/build-and-test.sh
+
+      - name: Upload build logs
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: Logs
+          path: ~/Library/Logs/Signal-CI
+
+      - name: Normalize database schema
+        run: |
+          touch -d 2026-01-01T00:00:00 ~/Library/Signal-iOS-Schema/schema.json
+
+      - name: Upload database schema
+        uses: actions/upload-artifact@v6
+        with:
+          name: Database Schema
+          path: ~/Library/Signal-iOS-Schema
+
+  check_autogenstrings:
+    name: Check if strings file is outdated
+
+    timeout-minutes: 10
+
+    runs-on: macos-26
+
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run genstrings
+        run: Scripts/translation/auto-genstrings
+
+      - name: Check for any changes
+        run: git diff --exit-code

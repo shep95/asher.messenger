@@ -1,0 +1,124 @@
+//
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+import LibSignalClient
+
+class BackupArchiveReactionArchiver: BackupArchiveProtoStreamWriter {
+    private typealias ArchiveFrameError = BackupArchive.ArchiveFrameError
+
+    private let reactionStore: BackupArchiveReactionStore
+
+    init(reactionStore: BackupArchiveReactionStore) {
+        self.reactionStore = reactionStore
+    }
+
+    // MARK: - Archiving
+
+    func archiveReactions(
+        _ message: TSMessage,
+        context: BackupArchive.RecipientArchivingContext,
+    ) -> BackupArchive.ArchiveInteractionResult<[BackupProto_Reaction]> {
+        let reactions = reactionStore.allReactions(message: message, context: context).reversed()
+
+        var errors = [ArchiveFrameError]()
+        var reactionProtos = [BackupProto_Reaction]()
+
+        for (sortOrder, reaction) in reactions.enumerated() {
+            guard
+                let authorAddress = BackupArchive.ContactAddress(
+                    aci: reaction.reactorAci,
+                    e164: E164(reaction.reactorPhoneNumber),
+                )?.asArchivingAddress()
+            else {
+                // Skip this reaction.
+                errors.append(.archiveFrameError(.invalidReactionAddress))
+                continue
+            }
+
+            guard let authorId = context[authorAddress] else {
+                errors.append(.archiveFrameError(.referencedRecipientIdMissing(authorAddress)))
+                continue
+            }
+
+            let sentAtTimestamp = reaction.sentAtTimestamp
+            guard BackupArchive.Timestamps.isValid(sentAtTimestamp) else {
+                errors.append(.archiveFrameError(.invalidReactionTimestamp))
+                continue
+            }
+
+            var reactionProto = BackupProto_Reaction()
+            reactionProto.emoji = reaction.emoji
+            reactionProto.authorID = authorId.value
+            reactionProto.sentTimestamp = sentAtTimestamp
+            reactionProto.sortOrder = UInt64(sortOrder)
+
+            reactionProtos.append(reactionProto)
+        }
+
+        if errors.isEmpty {
+            return .success(reactionProtos)
+        } else {
+            return .partialFailure(reactionProtos, errors)
+        }
+    }
+
+    // MARK: Restoring
+
+    func restoreReactions(
+        _ reactions: [BackupProto_Reaction],
+        message: TSMessage,
+        context: BackupArchive.RecipientRestoringContext,
+    ) -> BackupArchive.RestoreInteractionResult<Void> {
+        var reactionErrors = [BackupArchive.RestoreFrameError]()
+        for reaction in reactions.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+            let reactorAddress = context[reaction.authorRecipientId]
+
+            switch reactorAddress {
+            case .localAddress:
+                reactionStore.createReaction(
+                    uniqueMessageId: message.uniqueId,
+                    emoji: reaction.emoji,
+                    reactorAci: context.localIdentifiers.aci,
+                    sentAtTimestamp: reaction.sentTimestamp,
+                    context: context,
+                )
+            case .contact(let address):
+                if let aci = address.aci {
+                    reactionStore.createReaction(
+                        uniqueMessageId: message.uniqueId,
+                        emoji: reaction.emoji,
+                        reactorAci: aci,
+                        sentAtTimestamp: reaction.sentTimestamp,
+                        context: context,
+                    )
+                } else if let e164 = address.e164 {
+                    reactionStore.createLegacyReaction(
+                        uniqueMessageId: message.uniqueId,
+                        emoji: reaction.emoji,
+                        reactorE164: e164,
+                        sentAtTimestamp: reaction.sentTimestamp,
+                        context: context,
+                    )
+                } else {
+                    reactionErrors.append(.restoreFrameError(.invalidProtoData(.reactionNotFromAciOrE164)))
+                }
+            case .group, .distributionList, .releaseNotesChannel, .callLink:
+                // Referencing a group or distributionList as the author is invalid.
+                reactionErrors.append(.restoreFrameError(.invalidProtoData(.reactionNotFromAciOrE164)))
+            case nil:
+                reactionErrors.append(.restoreFrameError(
+                    .invalidProtoData(.recipientIdNotFound(reaction.authorRecipientId)),
+                ))
+            }
+        }
+
+        if reactionErrors.isEmpty {
+            return .success(())
+        } else {
+            return .partialRestore((), reactionErrors)
+        }
+    }
+}

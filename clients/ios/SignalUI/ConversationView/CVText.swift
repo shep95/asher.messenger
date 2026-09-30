@@ -1,0 +1,473 @@
+//
+// Copyright 2020 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+public import SignalServiceKit
+
+public enum CVTextValue: Equatable, Hashable {
+    public typealias CacheKey = String
+
+    case text(String)
+    case attributedText(NSAttributedString)
+    case messageBody(HydratedMessageBody)
+
+    public var isEmpty: Bool {
+        switch self {
+        case .text(let text):
+            return text.isEmpty
+        case .attributedText(let attributedText):
+            return attributedText.isEmpty
+        case .messageBody(let messageBody):
+            return messageBody.isEmpty
+        }
+    }
+
+    public var nilIfEmpty: CVTextValue? {
+        return self.isEmpty ? nil : self
+    }
+
+    public var naturalTextAligment: NSTextAlignment {
+        switch self {
+        case .text(let text):
+            return text.naturalTextAlignment
+        case .attributedText(let attributedText):
+            return attributedText.string.naturalTextAlignment
+        case .messageBody(let hydratedMessageBody):
+            return hydratedMessageBody.naturalTextAlignment
+        }
+    }
+
+    public var accessibilityDescription: String {
+        switch self {
+        case .text(let text):
+            return text
+        case .attributedText(let attributedText):
+            return attributedText.string
+        case .messageBody(let hydratedMessageBody):
+            return hydratedMessageBody.accessibilityDescription
+        }
+    }
+
+    var debugDescription: String {
+        switch self {
+        case .text(let text):
+            return "text: \(text)"
+        case .attributedText(let attributedText):
+            return "attributedText: \(attributedText.string)"
+        case .messageBody(let messageBody):
+            return "messageBody: \(messageBody.debugDescription)"
+        }
+    }
+
+    public var cacheKey: CacheKey {
+        switch self {
+        case .text(let text):
+            return "t\(text)"
+        case .attributedText(let attributedText):
+            return "a\(attributedText.description)"
+        case .messageBody(let messageBody):
+            return "m\(messageBody.cacheKey)"
+        }
+    }
+}
+
+// MARK: - UILabel
+
+public struct CVLabelConfig {
+    public typealias CacheKey = String
+
+    public let text: CVTextValue
+    public let displayConfig: HydratedMessageBody.DisplayConfiguration
+    public let font: UIFont
+    public let textColor: UIColor
+    public let numberOfLines: Int
+    public let lineBreakMode: NSLineBreakMode
+    public let textAlignment: NSTextAlignment?
+
+    public init(
+        text: CVTextValue,
+        displayConfig: HydratedMessageBody.DisplayConfiguration,
+        font: UIFont,
+        textColor: UIColor,
+        numberOfLines: Int = 1,
+        lineBreakMode: NSLineBreakMode = .byWordWrapping,
+        textAlignment: NSTextAlignment? = nil,
+    ) {
+        self.text = text
+        self.displayConfig = displayConfig
+        self.font = font
+        self.textColor = textColor
+        self.numberOfLines = numberOfLines
+        self.lineBreakMode = lineBreakMode
+        self.textAlignment = textAlignment
+    }
+
+    public static func unstyledText(
+        _ text: String,
+        font: UIFont,
+        textColor: UIColor,
+        numberOfLines: Int = 1,
+        lineBreakMode: NSLineBreakMode = .byWordWrapping,
+        textAlignment: NSTextAlignment? = nil,
+    ) -> Self {
+        return .init(
+            text: .text(text),
+            displayConfig: .forUnstyledText(font: font, textColor: textColor),
+            font: font,
+            textColor: textColor,
+            numberOfLines: numberOfLines,
+            lineBreakMode: lineBreakMode,
+            textAlignment: textAlignment,
+        )
+    }
+
+    func applyForMeasurement(label: UILabel) {
+        label.font = self.font
+        label.numberOfLines = self.numberOfLines
+        label.lineBreakMode = self.lineBreakMode
+
+        // Skip textColor, textAlignment.
+
+        // Apply text last, to protect attributed text attributes.
+        // There are also perf benefits.
+        switch text {
+        case .text(let text):
+            label.text = text
+        case .attributedText(let attributedText):
+            label.attributedText = attributedText
+        case .messageBody(let hydratedMessageBody):
+            label.attributedText = hydratedMessageBody.asAttributedStringForDisplay(
+                config: displayConfig,
+                isDarkThemeEnabled: false, /* irrelevant, measuring */
+            )
+        }
+    }
+
+    public func applyForRendering(label: UILabel) {
+        label.font = self.font
+        label.numberOfLines = self.numberOfLines
+        label.lineBreakMode = self.lineBreakMode
+        label.textColor = self.textColor
+        if let textAlignment {
+            label.textAlignment = textAlignment
+        } else {
+            label.textAlignment = .natural
+        }
+
+        // Apply text last, to protect attributed text attributes.
+        // There are also perf benefits.
+        switch text {
+        case .text(let text):
+            label.text = text
+        case .attributedText(let attributedText):
+            label.attributedText = attributedText
+        case .messageBody(let hydratedMessageBody):
+            label.attributedText = hydratedMessageBody.asAttributedStringForDisplay(
+                config: self.displayConfig,
+                isDarkThemeEnabled: Theme.isDarkThemeEnabled,
+            )
+        }
+    }
+
+    public func applyForRendering(button: UIButton) {
+        var buttonConfiguration = button.configuration ?? CVButton.emptyConfiguration()
+
+        var attributedTitle: AttributedString = switch text {
+        case .text(let text):
+            AttributedString(text)
+
+        case .attributedText(let attributedText):
+            AttributedString(attributedText)
+
+        case .messageBody(let hydratedMessageBody):
+            AttributedString(hydratedMessageBody.asAttributedStringForDisplay(
+                config: displayConfig,
+                isDarkThemeEnabled: Theme.isDarkThemeEnabled,
+            ))
+        }
+
+        // Set text color and default font for parts that don't have those attributes.
+        var defaults = AttributeContainer()
+        defaults.font = font
+        defaults.foregroundColor = textColor
+        attributedTitle.mergeAttributes(defaults, mergePolicy: .keepCurrent)
+        buttonConfiguration.attributedTitle = attributedTitle
+
+        buttonConfiguration.titleLineBreakMode = lineBreakMode
+        buttonConfiguration.titleAlignment = switch textAlignment ?? .natural {
+        case .left: .leading
+        case .right: .trailing
+        case .center: .center
+        case .natural, .justified: .automatic
+        @unknown default: .automatic
+        }
+
+        button.configuration = buttonConfiguration
+
+        // `titleAlignment` isn't always enough with complex attributed text strings,
+        //  so this assignment is still necessary as of iOS 26.5.
+        if let textAlignment {
+            button.titleLabel?.textAlignment = textAlignment
+        }
+    }
+
+    public func measure(maxWidth: CGFloat) -> CGSize {
+        let size = CVText.measureLabel(config: self, maxWidth: maxWidth)
+        if size.width > maxWidth {
+            owsFailDebug("size.width: \(size.width) > maxWidth: \(maxWidth)")
+        }
+        return size
+    }
+
+    public var debugDescription: String {
+        "CVLabelConfig: \(text.debugDescription)"
+    }
+
+    public var cacheKey: CacheKey {
+        // textColor doesn't affect measurement.
+        "\(text.cacheKey),\(font.fontName),\(font.pointSize),\(numberOfLines),\(lineBreakMode.rawValue),\(textAlignment?.rawValue ?? 0)"
+    }
+}
+
+// MARK: - UITextView
+
+public struct CVTextViewConfig {
+
+    public typealias CacheKey = String
+
+    public let text: CVTextValue
+    public let font: UIFont
+    public let textColor: UIColor
+    public let textAlignment: NSTextAlignment?
+    public let displayConfiguration: HydratedMessageBody.DisplayConfiguration
+    public let linkTextAttributes: [NSAttributedString.Key: Any]?
+    public let linkifyStyle: CVTextLabel.LinkifyStyle
+    public let linkItems: [CVTextLabel.Item]
+    public let matchedSearchRanges: [NSRange]
+    public let extraCacheKeyFactors: [String]?
+
+    public init(
+        text: CVTextValue,
+        font: UIFont,
+        textColor: UIColor,
+        textAlignment: NSTextAlignment? = nil,
+        displayConfiguration: HydratedMessageBody.DisplayConfiguration,
+        linkTextAttributes: [NSAttributedString.Key: Any]? = nil,
+        linkifyStyle: CVTextLabel.LinkifyStyle,
+        linkItems: [CVTextLabel.Item],
+        matchedSearchRanges: [NSRange],
+        extraCacheKeyFactors: [String]? = nil,
+    ) {
+
+        self.text = text
+        self.font = font
+        self.textColor = textColor
+        self.textAlignment = textAlignment
+        self.displayConfiguration = displayConfiguration
+        self.linkTextAttributes = linkTextAttributes
+        self.linkifyStyle = linkifyStyle
+        self.linkItems = linkItems
+        self.matchedSearchRanges = matchedSearchRanges
+        self.extraCacheKeyFactors = extraCacheKeyFactors
+    }
+
+    public var debugDescription: String {
+        "CVTextViewConfig: \(text.debugDescription)"
+    }
+
+    public var cacheKey: CacheKey {
+        // textColor link-related attributes and search ranges (for the attributes we set)
+        // don't affect measurement.
+        var cacheKey = "\(text.cacheKey),\(font.fontName),\(font.pointSize),\(textAlignment?.rawValue ?? 0)"
+
+        if let extraCacheKeyFactors = self.extraCacheKeyFactors {
+            cacheKey += extraCacheKeyFactors.joined(separator: ",")
+        }
+
+        return cacheKey
+    }
+}
+
+// MARK: -
+
+public class CVText {
+    public typealias CacheKey = String
+
+    private static var cacheMeasurements = true
+
+    private static let cacheSize: Int = 500
+
+    // MARK: - UILabel
+
+    private static func buildCacheKey(configKey: String, maxWidth: CGFloat) -> CacheKey {
+        "\(configKey),\(maxWidth)"
+    }
+
+    private static let labelCache = LRUCache<CacheKey, CGSize>(maxSize: cacheSize)
+
+    public static func measureLabel(config: CVLabelConfig, maxWidth: CGFloat) -> CGSize {
+        let cacheKey = buildCacheKey(configKey: config.cacheKey, maxWidth: maxWidth)
+        if
+            cacheMeasurements,
+            let result = labelCache.get(key: cacheKey)
+        {
+            return result
+        }
+
+        let result = measureLabelUsingLayoutManager(config: config, maxWidth: maxWidth)
+        owsAssertDebug(result.isNonEmpty || config.text.isEmpty)
+
+        if cacheMeasurements {
+            labelCache.set(key: cacheKey, value: result.ceil)
+        }
+
+        return result.ceil
+    }
+
+#if TESTABLE_BUILD
+    public static func measureLabelUsingView(config: CVLabelConfig, maxWidth: CGFloat) -> CGSize {
+        guard !config.text.isEmpty else {
+            return .zero
+        }
+        let label = UILabel()
+        config.applyForMeasurement(label: label)
+        var size = label.sizeThatFits(CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)).ceil
+        // Truncate to available space if necessary.
+        size.width = min(size.width, maxWidth)
+        return size
+    }
+#endif
+
+    static func measureLabelUsingLayoutManager(config: CVLabelConfig, maxWidth: CGFloat) -> CGSize {
+        guard !config.text.isEmpty else {
+            return .zero
+        }
+        let textContainer = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+        textContainer.maximumNumberOfLines = config.numberOfLines
+        textContainer.lineBreakMode = config.lineBreakMode
+        textContainer.lineFragmentPadding = 0
+        return textContainer.size(for: config.text, font: config.font)
+    }
+
+    // MARK: - CVTextLabel
+
+    private static let bodyTextLabelCache = LRUCache<CacheKey, CVTextLabel.Measurement>(maxSize: cacheSize)
+
+    public static func measureBodyTextLabel(config: CVTextLabel.Config, maxWidth: CGFloat) -> CVTextLabel.Measurement {
+        let cacheKey = buildCacheKey(configKey: config.cacheKey, maxWidth: maxWidth)
+        if
+            cacheMeasurements,
+            let result = bodyTextLabelCache.get(key: cacheKey)
+        {
+            return result
+        }
+
+        let measurement = CVTextLabel.measureSize(config: config, maxWidth: maxWidth)
+        owsAssertDebug(measurement.size.width > 0)
+        owsAssertDebug(measurement.size.height > 0)
+        owsAssertDebug(measurement.size == measurement.size.ceil)
+
+        if cacheMeasurements {
+            bodyTextLabelCache.set(key: cacheKey, value: measurement)
+        }
+
+        return measurement
+    }
+
+    public static func measureBodyTextLabelInManualStackView(
+        config: CVTextLabel.Config,
+        footerSize: CGSize,
+        maxWidth: CGFloat,
+        measurementBuilder: CVCellMeasurement.Builder,
+    ) -> [ManualStackSubviewInfo] {
+        let footerWidthWithSpacing = footerSize.width + 6
+        let maxTextWidthForAdjacentFooter = maxWidth - footerWidthWithSpacing
+
+        let measurementWithSpaceForAdjacentFooter = CVText.measureBodyTextLabel(
+            config: config,
+            maxWidth: maxTextWidthForAdjacentFooter,
+        )
+
+        let canFitOnOneLineWithAdjacentFooter =
+            if let lastLineRect = measurementWithSpaceForAdjacentFooter.lastLineRect {
+                lastLineRect.height == measurementWithSpaceForAdjacentFooter.size.height
+            } else {
+                true
+            }
+
+        let info: [ManualStackSubviewInfo]
+        if canFitOnOneLineWithAdjacentFooter {
+            let textSize = measurementWithSpaceForAdjacentFooter.size
+            info = [CGSize(width: textSize.width + footerWidthWithSpacing, height: textSize.height).ceil.asManualSubviewInfo]
+        } else {
+            let measurementForFullWidth = CVText.measureBodyTextLabel(
+                config: config,
+                maxWidth: maxWidth,
+            )
+            let textInfo = measurementForFullWidth.size.ceil.asManualSubviewInfo
+
+            let footerShouldOverlapWithLastLine = measurementForFullWidth
+                .lastLineRect.map { lastLineRect in
+                    lastLineRect.width <= maxTextWidthForAdjacentFooter
+                } ?? false
+
+            if footerShouldOverlapWithLastLine {
+                info = [textInfo]
+            } else {
+                let footerSpacerInfo = CGSize(
+                    width: footerSize.width,
+                    height: footerSize.height + 3,
+                ).ceil.asManualSubviewInfo
+                info = [textInfo, footerSpacerInfo]
+            }
+        }
+
+        return info
+    }
+}
+
+// MARK: -
+
+private extension NSTextContainer {
+    func size(for textValue: CVTextValue, font: UIFont) -> CGSize {
+        let layoutManager = NSLayoutManager()
+        layoutManager.addTextContainer(self)
+
+        let attributedString: NSAttributedString
+        switch textValue {
+        case .messageBody(let messageBody):
+            attributedString = messageBody.asAttributedStringForDisplay(
+                config: .forMeasurement(font: font),
+                isDarkThemeEnabled: false, /* doesn't matter */
+            )
+        case .attributedText(let text):
+            let mutableText = NSMutableAttributedString(attributedString: text)
+            // The original attributed string may not have an overall font assigned.
+            // Without it, measurement will not be correct. We assign the default font
+            // to any ranges that don't currently have a font assigned.
+            mutableText.addDefaultAttributeToEntireString(.font, value: font)
+            attributedString = mutableText
+        case .text(let text):
+            attributedString = NSAttributedString(string: text, attributes: [.font: font])
+        }
+
+        // The string must be assigned to the NSTextStorage *after* it has
+        // an associated layout manager. Otherwise, the `NSOriginalFont`
+        // attribute will not be defined correctly resulting in incorrect
+        // measurement of character sets that font doesn't support natively
+        // (CJK, Arabic, Emoji, etc.)
+        let textStorage = NSTextStorage()
+        textStorage.addLayoutManager(layoutManager)
+        textStorage.setAttributedString(attributedString)
+
+        // The NSTextStorage object owns all the other layout components,
+        // so there are only weak references to it. In optimized builds,
+        // this can result in it being freed before we perform measurement.
+        // We can work around this by explicitly extending the lifetime of
+        // textStorage until measurement is completed.
+        let size = withExtendedLifetime(textStorage) { layoutManager.usedRect(for: self).size }
+
+        return size.ceil
+    }
+}

@@ -1,0 +1,102 @@
+//
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+public extension OWSRequestFactory {
+    enum StripePaymentMethod {
+        public enum BankTransfer: String {
+            case sepa = "SEPA_DEBIT"
+            case ideal = "IDEAL"
+        }
+
+        case card
+        case bankTransfer(BankTransfer)
+
+        fileprivate var rawValue: String {
+            switch self {
+            case .card:
+                return "CARD"
+            case .bankTransfer(let bankTransfer):
+                return bankTransfer.rawValue
+            }
+        }
+    }
+
+    private enum BoostApiPaths {
+        static let stripeCreatePaymentIntent = "v1/subscription/boost/create"
+        static let paypalCreatePayment = "v1/subscription/boost/paypal/create"
+        static let paypalConfirmPayment = "v1/subscription/boost/paypal/confirm"
+    }
+
+    /// A request to create a Stripe payment intent for a boost.
+    static func boostStripeCreatePaymentIntent(
+        integerMoneyValue: UInt,
+        inCurrencyCode currencyCode: Currency.Code,
+        level: UInt64,
+        paymentMethod: StripePaymentMethod,
+        donationPermit: DonationPermit,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: BoostApiPaths.stripeCreatePaymentIntent)!,
+            method: HTTPMethod.post.methodName,
+            parameters: [
+                "currency": currencyCode.lowercased(),
+                "amount": integerMoneyValue,
+                "level": level,
+                "paymentMethod": paymentMethod.rawValue,
+            ],
+        )
+        request.headers["Donation-Permit"] = donationPermit.serializedPermit.base64EncodedString()
+        request.auth = .anonymous
+        return request
+    }
+
+    /// A request to create a PayPal payment for a boost.
+    static func boostPaypalCreatePayment(
+        integerMoneyValue: UInt,
+        inCurrencyCode currencyCode: Currency.Code,
+        level: UInt64,
+        returnUrl: URL,
+        cancelUrl: URL,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: BoostApiPaths.paypalCreatePayment)!,
+            method: HTTPMethod.post.methodName,
+            parameters: [
+                "currency": currencyCode.lowercased(),
+                "amount": integerMoneyValue,
+                "level": level,
+                "returnUrl": returnUrl.absoluteString,
+                "cancelUrl": cancelUrl.absoluteString,
+            ],
+        )
+        request.auth = .anonymous
+        return request
+    }
+
+    /// A request to confirm a PayPal payment for a one-time payment.
+    static func oneTimePaypalConfirmPayment(
+        integerMoneyValue: UInt,
+        inCurrencyCode currencyCode: Currency.Code,
+        level: UInt64,
+        payerId: String,
+        paymentId: String,
+        paymentToken: String,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: BoostApiPaths.paypalConfirmPayment)!,
+            method: HTTPMethod.post.methodName,
+            parameters: [
+                "currency": currencyCode.lowercased(),
+                "amount": integerMoneyValue,
+                "level": level,
+                "payerId": payerId,
+                "paymentId": paymentId,
+                "paymentToken": paymentToken,
+            ],
+        )
+        request.auth = .anonymous
+        return request
+    }
+}

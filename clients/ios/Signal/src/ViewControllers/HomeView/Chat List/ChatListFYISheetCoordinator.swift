@@ -1,0 +1,1086 @@
+//
+// Copyright 2025 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+import SignalUI
+
+@MainActor
+class ChatListFYISheetCoordinator {
+    fileprivate enum FYISheet {
+        struct SMSVerificationCodeSent {
+            let timestampMs: UInt64
+        }
+
+        struct BadgeThanks {
+            let redemptionSuccess: DonationReceiptCredentialRedemptionSuccess
+            let successMode: DonationReceiptCredentialResultStore.Mode
+        }
+
+        struct BadgeIssue {
+            let redemptionError: DonationReceiptCredentialRequestError
+            let badge: ProfileBadge
+            let errorMode: DonationReceiptCredentialResultStore.Mode
+        }
+
+        struct BadgeExpiration {
+            let expiredBadge: ProfileBadge
+            let donationSubscriberID: Data?
+            let mostRecentSubscriptionPaymentMethod: DonationPaymentMethod?
+            let probablyHasCurrentSubscription: Bool
+        }
+
+        struct BackupSubscriptionExpiringSoonWithPendingDownloads {
+            let warning: BackupSubscriptionIssueStore.IAPSubscriptionExpiringSoonWarning
+        }
+
+        struct BackupSubscriptionExpired {
+            enum SubscriptionType {
+                case iap
+                case testFlight
+            }
+
+            let subscriptionType: SubscriptionType
+        }
+
+        struct BackupSubscriptionFailedToRenew {}
+
+        struct KeyTransparencySelfCheckFailed {}
+
+        struct BackupArchiveError {}
+
+        struct LowDiskSpaceWarning {
+            let bytesRequiredToAvoidWarning: UInt64
+            let now: Date
+        }
+
+        struct EnableLocalBackups {}
+
+        struct ChooseNewLocalBackupLocation {}
+
+        case smsVerificationCodeSent(SMSVerificationCodeSent)
+        case badgeThanks(BadgeThanks)
+        case badgeIssue(BadgeIssue)
+        case badgeExpiration(BadgeExpiration)
+        case backupSubscriptionExpiringSoonWithPendingDownloads(BackupSubscriptionExpiringSoonWithPendingDownloads)
+        case backupSubscriptionExpired(BackupSubscriptionExpired)
+        case backupSubscriptionFailedToRenew(BackupSubscriptionFailedToRenew)
+        case keyTransparencySelfCheckFailed(KeyTransparencySelfCheckFailed)
+        case backupArchiveError(BackupArchiveError)
+        case lowDiskSpaceWarning(LowDiskSpaceWarning)
+        case enableLocalBackups(EnableLocalBackups)
+        case chooseNewLocalBackupLocation(ChooseNewLocalBackupLocation)
+    }
+
+    private let backupArchiveErrorStore: BackupArchiveErrorStore
+    private let backupAttachmentDownloadStore: BackupAttachmentDownloadStore
+    private let backupExportJobRunner: BackupExportJobRunner
+    private let backupSubscriptionIssueStore: BackupSubscriptionIssueStore
+    private let dateProvider: DateProvider
+    private let db: DB
+    private let donationReceiptCredentialResultStore: DonationReceiptCredentialResultStore
+    private let donationSubscriptionManager: DonationSubscriptionManager
+    private let keyTransparencyStore: KeyTransparencyStore
+    private let lowDiskSpaceManager: LowDiskSpaceManager
+    private let networkManager: NetworkManager
+    private let profileBadgeManager: ProfileBadgeManager
+    private let safetyTipsManager: SafetyTipsManager
+    private let localFileBackupManager: LocalFileBackupManager
+    private let localFileBackupStore: LocalFileBackupStore
+
+    init(
+        backupArchiveErrorStore: BackupArchiveErrorStore,
+        backupAttachmentDownloadStore: BackupAttachmentDownloadStore,
+        backupExportJobRunner: BackupExportJobRunner,
+        backupSubscriptionIssueStore: BackupSubscriptionIssueStore,
+        dateProvider: @escaping DateProvider,
+        db: DB,
+        donationReceiptCredentialResultStore: DonationReceiptCredentialResultStore,
+        donationSubscriptionManager: DonationSubscriptionManager,
+        keyTransparencyStore: KeyTransparencyStore,
+        lowDiskSpaceManager: LowDiskSpaceManager,
+        networkManager: NetworkManager,
+        profileBadgeManager: ProfileBadgeManager,
+        profileManager: ProfileManager,
+        localFileBackupManager: LocalFileBackupManager,
+        localFileBackupStore: LocalFileBackupStore,
+    ) {
+        self.backupArchiveErrorStore = backupArchiveErrorStore
+        self.backupAttachmentDownloadStore = backupAttachmentDownloadStore
+        self.backupExportJobRunner = backupExportJobRunner
+        self.backupSubscriptionIssueStore = backupSubscriptionIssueStore
+        self.dateProvider = dateProvider
+        self.db = db
+        self.donationReceiptCredentialResultStore = donationReceiptCredentialResultStore
+        self.donationSubscriptionManager = donationSubscriptionManager
+        self.keyTransparencyStore = keyTransparencyStore
+        self.lowDiskSpaceManager = lowDiskSpaceManager
+        self.networkManager = networkManager
+        self.profileBadgeManager = profileBadgeManager
+        self.safetyTipsManager = SafetyTipsManager()
+        self.localFileBackupManager = localFileBackupManager
+        self.localFileBackupStore = localFileBackupStore
+    }
+
+    func presentIfNecessary(
+        from chatListViewController: ChatListViewController,
+    ) async {
+        guard
+            chatListViewController.isChatListTopmostViewController(),
+            let nextSheet = db.read(block: { nextSheetToPresent(tx: $0) })
+        else {
+            return
+        }
+
+        await present(fyiSheet: nextSheet, from: chatListViewController)
+    }
+
+    // MARK: -
+
+    private func nextSheetToPresent(tx: DBReadTransaction) -> FYISheet? {
+        let now = dateProvider()
+
+        if let sheet = shouldShowSMSVerificationCodeSentSheet(tx: tx) {
+            return sheet
+        } else if let sheet = shouldShowBadgeThanksSheet(successMode: .oneTimeBoost, tx: tx) {
+            return sheet
+        } else if let sheet = shouldShowBadgeThanksSheet(successMode: .recurringSubscriptionInitiation, tx: tx) {
+            return sheet
+        } else if let sheet = shouldShowBadgeIssueSheet(errorMode: .oneTimeBoost, tx: tx) {
+            return sheet
+        } else if let sheet = shouldShowBadgeIssueSheet(errorMode: .recurringSubscriptionInitiation, tx: tx) {
+            return sheet
+        } else if let sheet = shouldShowBadgeIssueSheet(errorMode: .recurringSubscriptionRenewal, tx: tx) {
+            return sheet
+        } else if
+            let expiredBadgeID = donationSubscriptionManager.mostRecentlyExpiredBadgeID(tx: tx),
+            let expiredBadge = profileBadgeManager.fetchBadgeWithId(expiredBadgeID, tx: tx),
+            donationSubscriptionManager.showExpirySheetOnHomeScreenKey(tx: tx)
+        {
+            return .badgeExpiration(FYISheet.BadgeExpiration(
+                expiredBadge: expiredBadge,
+                donationSubscriberID: donationSubscriptionManager.getSubscriberID(tx: tx),
+                mostRecentSubscriptionPaymentMethod: donationSubscriptionManager.getMostRecentSubscriptionPaymentMethod(tx: tx),
+                probablyHasCurrentSubscription: donationSubscriptionManager.probablyHasCurrentSubscription(tx: tx),
+            ))
+        } else if
+            let warning = backupSubscriptionIssueStore.shouldWarnIAPSubscriptionExpiringSoon(tx: tx),
+            warning.date < now,
+            // Only show the warning if there are downloads we still need to do.
+            backupAttachmentDownloadStore.hasAnyIncompleteDownloads(isThumbnail: false, tx: tx)
+        {
+            return .backupSubscriptionExpiringSoonWithPendingDownloads(FYISheet.BackupSubscriptionExpiringSoonWithPendingDownloads(
+                warning: warning,
+            ))
+        } else if backupSubscriptionIssueStore.shouldWarnIAPSubscriptionExpired(tx: tx) {
+            return .backupSubscriptionExpired(FYISheet.BackupSubscriptionExpired(subscriptionType: .iap))
+        } else if backupSubscriptionIssueStore.shouldWarnTestFlightSubscriptionExpired(tx: tx) {
+            return .backupSubscriptionExpired(FYISheet.BackupSubscriptionExpired(subscriptionType: .testFlight))
+        } else if backupSubscriptionIssueStore.shouldWarnIAPSubscriptionFailedToRenew(tx: tx) {
+            return .backupSubscriptionFailedToRenew(FYISheet.BackupSubscriptionFailedToRenew())
+        } else if keyTransparencyStore.shouldWarnSelfCheckFailed(tx: tx) {
+            return .keyTransparencySelfCheckFailed(FYISheet.KeyTransparencySelfCheckFailed())
+        } else if backupArchiveErrorStore.hasError(tx: tx) {
+            return .backupArchiveError(FYISheet.BackupArchiveError())
+        } else if let bytesRequiredToAvoidWarning = lowDiskSpaceManager.getNeedsWarning(now: now, tx: tx) {
+            return .lowDiskSpaceWarning(FYISheet.LowDiskSpaceWarning(
+                bytesRequiredToAvoidWarning: bytesRequiredToAvoidWarning,
+                now: now,
+            ))
+        } else if localFileBackupManager.shouldPromptUserToEnableLocalBackups(tx: tx) {
+            return .enableLocalBackups(FYISheet.EnableLocalBackups())
+        } else if localFileBackupManager.shouldPromptUserToChooseNewLocalBackupLocation(tx: tx) {
+            return .chooseNewLocalBackupLocation(FYISheet.ChooseNewLocalBackupLocation())
+        } else {
+            return nil
+        }
+    }
+
+    /// Checks for `.smsVerificationCodeSent` FYI sheets.
+    ///
+    /// When another device tries to register and receives an SMS code, notify
+    /// the primary device by showing an FYI sheet.
+    ///
+    private func shouldShowSMSVerificationCodeSentSheet(
+        tx: DBReadTransaction,
+    ) -> FYISheet? {
+
+        guard let timestamp = safetyTipsManager.lastVerificationCodeTimestampMsWithinExpiryTime(transaction: tx) else {
+            return nil
+        }
+
+        return .smsVerificationCodeSent(FYISheet.SMSVerificationCodeSent(timestampMs: timestamp))
+    }
+
+    /// Checks for `.badgeThanks` FYI sheets.
+    ///
+    /// When creating a new donation we show a `BadgeThankSheet` inline in the
+    /// donate flow, if payment succeeds quickly (in which case we won't need to
+    /// show one here). However, bank-transfer payment methods (e.g., SEPA) take
+    /// ~days to process and may succeed in the background, in which case we
+    /// should show a sheet.
+    ///
+    /// We don't want to show a sheet for subscription renewals, which succeed
+    /// silently.
+    private func shouldShowBadgeThanksSheet(
+        successMode: DonationReceiptCredentialResultStore.Mode,
+        tx: DBReadTransaction,
+    ) -> FYISheet? {
+        guard
+            let redemptionSuccess = donationReceiptCredentialResultStore
+                .getRedemptionSuccess(successMode: successMode, tx: tx),
+            !donationReceiptCredentialResultStore
+                .hasPresentedSuccess(successMode: successMode, tx: tx)
+        else {
+            return nil
+        }
+
+        return .badgeThanks(FYISheet.BadgeThanks(
+            redemptionSuccess: redemptionSuccess,
+            successMode: successMode,
+        ))
+    }
+
+    /// Checks for `.badgeIssue` FYI sheets.
+    ///
+    /// See inline comments: we expect these to be handled inline in the donate
+    /// flow for non-bank payments, so we avoid showing what are likely
+    /// redundant errors here.
+    private func shouldShowBadgeIssueSheet(
+        errorMode: DonationReceiptCredentialResultStore.Mode,
+        tx: DBReadTransaction,
+    ) -> FYISheet? {
+        guard
+            let redemptionError = donationReceiptCredentialResultStore
+                .getRequestError(errorMode: errorMode, tx: tx),
+            !donationReceiptCredentialResultStore
+                .hasPresentedError(errorMode: errorMode, tx: tx)
+        else {
+            return nil
+        }
+
+        switch redemptionError.errorCode {
+        case .paymentStillProcessing:
+            // Not a terminal error – no reason to show a sheet.
+            return nil
+        case
+            .paymentFailed,
+            .localValidationFailed,
+            .serverValidationFailed,
+            .paymentNotFound,
+            .paymentIntentRedeemed:
+            break
+        }
+
+        switch redemptionError.paymentMethod {
+        case nil, .applePay, .creditOrDebitCard, .paypal:
+            // Non-SEPA payment methods generally get their errors immediately,
+            // and so errors from initiating a donation should have been
+            // presented when the user was in the donate view. Consequently, we
+            // only want to present renewal errors here.
+            switch errorMode {
+            case .oneTimeBoost, .recurringSubscriptionInitiation:
+                return nil
+            case .recurringSubscriptionRenewal:
+                break
+            }
+        case .sepa, .ideal:
+            // SEPA donations won't error out immediately upon initiation
+            // (they'll spend time processing first), so we should show errors
+            // for any variety of donation here.
+            break
+        }
+
+        guard let badge = profileBadgeManager.fetchBadgeWithId(redemptionError.badgeID, tx: tx) else {
+            Logger.warn("Missing badge for expected badge ID! \(redemptionError.badgeID)")
+            return nil
+        }
+
+        return .badgeIssue(FYISheet.BadgeIssue(
+            redemptionError: redemptionError,
+            badge: badge,
+            errorMode: errorMode,
+        ))
+    }
+
+    // MARK: -
+
+    private func present(
+        fyiSheet: FYISheet,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        switch fyiSheet {
+        case .smsVerificationCodeSent(let smsVerificationCodeSent):
+            await _present(smsVerificationCodeSent: smsVerificationCodeSent, from: chatListViewController)
+        case .badgeThanks(let badgeThanks):
+            await _present(badgeThanks: badgeThanks, from: chatListViewController)
+        case .badgeIssue(let badgeIssue):
+            await _present(badgeIssue: badgeIssue, from: chatListViewController)
+        case .badgeExpiration(let badgeExpiration):
+            await _present(badgeExpiration: badgeExpiration, from: chatListViewController)
+        case .backupSubscriptionExpiringSoonWithPendingDownloads(let backupSubscriptionExpiringSoonWithPendingDownloads):
+            await _present(backupSubscriptionExpiringSoonWithPendingDownloads: backupSubscriptionExpiringSoonWithPendingDownloads, from: chatListViewController)
+        case .backupSubscriptionExpired(let backupSubscriptionExpired):
+            await _present(backupSubscriptionExpired: backupSubscriptionExpired, from: chatListViewController)
+        case .backupSubscriptionFailedToRenew(let backupSubscriptionFailedToRenew):
+            await _present(backupSubscriptionFailedToRenew: backupSubscriptionFailedToRenew, from: chatListViewController)
+        case .keyTransparencySelfCheckFailed(let keyTransparencySelfCheckFailed):
+            await _present(keyTransparencySelfCheckFailed: keyTransparencySelfCheckFailed, from: chatListViewController)
+        case .backupArchiveError(let backupArchiveError):
+            await _present(backupArchiveError: backupArchiveError, from: chatListViewController)
+        case .lowDiskSpaceWarning(let lowDiskSpaceWarning):
+            await _present(lowDiskSpaceWarning: lowDiskSpaceWarning, from: chatListViewController)
+        case .enableLocalBackups(let enableLocalBackups):
+            await _present(enableLocalBackups: enableLocalBackups, from: chatListViewController)
+        case .chooseNewLocalBackupLocation(let chooseNewLocalBackupLocation):
+            await _present(chooseNewLocalBackupsLocation: chooseNewLocalBackupLocation, from: chatListViewController)
+        }
+    }
+
+    private func _present(
+        badgeThanks: FYISheet.BadgeThanks,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Donations]")
+        logger.warn("Showing BadgeThanks FYI sheet.")
+
+        let badgeThanksSheetPresenter: BadgeThanksSheetPresenter = .fromGlobals(
+            redemptionSuccess: badgeThanks.redemptionSuccess,
+            successMode: badgeThanks.successMode,
+        )
+
+        await badgeThanksSheetPresenter.presentAndRecordBadgeThanks(fromViewController: chatListViewController)
+    }
+
+    private func _present(
+        badgeIssue: FYISheet.BadgeIssue,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Donations]")
+        logger.warn("Showing BadgeIssue FYI sheet.")
+
+        let redemptionError = badgeIssue.redemptionError
+        let chargeFailureCodeIfPaymentFailed = redemptionError.chargeFailureCodeIfPaymentFailed
+        let paymentMethod = redemptionError.paymentMethod
+        let badge = badgeIssue.badge
+        let errorMode = badgeIssue.errorMode
+
+        guard chatListViewController.isChatListTopmostViewController() else {
+            logger.warn("Not presenting error – no longer the top view controller.")
+            return
+        }
+
+        let badgeIssueSheetMode: BadgeIssueSheetState.Mode = {
+            switch errorMode {
+            case .oneTimeBoost, .recurringSubscriptionInitiation:
+                return .bankPaymentFailed(
+                    chargeFailureCode: chargeFailureCodeIfPaymentFailed,
+                )
+            case .recurringSubscriptionRenewal:
+                return .subscriptionExpiredBecauseOfChargeFailure(
+                    chargeFailureCode: chargeFailureCodeIfPaymentFailed,
+                    paymentMethod: paymentMethod,
+                )
+            }
+        }()
+
+        let badgeIssueSheet = BadgeIssueSheet(
+            badge: badge,
+            mode: badgeIssueSheetMode,
+        )
+        badgeIssueSheet.delegate = chatListViewController
+
+        await chatListViewController.awaitablePresent(badgeIssueSheet, animated: true)
+
+        await db.awaitableWrite { tx in
+            donationReceiptCredentialResultStore.setHasPresentedError(
+                errorMode: errorMode,
+                tx: tx,
+            )
+        }
+    }
+
+    private func _present(
+        badgeExpiration: FYISheet.BadgeExpiration,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Donations]")
+
+        let expiredBadge = badgeExpiration.expiredBadge
+        let donationSubscriberID = badgeExpiration.donationSubscriberID
+        let probablyHasCurrentSubscription = badgeExpiration.probablyHasCurrentSubscription
+
+        if BoostBadgeIds.contains(expiredBadge.id) {
+            logger.info("Showing expiry sheet for expired boost badge.")
+
+            guard chatListViewController.isChatListTopmostViewController() else {
+                return
+            }
+
+            let badgeIssueSheet = BadgeIssueSheet(
+                badge: expiredBadge,
+                mode: .boostExpired(hasCurrentSubscription: probablyHasCurrentSubscription),
+            )
+            badgeIssueSheet.delegate = chatListViewController
+
+            await chatListViewController.awaitablePresent(badgeIssueSheet, animated: true)
+
+            await db.awaitableWrite { tx in
+                donationSubscriptionManager.setShowExpirySheetOnHomeScreenKey(show: false, tx: tx)
+            }
+        } else if SubscriptionBadgeIds.contains(expiredBadge.id) {
+            /// We expect to show an error sheet when the subscription fails to
+            /// renew and we learn about it from the receipt credential
+            /// redemption job kicked off by the keep-alive.
+            ///
+            /// Consequently, we don't need/want to show a sheet for the badge
+            /// expiration itself, since we should've already shown a sheet.
+            ///
+            /// It's possible that the subscription simply "expired" due to
+            /// inactivity (the subscription was not kept-alive), in which case
+            /// we won't have shown a sheet because there won't have been a
+            /// renewal failure. That's ok – we'll let the badge expire
+            /// silently.
+            ///
+            /// We'll still fetch the subscription, but just for logging
+            /// purposes.
+            logger.info("Not showing expiry sheet for expired subscription badge.")
+
+            let currentSubscription: Subscription?
+            if let donationSubscriberID {
+                do {
+                    currentSubscription = try await SubscriptionFetcher(networkManager: networkManager)
+                        .fetch(subscriberID: donationSubscriberID)
+                } catch {
+                    logger.warn("Failed to get subscription during badge expiration!")
+                    return
+                }
+            } else {
+                currentSubscription = nil
+            }
+
+            if
+                donationSubscriberID != nil,
+                let currentSubscription
+            {
+                owsAssertDebug(
+                    currentSubscription.status == .canceled,
+                    "Current subscription is not canceled, but the badge expired!",
+                    logger: logger,
+                )
+
+                if let chargeFailure = currentSubscription.chargeFailure {
+                    logger.warn("Badge expired for subscription with charge failure: \(chargeFailure.code ?? "nil")")
+                } else {
+                    logger.warn("Badge expired for subscription without charge failure. It probably expired due to inactivity, but hasn't yet been deleted.")
+                }
+            } else if donationSubscriberID != nil {
+                logger.warn("Missing subscription for expired badge. It probably expired due to inactivity and was deleted.")
+            } else {
+                logger.warn("Missing subscriber ID for expired subscription badge.")
+            }
+
+            await db.awaitableWrite { tx in
+                donationSubscriptionManager.setShowExpirySheetOnHomeScreenKey(show: false, tx: tx)
+            }
+        }
+    }
+
+    private func _present(
+        backupSubscriptionExpiringSoonWithPendingDownloads: FYISheet.BackupSubscriptionExpiringSoonWithPendingDownloads,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Backups]")
+        logger.warn("Showing BackupSubscriptionExpiringSoonWithPendingDownloads FYI sheet.")
+
+        let warning = backupSubscriptionExpiringSoonWithPendingDownloads.warning
+
+        let sheet = BackupSubscriptionExpiringSoonWithPendingDownloadsHeroSheet(
+            iapSubscriptionExpiringSoonWarning: warning,
+            onDownloadBackupNow: {
+                chatListViewController.showAppSettings(mode: .backups(page: .remote(onAppearAction: .disableOptimizeLocalStorage)))
+            },
+        )
+        chatListViewController.present(sheet, animated: true) { [self] in
+            db.write { tx in
+                backupSubscriptionIssueStore.setDidWarnIAPSubscriptionExpiringSoon(
+                    warning: warning,
+                    tx: tx,
+                )
+            }
+        }
+    }
+
+    private func _present(
+        backupSubscriptionExpired: FYISheet.BackupSubscriptionExpired,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Backups]")
+        logger.warn("Showing BackupSubscriptionExpired FYI sheet.")
+
+        let sheet = BackupSubscriptionExpiredHeroSheet(
+            subscriptionType: backupSubscriptionExpired.subscriptionType,
+            onManageBackups: {
+                SignalApp.shared.showAppSettings(mode: .backups())
+            },
+        )
+        chatListViewController.present(sheet, animated: true) { [self] in
+            db.write { tx in
+                let snoozeMethod: (Bool, DBWriteTransaction) -> Void
+                switch backupSubscriptionExpired.subscriptionType {
+                case .iap:
+                    snoozeMethod = backupSubscriptionIssueStore.setShouldWarnIAPSubscriptionExpired
+                case .testFlight:
+                    snoozeMethod = backupSubscriptionIssueStore.setShouldWarnTestFlightSubscriptionExpired
+                }
+
+                // We showed the sheet, no need to show it again.
+                snoozeMethod(false, tx)
+            }
+        }
+    }
+
+    private func _present(
+        backupSubscriptionFailedToRenew: FYISheet.BackupSubscriptionFailedToRenew,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Backups]")
+        logger.warn("Showing BackupSubscriptionFailedToRenew FYI sheet.")
+
+        let sheet = BackupSubscriptionFailedToRenewHeroSheet(
+            onManageSubscription: {
+                SignalApp.shared.showAppSettings(mode: .backups())
+            },
+        )
+        chatListViewController.present(sheet, animated: true) { [self] in
+            db.write { tx in
+                backupSubscriptionIssueStore.setDidWarnIAPSubscriptionFailedToRenew(tx: tx)
+            }
+        }
+    }
+
+    private func _present(
+        backupArchiveError: FYISheet.BackupArchiveError,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[Backups]")
+        logger.warn("Showing BackupArchiveError FYI sheet.")
+
+        let sheet = BackupArchiveErrorHeroSheet(fromViewController: chatListViewController)
+
+        chatListViewController.present(sheet, animated: true) { [self] in
+            db.write { tx in
+                backupArchiveErrorStore.setHasError(false, tx: tx)
+            }
+        }
+    }
+
+    private func _present(
+        keyTransparencySelfCheckFailed: FYISheet.KeyTransparencySelfCheckFailed,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[KT]")
+        logger.warn("Showing KeyTransparencySelfCheckFailed FYI sheet.")
+
+        let sheet = KeyTransparencySelfCheckFailedHeroSheet(
+            presentingFrom: chatListViewController,
+        )
+
+        chatListViewController.present(sheet, animated: true) { [self] in
+            db.write { tx in
+                keyTransparencyStore.setWarnedSelfCheckFailed(tx: tx)
+            }
+        }
+    }
+
+    private func _present(
+        smsVerificationCodeSent: FYISheet.SMSVerificationCodeSent,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[SafetyTips]")
+        logger.warn("Showing SMSVerificationCodeSent FYI sheet.")
+
+        let actionSheetController = SafetyTipsSheet.makeSmsCodeRequestedSheet(
+            timestampMs: smsVerificationCodeSent.timestampMs,
+            fromViewController: chatListViewController,
+        )
+        chatListViewController.present(actionSheetController, animated: true, completion: { [self] in
+            db.write { tx in
+                safetyTipsManager.removeVerificationCodeRequestedTimestampMs(transaction: tx)
+            }
+        })
+    }
+
+    private func _present(
+        lowDiskSpaceWarning: FYISheet.LowDiskSpaceWarning,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[DiskSpace]")
+        logger.warn("Showing LowDiskSpaceWarning FYI sheet.")
+
+        let warningSheet = LowDiskSpaceWarningHeroSheet(
+            localizedDeviceModel: UIDevice.current.localizedModel,
+            localizedRequiredBytes: OWSByteCountFormatStyle(zeroPadFractionDigits: false).format(
+                lowDiskSpaceWarning.bytesRequiredToAvoidWarning,
+            ),
+        )
+
+        chatListViewController.present(warningSheet, animated: true) { [self] in
+            db.write { tx in
+                lowDiskSpaceManager.setShowedWarning(
+                    now: lowDiskSpaceWarning.now,
+                    tx: tx,
+                )
+            }
+        }
+    }
+
+    private func _present(
+        enableLocalBackups: FYISheet.EnableLocalBackups,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[LocalBackups]")
+        logger.warn("Showing EnableLocalBackups FYI sheet.")
+
+        let warningSheet = EnableLocalBackupsHeroSheet(
+            fromViewController: chatListViewController,
+            db: db,
+            localFileBackupStore: localFileBackupStore,
+        )
+
+        chatListViewController.present(warningSheet, animated: true) { [self] in
+            db.write { tx in
+                localFileBackupManager.clearShouldPromptUserToEnableLocalBackups(tx: tx)
+            }
+        }
+    }
+
+    private func _present(
+        chooseNewLocalBackupsLocation: FYISheet.ChooseNewLocalBackupLocation,
+        from chatListViewController: ChatListViewController,
+    ) async {
+        let logger = PrefixedLogger(prefix: "[LocalBackups]")
+        logger.warn("Showing ChooseNewLocalBackupLocation FYI sheet.")
+
+        let warningSheet = ChooseNewLocalBackupLocationHeroSheet(onChooseNewFileLocation: { [self] in
+            LocalFileBackupArchiveFolderPicker.present(
+                fromViewController: chatListViewController,
+                manager: localFileBackupManager,
+                onSuccess: {
+                    chatListViewController.presentToast(
+                        text: OWSLocalizedString(
+                            "SETTINGS_LOCAL_FILE_BACKUP_FOLDER_UPDATED",
+                            comment: "Text for a toast confirming the user changed their local file backup location.",
+                        ),
+                        image: .checkCircle,
+                    )
+                },
+            )
+        })
+
+        chatListViewController.present(warningSheet, animated: true) { [self] in
+            db.write { tx in
+                localFileBackupManager.clearChooseNewLocalBackupLocation(tx: tx)
+            }
+        }
+    }
+}
+
+// MARK: - ChatListViewController: BadgeIssueSheetDelegate
+
+extension ChatListViewController: BadgeIssueSheetDelegate {
+    func badgeIssueSheetActionTapped(_ action: BadgeIssueSheetAction) {
+        switch action {
+        case .dismiss:
+            break
+        case .openDonationView:
+            showAppSettings(mode: .donate(donateMode: .oneTime))
+        }
+    }
+}
+
+// MARK: -
+
+private class BackupSubscriptionExpiringSoonWithPendingDownloadsHeroSheet: HeroSheetViewController {
+    override var canBeDismissed: Bool { false }
+
+    init(
+        iapSubscriptionExpiringSoonWarning: BackupSubscriptionIssueStore.IAPSubscriptionExpiringSoonWarning,
+        onDownloadBackupNow: @escaping () -> Void,
+    ) {
+        let title = switch iapSubscriptionExpiringSoonWarning {
+        case .firstWarning:
+            OWSLocalizedString(
+                "BACKUP_SUBSCRIPTION_EXPIRING_SOON_PENDING_DOWNLOADS_HERO_SHEET_FIRST_WARNING_TITLE",
+                comment: "Title for a sheet warning users that their Backup subscription is expiring soon, and they have pending downloads.",
+            )
+        case .secondWarning:
+            OWSLocalizedString(
+                "BACKUP_SUBSCRIPTION_EXPIRING_SOON_PENDING_DOWNLOADS_HERO_SHEET_SECOND_WARNING_TITLE",
+                comment: "Title for a sheet warning users that their Backup subscription is expiring soon, and they have pending downloads.",
+            )
+        }
+
+        super.init(
+            hero: .circleIcon(
+                icon: .backupErrorBold,
+                iconSize: 40,
+                tintColor: .Signal.red,
+                backgroundColor: UIColor(rgbHex: 0xFFDDDB),
+            ),
+            title: title,
+            body: OWSLocalizedString(
+                "BACKUP_SUBSCRIPTION_EXPIRING_SOON_PENDING_DOWNLOADS_HERO_SHEET_BODY",
+                comment: "Body for a sheet warning users that their Backup subscription is expiring soon, and they have pending downloads.",
+            ),
+            primaryButton: HeroSheetViewController.Button(
+                title: OWSLocalizedString(
+                    "BACKUP_SUBSCRIPTION_EXPIRING_SOON_PENDING_DOWNLOADS_HERO_SHEET_PRIMARY_BUTTON",
+                    comment: "Primary button for a sheet warning users that their Backup subscription is expiring soon, and they have pending downloads.",
+                ),
+                action: { sheet in
+                    sheet.dismiss(animated: true) {
+                        onDownloadBackupNow()
+                    }
+                },
+            ),
+            secondaryButton: HeroSheetViewController.Button(
+                title: OWSLocalizedString(
+                    "BACKUP_SUBSCRIPTION_EXPIRING_SOON_PENDING_DOWNLOADS_HERO_SHEET_SECONDARY_BUTTON",
+                    comment: "Secondary button for a sheet warning users that their Backup subscription is expiring soon, and they have pending downloads.",
+                ),
+                style: .secondaryDestructive,
+                action: .dismiss,
+            ),
+        )
+    }
+}
+
+// MARK: -
+
+private class BackupSubscriptionExpiredHeroSheet: HeroSheetViewController {
+    init(
+        subscriptionType: ChatListFYISheetCoordinator.FYISheet.BackupSubscriptionExpired.SubscriptionType,
+        onManageBackups: @escaping () -> Void,
+    ) {
+        let bodyString: String = switch subscriptionType {
+        case .iap:
+            OWSLocalizedString(
+                "BACKUP_PLAN_DOWNGRADED_SHEET_BODY",
+                comment: "Body for a sheet shown when your Backup plan is downgraded.",
+            )
+        case .testFlight:
+            OWSLocalizedString(
+                "BACKUP_PLAN_DOWNGRADED_SHEET_BODY_TESTFLIGHT",
+                comment: "Body for a sheet shown when your Backup plan is downgraded because you stopped using TestFlight.",
+            )
+        }
+
+        super.init(
+            hero: .image(.backupsError),
+            title: OWSLocalizedString(
+                "BACKUP_PLAN_DOWNGRADED_SHEET_TITLE",
+                comment: "Title for a sheet shown when your Backup plan is downgraded.",
+            ),
+            body: bodyString,
+            primaryButton: HeroSheetViewController.Button(
+                title: OWSLocalizedString(
+                    "BACKUP_PLAN_DOWNGRADED_SHEET_PRIMARY_BUTTON",
+                    comment: "Primary button for a sheet shown when your Backup plan is downgraded.",
+                ),
+                action: { sheet in
+                    sheet.dismiss(animated: true) {
+                        onManageBackups()
+                    }
+                },
+            ),
+            secondaryButton: .dismissing(
+                title: CommonStrings.notNowButton,
+                style: .secondary,
+            ),
+        )
+    }
+}
+
+// MARK: -
+
+private class BackupSubscriptionFailedToRenewHeroSheet: HeroSheetViewController {
+    init(
+        onManageSubscription: @escaping () -> Void,
+    ) {
+        super.init(
+            hero: .image(.backupsError),
+            title: OWSLocalizedString(
+                "BACKUP_SUBSCRIPTION_FAILED_TO_RENEW_SHEET_TITLE",
+                comment: "Title for a sheet shown when your Backup subscription fails to renew.",
+            ),
+            body: OWSLocalizedString(
+                "BACKUP_SUBSCRIPTION_FAILED_TO_RENEW_SHEET_MESSAGE",
+                comment: "Message for a sheet shown when your Backup subscription fails to renew.",
+            ),
+            primaryButton: HeroSheetViewController.Button(
+                title: OWSLocalizedString(
+                    "BACKUP_SUBSCRIPTION_FAILED_TO_RENEW_SHEET_PRIMARY_BUTTON",
+                    comment: "Primary button for a sheet shown when your Backup subscription fails to renew.",
+                ),
+                action: { sheet in
+                    sheet.dismiss(animated: true) {
+                        onManageSubscription()
+                    }
+                },
+            ),
+            secondaryButton: .dismissing(
+                title: CommonStrings.notNowButton,
+                style: .secondary,
+            ),
+        )
+    }
+}
+
+// MARK: -
+
+private final class KeyTransparencySelfCheckFailedHeroSheet: HeroSheetViewController {
+    init(presentingFrom fromViewController: UIViewController) {
+        super.init(
+            hero: .image(.errorCircle, tintColor: .Signal.label),
+            title: OWSLocalizedString(
+                "KEY_TRANSPARENCY_SELF_CHECK_FAILED_SHEET_TITLE",
+                comment: "Title for a sheet shown when a Key Transparency self-check fails.",
+            ),
+            body: OWSLocalizedString(
+                "KEY_TRANSPARENCY_SELF_CHECK_FAILED_SHEET_BODY",
+                comment: "Body for a sheet shown when a Key Transparency self-check fails.",
+            ),
+            primaryButton: HeroSheetViewController.Button(
+                title: OWSLocalizedString(
+                    "KEY_TRANSPARENCY_SELF_CHECK_FAILED_SHEET_PRIMARY_BUTTON_TITLE",
+                    comment: "Title for the primary button in a sheet shown when a Key Transparency self-check fails.",
+                ),
+                action: { [fromViewController] sheet in
+                    sheet.dismiss(animated: true) {
+                        ContactSupportActionSheet.present(
+                            emailFilter: .custom("AutomaticKeyVerificationFailure"),
+                            logDumper: .fromGlobals(),
+                            fromViewController: fromViewController,
+                        )
+                    }
+                },
+            ),
+            secondaryButton: .dismissing(
+                title: OWSLocalizedString(
+                    "KEY_TRANSPARENCY_SELF_CHECK_FAILED_SHEET_SECONDARY_BUTTON_TITLE",
+                    comment: "Title for the secondary button in a sheet shown when a Key Transparency self-check fails.",
+                ),
+                style: .secondary,
+            ),
+        )
+    }
+}
+
+// MARK: -
+
+private final class BackupArchiveErrorHeroSheet: HeroSheetViewController {
+    init(fromViewController: UIViewController) {
+        super.init(
+            hero: .image(.errorCircle, tintColor: .Signal.label),
+            title: "Backup Archive Error! (Internal-only)",
+            body: "Backup import or export hit errors. Please submit a debug log so the iOS team can investigate.",
+            primaryButton: HeroSheetViewController.Button(
+                title: "Submit debug log",
+                action: { sheet in
+                    sheet.dismiss(animated: true) {
+                        DebugLogs(dumper: .fromGlobals()).promptToSubmitLogs(
+                            from: fromViewController,
+                            supportTag: "BackupArchive",
+                        )
+                    }
+                },
+            ),
+            secondaryButton: .dismissing(
+                title: CommonStrings.notNowButton,
+                style: .secondary,
+            ),
+        )
+    }
+}
+
+// MARK: -
+
+private final class LowDiskSpaceWarningHeroSheet: HeroSheetViewController {
+    init(
+        localizedDeviceModel: String,
+        localizedRequiredBytes: String,
+    ) {
+        super.init(
+            hero: .circleIcon(
+                icon: .errorTriangle,
+                iconSize: 40,
+                tintColor: .Signal.red,
+                backgroundColor: UIColor(rgbHex: 0xF8E0D9),
+            ),
+            title: OWSLocalizedString(
+                "LOW_DISK_SPACE_WARNING_SHEET_TITLE",
+                comment: "Title for a sheet warning the user that their device is low on storage space.",
+            ),
+            body: Body([
+                .text(.plain(String(
+                    format: OWSLocalizedString(
+                        "LOW_DISK_SPACE_WARNING_SHEET_MESSAGE_FORMAT",
+                        comment: "Message for a sheet warning the user that their device is low on storage space. Embeds 1:{{ the localized name of the user's device model, e.g. iPhone }}; 2:{{ an amount of storage space as a file size, e.g. 1 GB }}.",
+                    ),
+                    localizedDeviceModel,
+                    localizedRequiredBytes,
+                ))),
+                .customSpacing(20),
+                .bullets([
+                    Body.BulletPoint(
+                        style: .numberedCircle(1),
+                        text: OWSLocalizedString(
+                            "LOW_DISK_SPACE_WARNING_SHEET_SUGGESTION_REMOVE_APPS",
+                            comment: "A suggestion for freeing up storage space, on a sheet warning the user that their device is low on storage space.",
+                        ),
+                    ),
+                    Body.BulletPoint(
+                        style: .numberedCircle(2),
+                        text: OWSLocalizedString(
+                            "LOW_DISK_SPACE_WARNING_SHEET_SUGGESTION_DELETE_CAMERA_ROLL_MEDIA",
+                            comment: "A suggestion for freeing up storage space, on a sheet warning the user that their device is low on storage space.",
+                        ),
+                    ),
+                    Body.BulletPoint(
+                        style: .numberedCircle(3),
+                        text: OWSLocalizedString(
+                            "LOW_DISK_SPACE_WARNING_SHEET_SUGGESTION_DELETE_DOWNLOADED_MEDIA",
+                            comment: "A suggestion for freeing up storage space, on a sheet warning the user that their device is low on storage space.",
+                        ),
+                    ),
+                ]),
+                .customSpacing(20),
+            ]),
+            primary: .button(.dismissing(title: CommonStrings.acknowledgeButton)),
+            secondary: nil,
+        )
+    }
+}
+
+// MARK: -
+
+private final class EnableLocalBackupsHeroSheet: HeroSheetViewController {
+    private let fromViewController: UIViewController
+    private var didTapEnable = false
+
+    init(
+        fromViewController: UIViewController,
+        db: DB,
+        localFileBackupStore: LocalFileBackupStore,
+    ) {
+        self.fromViewController = fromViewController
+        super.init(
+            hero: .circleIcon(
+                icon: .backup,
+                iconSize: 40,
+                tintColor: UIColor(rgbHex: 0x3B45FD),
+                backgroundColor: UIColor(rgbHex: 0xE0E5FF),
+            ),
+            title: OWSLocalizedString(
+                "RESTORE_COMPLETE_LOCAL_FILE_BACKUPS_HERO_SHEET_TITLE",
+                comment: "Title for a sheet asking the user if they want to enable local file backups.",
+            ),
+            body: OWSLocalizedString(
+                "RESTORE_COMPLETE_LOCAL_FILE_BACKUPS_HERO_SHEET_MESSAGE",
+                comment: "Message for a sheet asking the user if they want to enable local file backups.",
+            ),
+            primaryButton: Button(title: OWSLocalizedString(
+                "RESTORE_COMPLETE_LOCAL_FILE_BACKUPS_HERO_SHEET_CHOOSE_FOLDER_BUTTON",
+                comment: "Button on a sheet prompting the user to pick a folder on their device where on-device backups will be saved",
+            ), action: { heroSheet in
+                (heroSheet as? EnableLocalBackupsHeroSheet)?.didTapEnable = true
+                heroSheet.dismiss(animated: true)
+                LocalFileBackupArchiveFolderPicker.present(
+                    fromViewController: fromViewController,
+                    manager: DependenciesBridge.shared.localFileBackupManager,
+                    onSuccess: {
+                        db.write { tx in
+                            localFileBackupStore.setLocalBackupsEnabled(value: true, tx: tx)
+                        }
+                        fromViewController.presentToast(
+                            text: OWSLocalizedString(
+                                "ENABLE_LOCAL_FILE_BACKUPS_TOAST_CONFIRM",
+                                comment: "Label for a toast that confirms that local backups are enabled.",
+                            ),
+                            image: .checkCircle,
+                        )
+                    },
+                    onCancel: {
+                        Self.presentDisabledToast(from: fromViewController)
+                    },
+                )
+            }),
+            secondaryButton: Button(
+                title: OWSLocalizedString(
+                    "RESTORE_COMPLETE_LOCAL_FILE_BACKUPS_HERO_SHEET_DISABLE_BUTTON",
+                    comment: "Button for a sheet asking the user if they want to disable local backups",
+                ),
+                style: .secondary,
+                action: .custom({ heroSheet in
+                    db.write { tx in
+                        // backups should be disabled right after a restore, but just in case, set it explicitly.
+                        localFileBackupStore.setLocalBackupsEnabled(value: false, tx: tx)
+                    }
+                    heroSheet.dismiss(animated: true)
+                }),
+            ),
+        )
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if !didTapEnable {
+            Self.presentDisabledToast(from: fromViewController)
+        }
+    }
+
+    private static func presentDisabledToast(from viewController: UIViewController) {
+        viewController.presentToast(
+            text: OWSLocalizedString(
+                "DISABLE_LOCAL_FILE_BACKUPS_TOAST_CONFIRM",
+                comment: "Label for a toast that confirms that local backups are disabled.",
+            ),
+            image: .backup,
+        )
+    }
+}
+
+// MARK: -
+
+private final class ChooseNewLocalBackupLocationHeroSheet: HeroSheetViewController {
+    init(
+        onChooseNewFileLocation: @escaping () -> Void,
+    ) {
+        super.init(
+            hero: .circleIcon(
+                icon: .backup,
+                iconSize: 40,
+                tintColor: .Signal.orange,
+                backgroundColor: UIColor(rgbHex: 0xF9E4B6),
+            ),
+            title: OWSLocalizedString(
+                "LOCAL_FILE_BACKUP_CHOOSE_NEW_FOLDER_SHEET_TITLE",
+                comment: "Title for a sheet asking the user to choose a new local file backup folder.",
+            ),
+            body: OWSLocalizedString(
+                "LOCAL_FILE_BACKUP_CHOOSE_NEW_FOLDER_SHEET_MESSAGE",
+                comment: "Message for a sheet asking the user to choose a new local file backup folder.",
+            ),
+            primaryButton: Button(title: OWSLocalizedString(
+                "LOCAL_FILE_BACKUP_CHOOSE_NEW_FOLDER_SHEET_BUTTON",
+                comment: "Button for a sheet asking the user to choose a new local file backup folder",
+            ), action: { heroSheet in
+                heroSheet.dismiss(animated: true)
+                onChooseNewFileLocation()
+            }),
+            secondaryButton: .dismissing(title: CommonStrings.notNowButton, style: .secondary),
+        )
+    }
+}

@@ -1,0 +1,101 @@
+//
+// Copyright 2018 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+@import Foundation;
+
+NS_ASSUME_NONNULL_BEGIN
+
+@class DBReadTransaction;
+@class DBWriteTransaction;
+@class DisplayableQuotedThumbnailAttachment;
+@class MessageBodyRanges;
+@class OWSAttachmentInfo;
+@class QuotedThumbnailAttachmentMetadata;
+@class SSKProtoDataMessage;
+@class SignalServiceAddress;
+@class TSMessage;
+@class TSQuotedMessage;
+@class TSThread;
+
+@protocol QuotedMessageAttachmentHelper;
+
+/// Note that ContentSource is NOT the same as OWSAttachmentInfoReference;
+/// this tells us where we got the quote from (whether it has an attachment or not)
+/// and doesn't ever change, including after downloading any attachments.
+typedef NS_ENUM(NSUInteger, TSQuotedMessageContentSource) {
+    TSQuotedMessageContentSourceUnknown,
+    TSQuotedMessageContentSourceLocal,
+    TSQuotedMessageContentSourceRemote,
+    TSQuotedMessageContentSourceStory
+};
+
+
+@interface TSQuotedMessage : NSObject <NSSecureCoding, NSCopying>
+
+@property (nullable, nonatomic, readonly) NSNumber *timestampValue;
+@property (nonatomic, readonly) SignalServiceAddress *authorAddress;
+@property (nonatomic, readonly) TSQuotedMessageContentSource bodySource;
+
+// This property should be set IFF we are quoting a text message
+// or attachment with caption.
+@property (nullable, nonatomic, readonly) NSString *body;
+@property (nonatomic, readonly, nullable) MessageBodyRanges *bodyRanges;
+
+@property (nonatomic, readonly) BOOL isGiftBadge;
+/// If we found the target message at receive time (TSQuotedMessageContentSourceLocal),
+/// true if that target message was view once.
+/// If we did not find the target message (TSQuotedMessageContentSourceRemote), will always
+/// be false because we do not know if the target message was view-once. In these cases, we
+/// take the body off the Quote proto we receive.
+/// At send time, we always set the body of the outgoing Quote proto as the localized string
+/// that indicates this was a reply to a view-once message.
+@property (nonatomic, readonly) BOOL isTargetMessageViewOnce;
+
+@property (nonatomic, readonly) BOOL isPoll;
+
+#pragma mark - Attachments
+
+- (nullable OWSAttachmentInfo *)attachmentInfo;
+
++ (instancetype)new NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
+
+// used when sending quoted messages
+- (instancetype)initWithTimestamp:(nullable NSNumber *)timestamp
+                    authorAddress:(SignalServiceAddress *)authorAddress
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
+       quotedAttachmentForSending:(nullable OWSAttachmentInfo *)attachmentInfo
+                      isGiftBadge:(BOOL)isGiftBadge
+          isTargetMessageViewOnce:(BOOL)isTargetMessageViewOnce
+                           isPoll:(BOOL)isPoll;
+
+// used when receiving quoted messages. Do not call directly outside AttachmentManager.
+- (instancetype)initWithTimestamp:(uint64_t)timestamp
+                    authorAddress:(SignalServiceAddress *)authorAddress
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
+                       bodySource:(TSQuotedMessageContentSource)bodySource
+     receivedQuotedAttachmentInfo:(nullable OWSAttachmentInfo *)attachmentInfo
+                      isGiftBadge:(BOOL)isGiftBadge
+          isTargetMessageViewOnce:(BOOL)isTargetMessageViewOnce
+                           isPoll:(BOOL)isPoll;
+
+// used when restoring quoted messages from backups
++ (instancetype)quotedMessageFromBackupWithTargetMessageTimestamp:(nullable NSNumber *)timestamp
+                                                    authorAddress:(SignalServiceAddress *)authorAddress
+                                                             body:(nullable NSString *)body
+                                                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
+                                                       bodySource:(TSQuotedMessageContentSource)bodySource
+                                             quotedAttachmentInfo:(nullable OWSAttachmentInfo *)attachmentInfo
+                                                      isGiftBadge:(BOOL)isGiftBadge
+                                          isTargetMessageViewOnce:(BOOL)isTargetMessageViewOnce
+                                                           isPoll:(BOOL)isPoll;
+
+@end
+
+#pragma mark -
+
+NS_ASSUME_NONNULL_END

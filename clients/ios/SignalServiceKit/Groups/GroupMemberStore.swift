@@ -1,0 +1,127 @@
+//
+// Copyright 2023 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import GRDB
+public import LibSignalClient
+
+public protocol GroupMemberStore {
+    func insert(fullGroupMember: TSGroupMember, tx: DBWriteTransaction)
+    func update(fullGroupMember: TSGroupMember, tx: DBWriteTransaction)
+    func remove(fullGroupMember: TSGroupMember, tx: DBWriteTransaction)
+
+    func groupThreadUniqueIds(withFullMember serviceId: ServiceId, tx: DBReadTransaction) -> [String]
+    func groupThreadUniqueIds(withFullMember phoneNumber: E164, tx: DBReadTransaction) -> [String]
+
+    func sortedFullGroupMembers(in groupThreadId: String, tx: DBReadTransaction) -> [TSGroupMember]
+}
+
+class GroupMemberStoreImpl: GroupMemberStore {
+    func insert(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        groupMember.anyInsert(transaction: tx)
+    }
+
+    func update(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        groupMember.anyOverwritingUpdate(transaction: tx)
+    }
+
+    func remove(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        groupMember.anyRemove(transaction: tx)
+    }
+
+    func groupThreadUniqueIds(withFullMember serviceId: ServiceId, tx: DBReadTransaction) -> [String] {
+        Self.groupThreadUniqueIds(withFullMember: serviceId, tx: tx)
+    }
+
+    fileprivate static func groupThreadUniqueIds(withFullMember serviceId: ServiceId, tx: DBReadTransaction) -> [String] {
+        let sql = """
+            SELECT \(TSGroupMember.columnName(.threadUniqueId))
+            FROM \(TSGroupMember.databaseTableName)
+            WHERE \(TSGroupMember.columnName(.serviceId)) = ?
+        """
+        return failIfThrows {
+            try String.fetchAll(
+                tx.database,
+                sql: sql,
+                arguments: [serviceId.serviceIdUppercaseString],
+            )
+        }
+    }
+
+    func groupThreadUniqueIds(withFullMember phoneNumber: E164, tx: DBReadTransaction) -> [String] {
+        Self.groupThreadUniqueIds(withFullMember: phoneNumber, tx: tx)
+    }
+
+    fileprivate static func groupThreadUniqueIds(withFullMember phoneNumber: E164, tx: DBReadTransaction) -> [String] {
+        let sql = """
+            SELECT \(TSGroupMember.columnName(.threadUniqueId))
+            FROM \(TSGroupMember.databaseTableName)
+            WHERE \(TSGroupMember.columnName(.phoneNumber)) = ?
+        """
+        return failIfThrows {
+            return try String.fetchAll(
+                tx.database,
+                sql: sql,
+                arguments: [phoneNumber.stringValue],
+            )
+        }
+    }
+
+    func sortedFullGroupMembers(in groupThreadId: String, tx: DBReadTransaction) -> [TSGroupMember] {
+        Self.sortedFullGroupMembers(in: groupThreadId, tx: tx)
+    }
+
+    fileprivate static func sortedFullGroupMembers(in groupThreadId: String, tx: DBReadTransaction) -> [TSGroupMember] {
+        let sql = """
+            SELECT * FROM \(TSGroupMember.databaseTableName)
+            WHERE \(TSGroupMember.columnName(.threadUniqueId)) = ?
+            ORDER BY \(TSGroupMember.columnName(.lastInteractionTimestamp)) DESC
+        """
+        return failIfThrows {
+            try TSGroupMember.fetchAll(
+                tx.database,
+                sql: sql,
+                arguments: [groupThreadId],
+            )
+        }
+    }
+}
+
+#if TESTABLE_BUILD
+
+class MockGroupMemberStore: GroupMemberStore {
+    private let db = InMemoryDB()
+
+    func insert(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        db.insert(record: groupMember)
+    }
+
+    func update(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        db.update(record: groupMember)
+    }
+
+    func remove(fullGroupMember groupMember: TSGroupMember, tx: DBWriteTransaction) {
+        db.remove(model: groupMember)
+    }
+
+    func groupThreadUniqueIds(withFullMember serviceId: ServiceId, tx: DBReadTransaction) -> [String] {
+        db.read { tx in
+            GroupMemberStoreImpl.groupThreadUniqueIds(withFullMember: serviceId, tx: tx)
+        }
+    }
+
+    func groupThreadUniqueIds(withFullMember phoneNumber: E164, tx: DBReadTransaction) -> [String] {
+        db.read { tx in
+            GroupMemberStoreImpl.groupThreadUniqueIds(withFullMember: phoneNumber, tx: tx)
+        }
+    }
+
+    func sortedFullGroupMembers(in groupThreadId: String, tx: DBReadTransaction) -> [TSGroupMember] {
+        db.read { tx in
+            GroupMemberStoreImpl.sortedFullGroupMembers(in: groupThreadId, tx: tx)
+        }
+    }
+}
+
+#endif

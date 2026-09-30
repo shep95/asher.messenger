@@ -1,0 +1,84 @@
+{
+	"nsnumber_types": {
+		"TSIncomingMessage.serverTimestamp": "UInt64",
+		"TSIncomingMessage.deprecated_sourceDeviceId": "UInt32",
+		"TSOutgoingMessageRecipientState.deliveryTimestamp": "UInt64",
+		"TSOutgoingMessageRecipientState.readTimestamp": "UInt64",
+		"OWSBackupFragment.uncompressedDataLength": "UInt64",
+		"SSKJobRecord.exclusiveProcessIdentifier": "Int32",
+		"TSMessage.storyTimestamp": "UInt64",
+		"TSMessage.expireTimerVersion": "UInt32"
+	},
+	"properties_to_ignore": [
+		"TSYapDatabaseObject.grdbId",
+		"OWSDynamicOutgoingMessage.block",
+		"TSCall.callSchemaVersion",
+		"TSErrorMessage.errorMessageSchemaVersion",
+		"TSMessage.schemaVersion",
+		"TSIncomingMessage.incomingMessageSchemaVersion",
+		"TSInfoMessage.infoMessageSchemaVersion",
+		"TSOutgoingMessage.outgoingMessageSchemaVersion",
+		"OWSUnknownProtocolVersionMessage.unknownProtocolVersionMessageSchemaVersion",
+		"OWSRecipientIdentity.recipientIdentitySchemaVersion",
+		"TSRecipientReadReceipt.recipientReadReceiptSchemaVersion",
+		"OWSLinkedDeviceReadReceipt.linkedDeviceReadReceiptSchemaVersion",
+		"TSOutgoingMessage.changeActionsProtoData"
+	],
+	"class_cache_get_code": {
+		"TSInteraction": "SSKEnvironment.shared.modelReadCachesRef.interactionReadCache.getInteraction(uniqueId: uniqueId, transaction: transaction)"
+	},
+	"class_cache_set_code": {
+		"TSInteraction": "SSKEnvironment.shared.modelReadCachesRef.interactionReadCache.didReadInteraction"
+	},
+	"class_to_skip_serialization": [
+		"OWSContactOffersInteraction",
+		"OWSDisappearingMessagesConfigurationMessage",
+		"OWSDynamicOutgoingMessage",
+		"OWSEndSessionMessage",
+		"OWSGroupInfoRequestMessage",
+		"OWSOutgoingCallMessage",
+		"OWSOutgoingGroupCallMessage",
+		"OWSOutgoingNullMessage",
+		"OWSOutgoingReactionMessage",
+		"OWSOutgoingResendRequest",
+		"OWSOutgoingResendResponse",
+		"OWSOutgoingSenderKeyDistributionMessage",
+		"OWSOutgoingSyncMessage",
+		"OWSPaymentActivationRequestFinishedMessage",
+		"OWSPaymentActivationRequestMessage",
+		"OWSProfileKeyMessage",
+		"OWSReceiptsForSenderMessage",
+		"OWSStaticOutgoingMessage",
+		"OWSUnknownDBObject",
+		"TSOutgoingDeleteMessage"
+	],
+	"manually_typed_fields": {
+		"TSInfoMessage.infoMessageUserInfo": {
+			"swift_type": "[InfoMessageUserInfoKey: AnyObject]",
+			"objc_initializer_type": "NSDictionary<InfoMessageUserInfoKey, id> *",
+			"is_objc_codable": false,
+			"is_enum": false,
+			"column_type": ".blob",
+			"record_swift_type": "Data",
+			"serialize_record_invocation": "optionalArchive(%s)",
+			"should_use_blob": true
+		}
+	},
+	"custom_accessors": {
+		"TSInfoMessage.read": "wasRead",
+		"TSErrorMessage.read": "wasRead",
+		"TSIncomingMessage.read": "wasRead",
+		"TSCall.read": "wasRead",
+		"OWSGroupCallMessage.read": "wasRead",
+		"TSIncomingMessage.viewed": "wasViewed",
+		"TSReleaseNotesMessage.read": "wasRead"
+	},
+	"custom_column_names": {
+		"TSInteraction.uniqueThreadId": "threadUniqueId"
+	},
+	"aliased_column_names": {
+		"TSInteraction.sortId": "id",
+		"SSKJobRecord.sortId": "id"
+	},
+	"renamed_column_names": {}
+}

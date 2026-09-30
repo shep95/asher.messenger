@@ -1,0 +1,659 @@
+//
+// Copyright 2021 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import CoreServices
+import SignalServiceKit
+import SignalUI
+import UniformTypeIdentifiers
+
+class AvatarSettingsViewController: OWSTableViewController2, UIImagePickerControllerDelegate, UINavigationControllerDelegate,
+    OptionViewDelegate
+{
+    let context: AvatarHistoryManager.Context
+
+    enum State: Equatable {
+        case original(UIImage?)
+        case new(AvatarModel?)
+
+        var isNew: Bool {
+            guard case .new = self else { return false }
+            return true
+        }
+    }
+
+    private var state: State {
+        didSet {
+            guard state != oldValue else { return }
+            updateHeaderView()
+            updateNavigation()
+        }
+    }
+
+    private var selectedAvatarModel: AvatarModel? {
+        guard case .new(let model) = state else { return nil }
+        return model
+    }
+
+    private lazy var defaultAvatarImage: UIImage? = {
+        let avatarBuilder = SSKEnvironment.shared.avatarBuilderRef
+        let databaseStorage = SSKEnvironment.shared.databaseStorageRef
+
+        return databaseStorage.read { tx in
+            switch context {
+            case .groupId(let groupId):
+                return avatarBuilder.defaultAvatarImage(
+                    forGroupId: groupId,
+                    diameterPoints: UInt(avatarImageViewSize),
+                    transaction: tx,
+                )
+            case .profile:
+                return avatarBuilder.defaultAvatarImageForLocalUser(
+                    diameterPoints: UInt(avatarImageViewSize),
+                    transaction: tx,
+                )
+            }
+        }
+    }()
+
+    private let avatarChangeCallback: (UIImage?) -> Void
+
+    init(
+        context: AvatarHistoryManager.Context,
+        currentAvatarImage: UIImage?,
+        avatarChangeCallback: @escaping (UIImage?) -> Void,
+    ) {
+        self.context = context
+        self.state = .original(currentAvatarImage)
+        self.avatarChangeCallback = avatarChangeCallback
+
+        super.init()
+
+        // We only support portrait on non-iPad devices, but if we're
+        // already in landscape we need to force the device to rotate.
+        // TODO: There might be a better spot to do this, but generally
+        // this should never be initialized unless about to be shown.
+        if !UIDevice.current.isIPad { UIDevice.current.ows_setOrientation(.portrait) }
+    }
+
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return UIDevice.current.isIPad ? .all : .portrait
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        navigationItem.leftBarButtonItem = .cancelButton(
+            dismissingFrom: self,
+            hasUnsavedChanges: { [weak self] in self?.state.isNew },
+        )
+
+        navigationItem.rightBarButtonItem = .setButton { [weak self] in
+            self?.didTapDone()
+        }
+
+        view.backgroundColor = .Signal.groupedBackground
+
+        updateTableContents()
+        updateNavigation()
+        updateHeaderView()
+    }
+
+    private func didTapDone() {
+        defer { dismiss(animated: true) }
+
+        guard case .new(let model) = state else {
+            return owsFailDebug("Tried to tap done in unexpected state")
+        }
+
+        if let model {
+            DependenciesBridge.shared.db.asyncWrite { [context] tx in
+                AppEnvironment.shared.avatarHistoryManager.touchedModel(model, in: context, tx: tx)
+            }
+            guard
+                let newAvatar = SSKEnvironment.shared.avatarBuilderRef.avatarImage(
+                    model: model,
+                    diameterPixels: OWSProfileManager.maxAvatarDiameterPixels,
+                )
+            else {
+                owsFailDebug("Failed to generate new avatar.")
+                return
+            }
+            avatarChangeCallback(newAvatar)
+        } else {
+            // Avatar was cleared.
+            avatarChangeCallback(nil)
+        }
+    }
+
+    override func topHeader() -> UIView? {
+        if avatarImageViewSizeConstraint == nil {
+            avatarImageView.translatesAutoresizingMaskIntoConstraints = false
+            let avatarImageViewSizeConstraint = avatarImageView.widthAnchor.constraint(
+                equalToConstant: avatarImageViewSize,
+            )
+            NSLayoutConstraint.activate([
+                avatarImageViewSizeConstraint,
+                avatarImageView.widthAnchor.constraint(equalTo: avatarImageView.heightAnchor),
+            ])
+            self.avatarImageViewSizeConstraint = avatarImageViewSizeConstraint
+
+            topHeaderStack.layoutMargins = .init(top: 24, left: 0, bottom: 13, right: 0)
+        }
+        return topHeaderStack
+    }
+
+    private let avatarImageView = AvatarImageView()
+
+    private var avatarImageViewSize: CGFloat {
+        min(160, CGFloat(view.width * 0.4).rounded(.up))
+    }
+
+    private var avatarImageViewSizeConstraint: NSLayoutConstraint?
+
+    private lazy var topHeaderStack: UIView = {
+        let topHeaderStack = UIStackView(arrangedSubviews: [avatarImageView, headerButtonStack])
+        topHeaderStack.isLayoutMarginsRelativeArrangement = true
+        topHeaderStack.axis = .vertical
+        topHeaderStack.alignment = .center
+        topHeaderStack.spacing = 24
+        topHeaderStack.addSubview(clearButton)
+
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            clearButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: -8),
+            clearButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor, constant: 8),
+        ])
+
+        return topHeaderStack
+    }()
+
+    private lazy var clearButton: UIButton = {
+        var buttonConfiguration = UIButton.Configuration.roundMaterial(image: .x20)
+        buttonConfiguration.contentInsets = .init(margin: 6) // 32 x 32 button
+        return UIButton(
+            configuration: buttonConfiguration,
+            primaryAction: UIAction { [weak self] _ in self?.didTapClear() },
+        )
+    }()
+
+    private func didTapClear() {
+        state = .new(nil)
+        updateTableContents()
+    }
+
+    private func updateTableContents() {
+        let contents = OWSTableContents()
+        defer { self.contents = contents }
+
+        let section = OWSTableSection()
+        section.headerTitle = OWSLocalizedString(
+            "AVATAR_SETTINGS_VIEW_SELECT_AN_AVATAR",
+            comment: "Title for the previously used and preset avatar section.",
+        )
+        section.add(.init { [weak self] in
+            let cell = OWSTableItem.newCell()
+            guard let self else { return cell }
+            cell.selectionStyle = .none
+            self.configureAvatarsCell(cell)
+            return cell
+        } actionBlock: {})
+        contents.add(section)
+    }
+
+    private func updateNavigation() {
+        navigationItem.rightBarButtonItem?.isEnabled = state.isNew
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+
+        coordinator.animate { [weak self] _ in
+            self?.updateHeaderViewLayout()
+        } completion: { [weak self] _ in
+            self?.updateHeaderViewLayout()
+        }
+    }
+
+    // MARK: - Avatar Options
+
+    private var optionViews = [OptionView]()
+    private func reusableOptionView(for index: Int) -> OptionView {
+        guard let optionView = optionViews[safe: index] else {
+            while optionViews.count <= index {
+                let optionView = OptionView(delegate: self)
+                optionViews.append(optionView)
+            }
+            return reusableOptionView(for: index)
+        }
+        return optionView
+    }
+
+    private func configureAvatarsCell(_ cell: UITableViewCell) {
+        let rowWidth = max(0, view.width - (view.safeAreaInsets.totalWidth + cellOuterInsets.totalWidth + Self.cellHInnerMargin * 2))
+        let avatarSpacing: CGFloat = 16
+        let minAvatarSize: CGFloat = min(66, (rowWidth - (avatarSpacing * 3)) / 4)
+        let avatarsPerRow = max(1, Int(floor(rowWidth + avatarSpacing) / (minAvatarSize + avatarSpacing)))
+        let avatarSize = max(minAvatarSize, (rowWidth - (avatarSpacing * CGFloat(avatarsPerRow - 1))) / CGFloat(avatarsPerRow))
+
+        let vStackView = UIStackView()
+        vStackView.axis = .vertical
+        vStackView.spacing = avatarSpacing
+        vStackView.alignment = .leading
+        cell.contentView.addSubview(vStackView)
+        vStackView.autoPinEdgesToSuperviewMargins()
+
+        let avatars: [(model: AvatarModel, image: UIImage)] = DependenciesBridge.shared.db.read { tx in
+            var allModels = [AvatarModel]()
+
+            let persistedModels = AppEnvironment.shared.avatarHistoryManager.models(for: context, tx: tx)
+            allModels.append(contentsOf: persistedModels)
+
+            // Insert models for default icons that aren't persisted
+            let defaultIcons: [AvatarIcon] = switch context {
+            case .groupId: AvatarIcon.defaultGroupIcons
+            case .profile: AvatarIcon.defaultProfileIcons
+            }
+            let iconsFromPersistedModels: Set<AvatarIcon> = Set(persistedModels.compactMap {
+                switch $0.type {
+                case .icon(let icon): return icon
+                case .image, .text: return nil
+                }
+            })
+            allModels.append(contentsOf: defaultIcons.compactMap { icon in
+                if iconsFromPersistedModels.contains(icon) { return nil }
+                return AvatarModel(type: .icon(icon), theme: .forIcon(icon))
+            })
+
+            return allModels.compactMap { model in
+                guard
+                    let image = SSKEnvironment.shared.avatarBuilderRef.avatarImage(
+                        model: model,
+                        diameterPoints: UInt(avatarSize),
+                    )
+                else {
+                    owsFailDebug("Failed to prepare avatar for model \(model.identifier).")
+                    return nil
+                }
+                return (model, image)
+            }
+        }
+
+        for (row, avatars) in avatars.chunked(by: avatarsPerRow).enumerated() {
+            let hStackView = UIStackView()
+            hStackView.axis = .horizontal
+            hStackView.spacing = avatarSpacing
+            vStackView.addArrangedSubview(hStackView)
+
+            for (index, avatar) in avatars.enumerated() {
+                let view = reusableOptionView(for: (row * avatarsPerRow) + index)
+                view.autoSetDimensions(to: CGSize(square: avatarSize))
+                view.configure(model: avatar.model, image: avatar.image, isSelected: avatar.model == selectedAvatarModel)
+                hStackView.addArrangedSubview(view)
+            }
+        }
+    }
+
+    // MARK: - Header
+
+    func updateHeaderView() {
+        switch state {
+        case .new(let model):
+            if let model {
+                clearButton.isHidden = false
+                avatarImageView.image = SSKEnvironment.shared.avatarBuilderRef.avatarImage(
+                    model: model,
+                    diameterPoints: UInt(avatarImageViewSize),
+                )
+            } else {
+                clearButton.isHidden = true
+                avatarImageView.image = defaultAvatarImage
+            }
+        case .original(let image):
+            if let image {
+                clearButton.isHidden = false
+                avatarImageView.image = image
+            } else {
+                clearButton.isHidden = true
+                avatarImageView.image = defaultAvatarImage
+            }
+        }
+
+        updateHeaderViewLayout()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+
+        updateHeaderViewLayout()
+    }
+
+    private var previousSizeReference: CGFloat?
+
+    private func updateHeaderViewLayout(forceUpdate: Bool = false) {
+        // Update button layout only when the view size changes.
+        guard view.width != previousSizeReference || forceUpdate else { return }
+        previousSizeReference = view.width
+
+        avatarImageViewSizeConstraint?.constant = avatarImageViewSize
+
+        updateHeaderButtons()
+    }
+
+    // MARK: - Header Buttons
+
+    private let headerButtonStack: UIStackView = {
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.alignment = .center
+        stackView.spacing = 8
+        return stackView
+    }()
+
+    private func buildHeaderButtons() -> [UIView] {
+        return [
+            buildHeaderButton(
+                icon: .buttonCamera,
+                title: OWSLocalizedString(
+                    "AVATAR_SETTINGS_VIEW_CAMERA_BUTTON",
+                    comment: "Text indicating the user can select an avatar from their camera",
+                ),
+                action: { [weak self] in
+                    guard let self else { return }
+                    let picker = OWSImagePickerController()
+                    picker.delegate = self
+                    picker.allowsEditing = false
+                    picker.sourceType = .camera
+                    picker.mediaTypes = [UTType.image.identifier]
+                    self.present(picker, animated: true)
+                },
+            ),
+            buildHeaderButton(
+                icon: .buttonPhotoLibrary,
+                title: OWSLocalizedString(
+                    "AVATAR_SETTINGS_VIEW_PHOTO_BUTTON",
+                    comment: "Text indicating the user can select an avatar from their photos",
+                ),
+                action: { [weak self] in
+                    guard let self else { return }
+                    let picker = OWSImagePickerController()
+                    picker.delegate = self
+                    picker.sourceType = .photoLibrary
+                    picker.mediaTypes = [UTType.image.identifier]
+                    self.present(picker, animated: true)
+                },
+            ),
+            buildHeaderButton(
+                icon: .buttonText,
+                title: OWSLocalizedString(
+                    "AVATAR_SETTINGS_VIEW_TEXT_BUTTON",
+                    comment: "Text indicating the user can create a new avatar with text",
+                ),
+                action: { [weak self] in
+                    let model = AvatarModel(type: .text(""), theme: .default)
+                    let vc = AvatarEditViewController(model: model) { [weak self] editedModel in
+                        DependenciesBridge.shared.db.asyncWrite { tx in
+                            guard let self else { return }
+                            AppEnvironment.shared.avatarHistoryManager.touchedModel(
+                                editedModel,
+                                in: self.context,
+                                tx: tx,
+                            )
+                        } completion: {
+                            self?.state = .new(editedModel)
+                            self?.updateTableContents()
+                        }
+                    }
+                    self?.presentFormSheet(OWSNavigationController(rootViewController: vc), animated: true)
+                },
+            ),
+        ]
+    }
+
+    private func updateHeaderButtons() {
+        headerButtonStack.removeAllSubviews()
+        let headerButtons = buildHeaderButtons()
+
+        let spacerWidth: CGFloat = 8
+        let totalSpacerWidth = CGFloat(headerButtons.count - 1) * spacerWidth
+        let maxAvailableButtonWidth = view.width - (cellOuterInsets.totalWidth + totalSpacerWidth)
+        let minButtonWidth = maxAvailableButtonWidth / 4
+
+        var buttonWidth = max(maxIconButtonWidth, minButtonWidth)
+        let needsTwoRows = buttonWidth * CGFloat(headerButtons.count) > maxAvailableButtonWidth
+        if needsTwoRows { buttonWidth *= 2 }
+        headerButtons.forEach { $0.autoSetDimension(.width, toSize: buttonWidth) }
+
+        func addButtonRow(_ buttons: [UIView]) {
+            let stackView = UIStackView()
+            stackView.axis = .horizontal
+            stackView.distribution = .fillEqually
+            stackView.spacing = spacerWidth
+            buttons.forEach { stackView.addArrangedSubview($0) }
+            headerButtonStack.addArrangedSubview(stackView)
+        }
+
+        if needsTwoRows {
+            addButtonRow(Array(headerButtons.prefix(Int(ceil(CGFloat(headerButtons.count) / 2)))))
+            addButtonRow(headerButtons.suffix(Int(floor(CGFloat(headerButtons.count) / 2))))
+        } else {
+            addButtonRow(headerButtons)
+        }
+    }
+
+    private var maxIconButtonWidth: CGFloat = 0
+
+    private func buildHeaderButton(icon: ThemeIcon, title: String, isEnabled: Bool = true, action: @escaping () -> Void) -> UIView {
+        let button = SettingsHeaderButton(title: title.capitalized, icon: icon, actionHandler: action)
+        button.buttonBackgroundColor = .Signal.secondaryGroupedBackground
+        button.isEnabled = isEnabled
+
+        if maxIconButtonWidth < button.minimumWidth {
+            maxIconButtonWidth = button.minimumWidth
+        }
+
+        return button
+    }
+
+    // MARK: - UIImagePickerControllerDelegate
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        dismiss(animated: true, completion: nil)
+    }
+
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        guard let originalImage = info[.originalImage] as? UIImage else {
+            return owsFailDebug("Failed to pick image")
+        }
+
+        dismiss(animated: true) { [weak self] in
+            let vc = CropScaleImageViewController(srcImage: originalImage) { croppedImage in
+                guard let self else { return }
+                let imageModel = DependenciesBridge.shared.db.write { tx in
+                    AppEnvironment.shared.avatarHistoryManager.recordModelForImage(
+                        croppedImage,
+                        in: self.context,
+                        tx: tx,
+                    )
+                }
+                DispatchQueue.main.async {
+                    self.state = .new(imageModel)
+                    self.updateTableContents()
+                }
+            }
+            self?.present(vc, animated: true)
+        }
+    }
+
+    // MARK: - OptionViewDelegate
+
+    fileprivate func didSelectOptionView(_ optionView: OptionView, model: AvatarModel) {
+        optionViews.forEach { $0.isSelected = $0 == optionView }
+        state = .new(model)
+    }
+
+    fileprivate func didEditOptionView(_ optionView: OptionView, model: AvatarModel) {
+        owsAssertDebug(model.type.isEditable)
+
+        let vc = AvatarEditViewController(model: model) { [weak self, context] editedModel in
+            DependenciesBridge.shared.db.asyncWrite { tx in
+                AppEnvironment.shared.avatarHistoryManager.touchedModel(
+                    editedModel,
+                    in: context,
+                    tx: tx,
+                )
+            } completion: {
+                self?.state = .new(editedModel)
+                self?.updateTableContents()
+            }
+        }
+        presentFormSheet(OWSNavigationController(rootViewController: vc), animated: true)
+    }
+
+    fileprivate func didDeleteOptionView(_ optionView: OptionView, model: AvatarModel) {
+        owsAssertDebug(model.type.isDeletable)
+        DependenciesBridge.shared.db.asyncWrite { [context] tx in
+            AppEnvironment.shared.avatarHistoryManager.deletedModel(
+                model,
+                in: context,
+                tx: tx,
+            )
+        } completion: { [weak self] in
+            // If we just deleted the selected avatar, also clear it.
+            if self?.selectedAvatarModel == model {
+                self?.state = .new(nil)
+            }
+            self?.updateTableContents()
+        }
+    }
+}
+
+private protocol OptionViewDelegate: AnyObject {
+    func didSelectOptionView(_ optionView: OptionView, model: AvatarModel)
+    func didEditOptionView(_ optionView: OptionView, model: AvatarModel)
+    func didDeleteOptionView(_ optionView: OptionView, model: AvatarModel)
+}
+
+private class OptionView: UIView {
+
+    private let imageView = UIImageView()
+
+    private let editOverlayView = UIImageView(image: UIImage(imageLiteralResourceName: "edit-fill"))
+
+    private weak var delegate: (OptionViewDelegate & UIViewController)?
+
+    var isSelected = false {
+        didSet {
+            guard isSelected != oldValue else { return }
+            updateSelectionState()
+        }
+    }
+
+    init(delegate: OptionViewDelegate & UIViewController) {
+        self.delegate = delegate
+
+        super.init(frame: .zero)
+
+        clipsToBounds = true
+
+        addSubview(imageView)
+
+        editOverlayView.backgroundColor = .ows_blackAlpha20
+        editOverlayView.tintColor = .white
+        editOverlayView.contentMode = .center
+        editOverlayView.layer.borderWidth = 1.5
+        editOverlayView.clipsToBounds = true
+        addSubview(editOverlayView)
+
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
+        addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress)))
+
+        updateSelectionState()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            updateSelectionState()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        layer.cornerRadius = bounds.size.smallerAxis / 2
+
+        imageView.frame = bounds
+
+        editOverlayView.frame = imageView.frame.inset(by: .init(margin: 2.5))
+        editOverlayView.layer.cornerRadius = editOverlayView.bounds.size.smallerAxis / 2
+    }
+
+    @objc
+    private func handleTap() {
+        guard let model else {
+            return owsFailDebug("Unexpectedly missing model in OptionView")
+        }
+
+        if !isSelected {
+            isSelected = true
+            delegate?.didSelectOptionView(self, model: model)
+        } else if model.type.isEditable {
+            delegate?.didEditOptionView(self, model: model)
+        }
+    }
+
+    @objc
+    private func handleLongPress() {
+        guard let model else {
+            return owsFailDebug("Unexpectedly missing model in OptionView")
+        }
+
+        let actionSheet = ActionSheetController()
+        actionSheet.addAction(OWSActionSheets.cancelAction)
+        if model.type.isEditable {
+            actionSheet.addAction(.init(title: CommonStrings.editButton, handler: { [weak self] _ in
+                guard let self else { return }
+                self.delegate?.didEditOptionView(self, model: model)
+            }))
+        }
+        if model.type.isDeletable {
+            actionSheet.addAction(.init(title: CommonStrings.deleteButton, handler: { [weak self] _ in
+                guard let self else { return }
+                self.delegate?.didDeleteOptionView(self, model: model)
+            }))
+        }
+        delegate?.presentActionSheet(actionSheet)
+    }
+
+    private func updateSelectionState() {
+        if isSelected {
+            layer.borderColor = UIColor.Signal.label.cgColor
+            layer.borderWidth = 2.5
+        } else {
+            layer.borderColor = nil
+            layer.borderWidth = 0
+        }
+
+        editOverlayView.layer.borderColor = UIColor.Signal.secondaryGroupedBackground.cgColor
+
+        if let model, model.type.isEditable {
+            editOverlayView.isHidden = !isSelected
+        } else {
+            editOverlayView.isHidden = true
+        }
+    }
+
+    private var model: AvatarModel?
+    func configure(model: AvatarModel, image: UIImage, isSelected: Bool) {
+        self.model = model
+        self.isSelected = isSelected
+        imageView.image = image
+    }
+}

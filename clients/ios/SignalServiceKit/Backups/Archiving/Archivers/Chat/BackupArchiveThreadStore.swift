@@ -1,0 +1,171 @@
+//
+// Copyright 2024 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import LibSignalClient
+
+public final class BackupArchiveThreadStore {
+
+    private let threadStore: ThreadStore
+
+    init(threadStore: ThreadStore) {
+        self.threadStore = threadStore
+    }
+
+    // MARK: - Archiving
+
+    func enumerateNonStoryThreads(
+        tx: DBReadTransaction,
+        block: (TSThread) throws(CancellationError) -> Bool,
+    ) throws(CancellationError) {
+        try threadStore.enumerateNonStoryThreads(tx: tx, block: block)
+    }
+
+    func enumerateStoryThreads(
+        tx: DBReadTransaction,
+        block: (TSPrivateStoryThread) throws(CancellationError) -> Bool,
+    ) throws(CancellationError) {
+        try threadStore.enumerateStoryThreads(tx: tx, block: block)
+    }
+
+    func fetchContactThread(
+        recipient: SignalRecipient,
+        tx: DBReadTransaction,
+    ) -> TSContactThread? {
+        return threadStore.fetchContactThread(recipient: recipient, tx: tx)
+    }
+
+    func fetchThread(forGroupId groupId: GroupIdentifier, tx: DBReadTransaction) -> TSGroupThread? {
+        return threadStore.fetchThread(forGroupId: groupId, tx: tx)
+    }
+
+    // MARK: - Restoring
+
+    func createNoteToSelfThread(
+        context: BackupArchive.ChatRestoringContext,
+    ) throws -> TSContactThread {
+        let thread = TSContactThread(contactAddress: context.recipientContext.localIdentifiers.aciAddress)
+        try thread.insert(context.tx.database)
+        return thread
+    }
+
+    func createContactThread(
+        with address: BackupArchive.ContactAddress,
+        context: BackupArchive.ChatRestoringContext,
+    ) throws -> TSContactThread {
+        let thread = TSContactThread(contactAddress: address.asInteropAddress())
+        try thread.insert(context.tx.database)
+        return thread
+    }
+
+    func insertGroupThread(
+        groupRecord: inout GroupRecord,
+        groupModel: TSGroupModelV2,
+        isStorySendEnabled: Bool?,
+        context: BackupArchive.RestoringContext,
+    ) throws -> TSGroupThread {
+        let groupThread = TSGroupThread(groupModel: groupModel)
+        switch isStorySendEnabled {
+        case true:
+            groupThread.storyViewMode = .explicit
+        case false:
+            groupThread.storyViewMode = .disabled
+        default:
+            groupThread.storyViewMode = .default
+        }
+        try groupThread.insert(context.tx.database)
+        groupRecord.setThreadId(groupThread.sqliteRowId.owsFailUnwrap("must exist"), tx: context.tx)
+        return groupThread
+    }
+
+    func insertFullGroupMemberRecords(
+        acis: Set<Aci>,
+        groupThread: TSGroupThread,
+        context: BackupArchive.RestoringContext,
+    ) throws {
+        for aci in acis {
+            let groupMember = TSGroupMember(
+                address: NormalizedDatabaseRecordAddress(aci: aci),
+                threadUniqueId: groupThread.uniqueId,
+                // This gets updated in post frame restore actions.
+                lastInteractionTimestamp: 0,
+            )
+            try groupMember.insert(context.tx.database)
+        }
+    }
+
+    /// We _have_ to do this in a separate step from group thread creation; we create the group
+    /// thread when we process the group's Recipient frame, but only have mention state later
+    /// when processing the group's Chat frame.
+    func update(
+        thread: BackupArchive.ChatThread,
+        dontNotifyForMentionsIfMuted: Bool,
+        context: BackupArchive.ChatRestoringContext,
+    ) throws {
+        guard dontNotifyForMentionsIfMuted else {
+            // We only need to set if its not the default (false)
+            return
+        }
+
+        // Technically, this isn't relevant for contact threads (they can't have mentions
+        // in them anyway), but the boolean does exist for them and the backup integration
+        // tests have contact threads with muted mentions. So we set for all thread types.
+
+        try context.tx.database.execute(
+            sql: """
+            UPDATE \(TSThread.databaseTableName)
+            SET
+                \(threadColumn: .mentionNotificationMode) = ?
+            WHERE
+                \(threadColumn: .id) = ?;
+            """,
+            arguments: [TSThread.MentionNotificationMode.doNotNotifyWhenMuted.rawValue, thread.threadRowId],
+        )
+    }
+
+    func markVisible(
+        thread: BackupArchive.ChatThread,
+        lastInteractionRowId: Int64?,
+        context: BackupArchive.ChatRestoringContext,
+    ) throws {
+        try context.tx.database.execute(
+            sql: """
+            UPDATE \(TSThread.databaseTableName)
+            SET
+                \(threadColumn: .shouldThreadBeVisible) = 1,
+                \(threadColumn: .lastInteractionRowId) = ?
+            WHERE
+                \(threadColumn: .id) = ?;
+            """,
+            arguments: [lastInteractionRowId ?? 0, thread.threadRowId],
+        )
+    }
+
+    func updateThread(
+        _ thread: TSThread,
+        isArchived: Bool,
+        isMarkedUnread: Bool,
+        mutedUntilTimestamp: UInt64?,
+        context: BackupArchive.ChatRestoringContext,
+    ) throws {
+        let threadId = thread.sqliteRowId.owsFailUnwrap("must exist")
+        try context.tx.database.execute(
+            sql: """
+            UPDATE \(TSThread.databaseTableName)
+            SET
+                \(threadColumn: .isArchived) = ?,
+                \(threadColumn: .isMarkedUnread) = ?,
+                \(threadColumn: .mutedUntilTimestamp) = ?
+            WHERE
+                \(threadColumn: .id) = ?
+            """,
+            arguments: [
+                isArchived,
+                isMarkedUnread,
+                mutedUntilTimestamp ?? 0,
+                threadId,
+            ],
+        )
+    }
+}

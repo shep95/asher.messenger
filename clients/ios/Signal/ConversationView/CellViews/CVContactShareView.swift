@@ -1,0 +1,138 @@
+//
+// Copyright 2020 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+public import SignalUI
+
+public class CVContactShareView: ManualStackView {
+
+    struct State: Equatable {
+        let contactShare: ContactShareViewModel
+        let isIncoming: Bool
+        let conversationStyle: ConversationStyle
+        let avatar: UIImage?
+    }
+
+    private let labelStack = ManualStackView(name: "CVContactShareView.labelStack")
+    private let avatarView: AvatarImageView = AvatarImageView(shouldDeactivateConstraints: true)
+
+    private let contactNameLabel = CVLabel()
+    private let disclosureImageView = CVImageView()
+
+    static func buildState(
+        contactShare: ContactShareViewModel,
+        isIncoming: Bool,
+        conversationStyle: ConversationStyle,
+        transaction: DBReadTransaction,
+    ) -> State {
+        let avatar = contactShare.getAvatarImage(
+            diameter: avatarSize,
+            transaction: transaction,
+        )
+        owsAssertDebug(avatar != nil)
+        return State(
+            contactShare: contactShare,
+            isIncoming: isIncoming,
+            conversationStyle: conversationStyle,
+            avatar: avatar,
+        )
+    }
+
+    private static var avatarSize: CGFloat { CGFloat(AvatarBuilder.standardAvatarSizePoints) }
+    private static let disclosureIconSize = CGSize.square(20)
+
+    func configureForRendering(state: State, cellMeasurement: CVCellMeasurement) {
+        let labelConfig = Self.contactNameLabelConfig(state: state)
+        labelConfig.applyForRendering(label: contactNameLabel)
+
+        avatarView.image = state.avatar
+
+        let disclosureColor: UIColor = state.isIncoming ? .Signal.tertiaryLabel : .Signal.ColorBase.labelTertiary
+        disclosureImageView.setTemplateImage(
+            UIImage(imageLiteralResourceName: "chevron-right-20"),
+            tintColor: disclosureColor,
+        )
+
+        configure(
+            config: Self.outerStackConfig,
+            cellMeasurement: cellMeasurement,
+            measurementKey: Self.measurementKey_outerStack,
+            subviews: [
+                avatarView,
+                contactNameLabel,
+                disclosureImageView,
+            ],
+        )
+    }
+
+    private static var outerStackConfig: CVStackViewConfig {
+        CVStackViewConfig(
+            axis: .horizontal,
+            alignment: .center,
+            spacing: 12,
+            layoutMargins: UIEdgeInsets(hMargin: 0, vMargin: 4),
+        )
+    }
+
+    private static func contactNameLabelConfig(state: State) -> CVLabelConfig {
+        let textColor: UIColor = state.isIncoming ? .Signal.label : .Signal.ColorBase.labelPrimary
+        return CVLabelConfig.unstyledText(
+            state.contactShare.displayName,
+            font: .dynamicTypeHeadline,
+            textColor: textColor,
+            lineBreakMode: .byTruncatingTail,
+        )
+    }
+
+    private static let measurementKey_outerStack = "CVContactShareView.measurementKey_outerStack"
+
+    static func measure(
+        maxWidth: CGFloat,
+        measurementBuilder: CVCellMeasurement.Builder,
+        state: State,
+    ) -> CGSize {
+        owsAssertDebug(maxWidth > 0)
+
+        var maxContentWidth = (
+            maxWidth -
+                (
+                    avatarSize +
+                        disclosureIconSize.width +
+                        outerStackConfig.spacing * 2
+                ),
+        )
+        maxContentWidth = max(0, maxContentWidth)
+
+        let labelConfig = contactNameLabelConfig(state: state)
+        let labelSize = CVText.measureLabel(config: labelConfig, maxWidth: maxContentWidth)
+
+        var outerSubviewInfos = [ManualStackSubviewInfo]()
+
+        let avatarSize = CGSize(square: avatarSize)
+        outerSubviewInfos.append(avatarSize.asManualSubviewInfo(hasFixedSize: true))
+
+        outerSubviewInfos.append(labelSize.asManualSubviewInfo)
+
+        outerSubviewInfos.append(disclosureIconSize.asManualSubviewInfo(hasFixedSize: true))
+
+        let outerStackMeasurement = ManualStackView.measure(
+            config: outerStackConfig,
+            measurementBuilder: measurementBuilder,
+            measurementKey: measurementKey_outerStack,
+            subviewInfos: outerSubviewInfos,
+            maxWidth: maxWidth,
+        )
+        return outerStackMeasurement.measuredSize
+    }
+
+    override public func reset() {
+        super.reset()
+
+        labelStack.reset()
+        avatarView.image = nil
+        contactNameLabel.text = nil
+        disclosureImageView.image = nil
+    }
+}

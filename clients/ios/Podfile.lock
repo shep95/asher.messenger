@@ -1,0 +1,148 @@
+PODS:
+  - blurhash (0.0.1)
+  - BonMot (6.0.0)
+  - CocoaLumberjack (3.7.4):
+    - CocoaLumberjack/Core (= 3.7.4)
+  - CocoaLumberjack/Core (3.7.4)
+  - GRDB.swift/SQLCipher (5.26.0):
+    - SQLCipher (>= 3.4.0)
+  - LibMobileCoin/CoreHTTP (6.0.2):
+    - SwiftProtobuf (~> 1.5)
+  - libPhoneNumber-iOS (1.2.0)
+  - LibSignalClient (0.103.1)
+  - LibSignalClient/Tests (0.103.1)
+  - libwebp (1.5.0):
+    - libwebp/demux (= 1.5.0)
+    - libwebp/mux (= 1.5.0)
+    - libwebp/sharpyuv (= 1.5.0)
+    - libwebp/webp (= 1.5.0)
+  - libwebp/demux (1.5.0):
+    - libwebp/webp
+  - libwebp/mux (1.5.0):
+    - libwebp/demux
+  - libwebp/sharpyuv (1.5.0)
+  - libwebp/webp (1.5.0):
+    - libwebp/sharpyuv
+  - Logging (1.4.0)
+  - lottie-ios (4.4.3)
+  - MobileCoin/CoreHTTP (6.0.3):
+    - LibMobileCoin/CoreHTTP (~> 6.0.0-pre1)
+    - Logging (~> 1.4)
+  - PureLayout (3.1.4)
+  - SDWebImage (5.21.2):
+    - SDWebImage/Core (= 5.21.2)
+  - SDWebImage/Core (5.21.2)
+  - SDWebImageWebPCoder (0.14.6):
+    - libwebp (~> 1.0)
+    - SDWebImage/Core (~> 5.17)
+  - SignalRingRTC (2.72.0):
+    - SignalRingRTC/WebRTC (= 2.72.0)
+  - SignalRingRTC/WebRTC (2.72.0)
+  - SQLCipher (4.6.1):
+    - SQLCipher/standard (= 4.6.1)
+  - SQLCipher/common (4.6.1)
+  - SQLCipher/standard (4.6.1):
+    - SQLCipher/common
+  - SwiftProtobuf (1.38.1)
+
+DEPENDENCIES:
+  - blurhash (from `./ThirdParty/blurhash.podspec`)
+  - BonMot
+  - CocoaLumberjack
+  - GRDB.swift/SQLCipher
+  - LibMobileCoin/CoreHTTP (from `https://github.com/signalapp/libmobilecoin-ios-artifacts`, tag `signal/6.0.2`)
+  - libPhoneNumber-iOS (from `https://github.com/signalapp/libPhoneNumber-iOS`, branch `signal-master`)
+  - LibSignalClient (from `https://github.com/signalapp/libsignal.git`, tag `v0.103.1`)
+  - LibSignalClient/Tests (from `https://github.com/signalapp/libsignal.git`, tag `v0.103.1`)
+  - libwebp
+  - lottie-ios
+  - MobileCoin/CoreHTTP (from `https://github.com/mobilecoinofficial/MobileCoin-Swift`, tag `v6.0.3`)
+  - PureLayout
+  - SDWebImage
+  - SDWebImageWebPCoder
+  - SignalRingRTC (from `https://github.com/signalapp/ringrtc`, tag `v2.72.0`)
+  - SQLCipher (from `https://github.com/signalapp/sqlcipher.git`, tag `v4.6.1-f_barrierfsync`)
+  - SwiftProtobuf (= 1.38.1)
+
+SPEC REPOS:
+  trunk:
+    - BonMot
+    - CocoaLumberjack
+    - GRDB.swift
+    - libwebp
+    - Logging
+    - lottie-ios
+    - PureLayout
+    - SDWebImage
+    - SDWebImageWebPCoder
+    - SwiftProtobuf
+
+EXTERNAL SOURCES:
+  blurhash:
+    :podspec: "./ThirdParty/blurhash.podspec"
+  LibMobileCoin:
+    :git: https://github.com/signalapp/libmobilecoin-ios-artifacts
+    :submodules: true
+    :tag: signal/6.0.2
+  libPhoneNumber-iOS:
+    :branch: signal-master
+    :git: https://github.com/signalapp/libPhoneNumber-iOS
+  LibSignalClient:
+    :git: https://github.com/signalapp/libsignal.git
+    :tag: v0.103.1
+  MobileCoin:
+    :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
+    :tag: v6.0.3
+  SignalRingRTC:
+    :git: https://github.com/signalapp/ringrtc
+    :tag: v2.72.0
+  SQLCipher:
+    :git: https://github.com/signalapp/sqlcipher.git
+    :tag: v4.6.1-f_barrierfsync
+
+CHECKOUT OPTIONS:
+  blurhash:
+    :commit: 890ffdab14207154819415da7e6c969e9dfff0e9
+    :git: https://github.com/signalapp/blurhash
+  LibMobileCoin:
+    :git: https://github.com/signalapp/libmobilecoin-ios-artifacts
+    :submodules: true
+    :tag: signal/6.0.2
+  libPhoneNumber-iOS:
+    :commit: 60482f7c0341e7c13e037ae1edbe8b359de7e6f3
+    :git: https://github.com/signalapp/libPhoneNumber-iOS
+  LibSignalClient:
+    :git: https://github.com/signalapp/libsignal.git
+    :tag: v0.103.1
+  MobileCoin:
+    :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
+    :tag: v6.0.3
+  SignalRingRTC:
+    :git: https://github.com/signalapp/ringrtc
+    :tag: v2.72.0
+  SQLCipher:
+    :git: https://github.com/signalapp/sqlcipher.git
+    :tag: v4.6.1-f_barrierfsync
+
+SPEC CHECKSUMS:
+  blurhash: f588a9d659f4c742a325bbbbd438d1ef3c34af19
+  BonMot: fb2b6a2209cb3149aca37b7131d49c051c04ae86
+  CocoaLumberjack: 543c79c114dadc3b1aba95641d8738b06b05b646
+  GRDB.swift: 1395cb3556df6b16ed69dfc74c3886abc75d2825
+  LibMobileCoin: 8503f567fa32184a5be7bc038fbd727747dd9991
+  libPhoneNumber-iOS: 1a34106b49dc6e12a7f37eb9aee7c64011509547
+  LibSignalClient: cb17aaf709fcb03d6e347d8401a333dbcfd8f688
+  libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
+  Logging: beeb016c9c80cf77042d62e83495816847ef108b
+  lottie-ios: fcb5e73e17ba4c983140b7d21095c834b3087418
+  MobileCoin: cd7f49d6eaa2d362e4c9f8324cae0cc3bc3c53b5
+  PureLayout: f08c01b8dec00bb14a1fefa3de4c7d9c265df85e
+  SDWebImage: 9f177d83116802728e122410fb25ad88f5c7608a
+  SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
+  SignalRingRTC: 1dc50379c72c1371ed7e0a43369a395da2eb89f8
+  SQLCipher: ff2f045b20d675a73a70f7329395ddd4a2580063
+  SwiftProtobuf: 409d3aaec90e51b1705b1dd8065b56893450e77c
+
+PODFILE CHECKSUM: b8de764822afba0fea924066e4313b8885b3e87d
+
+COCOAPODS: 1.15.2

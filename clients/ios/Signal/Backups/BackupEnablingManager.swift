@@ -1,0 +1,284 @@
+//
+// Copyright 2025 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+import SignalUI
+import StoreKit
+import UIKit
+
+final class BackupEnablingManager {
+    enum PlanSelection {
+        case free
+        case paid
+    }
+
+    private let backupAttachmentUploadEraStore: BackupAttachmentUploadEraStore
+    private let backupDisablingManager: BackupDisablingManager
+    private let backupIdService: BackupIdService
+    private let backupKeyService: BackupKeyService
+    private let backupPlanManager: BackupPlanManager
+    private let backupSettingsStore: BackupSettingsStore
+    private let backupSubscriptionIssueStore: BackupSubscriptionIssueStore
+    private let backupSubscriptionManager: BackupSubscriptionManager
+    private let backupTestFlightEntitlementManager: BackupTestFlightEntitlementManager
+    private let db: DB
+    private let logger: PrefixedLogger
+    private let tsAccountManager: TSAccountManager
+    private let notificationPresenter: NotificationPresenter
+
+    init(
+        backupAttachmentUploadEraStore: BackupAttachmentUploadEraStore,
+        backupDisablingManager: BackupDisablingManager,
+        backupIdService: BackupIdService,
+        backupKeyService: BackupKeyService,
+        backupPlanManager: BackupPlanManager,
+        backupSettingsStore: BackupSettingsStore,
+        backupSubscriptionIssueStore: BackupSubscriptionIssueStore,
+        backupSubscriptionManager: BackupSubscriptionManager,
+        backupTestFlightEntitlementManager: BackupTestFlightEntitlementManager,
+        db: DB,
+        tsAccountManager: TSAccountManager,
+        notificationPresenter: NotificationPresenter,
+    ) {
+        self.backupAttachmentUploadEraStore = backupAttachmentUploadEraStore
+        self.backupDisablingManager = backupDisablingManager
+        self.backupIdService = backupIdService
+        self.backupKeyService = backupKeyService
+        self.backupPlanManager = backupPlanManager
+        self.backupSettingsStore = backupSettingsStore
+        self.backupSubscriptionIssueStore = backupSubscriptionIssueStore
+        self.backupSubscriptionManager = backupSubscriptionManager
+        self.backupTestFlightEntitlementManager = backupTestFlightEntitlementManager
+        self.db = db
+        self.logger = PrefixedLogger(prefix: "[Backups]")
+        self.tsAccountManager = tsAccountManager
+        self.notificationPresenter = notificationPresenter
+    }
+
+    @MainActor
+    func enableBackups(
+        fromViewController: UIViewController,
+        planSelection: PlanSelection,
+    ) async throws(SheetDisplayableError) {
+        let registeredState: RegisteredState
+        do throws(NotRegisteredError) {
+            registeredState = try tsAccountManager.registeredStateWithMaybeSneakyTransaction()
+        } catch {
+            throw ActionSheetDisplayableError(localizedMessage: OWSLocalizedString(
+                "CHOOSE_BACKUP_PLAN_CONFIRMATION_ERROR_NOT_REGISTERED",
+                comment: "Message shown in an action sheet when the user tries to confirm a plan selection, but is not registered.",
+            ))
+        }
+
+        owsPrecondition(
+            registeredState.isPrimary,
+            "Attempting to enable Backups on a non-primary device!",
+        )
+
+        try await ModalActivityIndicatorViewController.presentAndPropagateResult(
+            from: fromViewController,
+            title: CommonStrings.updatingModal,
+        ) { [self] () throws(SheetDisplayableError) in
+            try await _enableBackups(
+                planSelection: planSelection,
+                localIdentifiers: registeredState.localIdentifiers,
+            )
+        }
+
+        scheduleEnableBackupsNotification()
+    }
+
+    private func _enableBackups(
+        planSelection: PlanSelection,
+        localIdentifiers: LocalIdentifiers,
+    ) async throws(SheetDisplayableError) {
+        logger.info("")
+
+        // This is a no-op unless we're also actively *disabling* Backups
+        // remotely. If we are, we don't wanna race, so we'll wait for
+        // it to finish.
+        await self.backupDisablingManager.disableRemotelyIfNecessary()
+
+        // First, register our Backup ID. This has likely already been done by
+        // other machinery (e.g., on launch), but may need to be done again; for
+        // example, if we rotated our AEP and are re-enabling.
+        do {
+            try await self.backupIdService.registerBackupIDIfNecessary(
+                localAci: localIdentifiers.aci,
+                auth: .implicit(),
+                logger: logger,
+            )
+        } catch let error as OWSHTTPError where error.responseStatusCode == 429 {
+            logger.warn("Rate limited when Registering Backup ID. \(error)")
+
+            guard let retryAfterTimeInterval = error.responseHeaders?.retryAfterTimeInterval else {
+                throw .genericError
+            }
+
+            let title = OWSLocalizedString(
+                "CHOOSE_BACKUP_PLAN_CONFIRMATION_ERROR_RATE_LIMITED_TITLE",
+                comment: "Message shown in an action sheet when the user tries to confirm a plan selection, but encounters a rate limit. They should wait the requested amount of time and try again. {{ Embeds 1 & 2: the preformatted time they must wait before enabling backups, such as \"1 week\" or \"6 hours\". }}",
+            )
+            let message = OWSLocalizedString(
+                "CHOOSE_BACKUP_PLAN_CONFIRMATION_ERROR_RATE_LIMITED",
+                comment: "Message shown in an action sheet when the user tries to confirm a plan selection, but encounters a rate limit. They should wait the requested amount of time and try again.",
+            )
+            let nextRetryString = DateUtil.formatDuration(
+                seconds: UInt32(retryAfterTimeInterval),
+                useShortFormat: false,
+            )
+            throw ActionSheetDisplayableError(
+                localizedTitle: title,
+                localizedMessage: String.nonPluralLocalizedStringWithFormat(message, nextRetryString),
+            )
+        } catch where error.isNetworkFailureOrTimeout {
+            throw .networkError
+        } catch {
+            owsFailDebug("Unexpectedly failed to register Backup ID! \(error)", logger: logger)
+            throw .genericError
+        }
+
+        // Now register our Backup Key, which will let us actually upload Backups.
+        do {
+            _ = try await self.backupKeyService.registerBackupKey(
+                localIdentifiers: localIdentifiers,
+                auth: .implicit(),
+                logger: logger,
+            )
+        } catch where error.isNetworkFailureOrTimeout {
+            throw .networkError
+        } catch {
+            owsFailDebug("Unexpectedly failed to register Backup Key! \(error)", logger: logger)
+            throw .genericError
+        }
+
+        // Proactively clear persisted subscription-related issues, as they'll
+        // be superceded, and/or re-set, by our imminent enabling attempt.
+        await db.awaitableWrite { tx in
+            backupSubscriptionIssueStore.setStopWarningIAPSubscriptionAlreadyRedeemed(tx: tx)
+            backupSubscriptionIssueStore.setStopWarningIAPSubscriptionNotFoundLocally(tx: tx)
+        }
+
+        switch planSelection {
+        case .free:
+            await setBackupPlan { _ in .free }
+        case .paid:
+            if BuildFlags.Backups.avoidStoreKitForTesters {
+                try await enablePaidPlanWithoutStoreKit()
+            } else {
+                try await enablePaidPlanWithStoreKit()
+            }
+        }
+    }
+
+    // MARK: -
+
+    private func scheduleEnableBackupsNotification() {
+        let backupsEnabledTimestamp = Date()
+        let notificationDelay = TimeInterval.random(in: .hour...(.hour * 3))
+        db.write { tx in
+            backupSettingsStore.setLastBackupEnabledDetails(
+                backupsEnabledTime: backupsEnabledTimestamp,
+                notificationDelay: notificationDelay,
+                tx: tx,
+            )
+        }
+        notificationPresenter.scheduleNotifyForBackupsEnabled(backupsTimestamp: backupsEnabledTimestamp)
+    }
+
+    // MARK: -
+
+    private func enablePaidPlanWithStoreKit() async throws(SheetDisplayableError) {
+        let purchaseResult: BackupSubscription.PurchaseResult
+        do {
+            purchaseResult = try await backupSubscriptionManager.purchaseNewSubscription()
+        } catch StoreKitError.networkError {
+            throw .networkError
+        } catch {
+            owsFailDebug("StoreKit purchase unexpectedly failed: \(error)", logger: logger)
+            throw ActionSheetDisplayableError(localizedMessage: OWSLocalizedString(
+                "CHOOSE_BACKUP_PLAN_CONFIRMATION_ERROR_PURCHASE",
+                comment: "Message shown in an action sheet when the user tries to confirm selecting the paid plan, but encountered an error from Apple while purchasing.",
+            ))
+        }
+
+        switch purchaseResult {
+        case .success:
+            do {
+                try await self.backupSubscriptionManager.redeemSubscriptionIfNecessary()
+            } catch {
+                let shouldWarnAlreadyRedeemed = db.read { tx in
+                    return backupSubscriptionIssueStore.shouldShowIAPSubscriptionAlreadyRedeemedWarning(tx: tx)
+                }
+
+                if shouldWarnAlreadyRedeemed {
+                    throw HeroSheetDisplayableError(
+                        heroSheetBuilder: { return BackupSubscriptionAlreadyRedeemedSheet() },
+                    )
+                } else {
+                    owsFailDebug("Unexpectedly failed to redeem subscription! \(error)", logger: logger)
+                    throw ActionSheetDisplayableError(localizedMessage: OWSLocalizedString(
+                        "CHOOSE_BACKUP_PLAN_CONFIRMATION_ERROR_PURCHASE_REDEMPTION",
+                        comment: "Message shown in an action sheet when the user tries to confirm selecting the paid plan, but encountered an error while redeeming their completed purchase.",
+                    ))
+                }
+            }
+
+            await setBackupPlan { currentBackupPlan in
+                let currentOptimizeLocalStorage: Bool
+                switch currentBackupPlan {
+                case .disabled, .disabling, .free:
+                    currentOptimizeLocalStorage = false
+                case
+                    .paid(let optimizeLocalStorage),
+                    .paidExpiringSoon(let optimizeLocalStorage),
+                    .paidAsTester(let optimizeLocalStorage):
+                    currentOptimizeLocalStorage = optimizeLocalStorage
+                }
+
+                return .paid(optimizeLocalStorage: currentOptimizeLocalStorage)
+            }
+
+        case .pending:
+            // The subscription won't be redeemed until if/when the purchase
+            // is approved, but if/when that happens BackupPlan will get set
+            // set to .paid. For the time being, we can enable Backups as
+            // a free-tier user!
+            await setBackupPlan { _ in .free }
+
+        case .userCancelled:
+            throw .userCancelled
+        }
+    }
+
+    private func enablePaidPlanWithoutStoreKit() async throws(SheetDisplayableError) {
+        do {
+            await db.awaitableWrite { tx in
+                backupTestFlightEntitlementManager.setRenewEntitlementIsNecessary(tx: tx)
+            }
+            try await backupTestFlightEntitlementManager.renewEntitlementIfNecessary()
+        } catch where error.isNetworkFailureOrTimeout {
+            throw .networkError
+        } catch {
+            owsFailDebug("Unexpectedly failed to renew Backup entitlement for tester! \(error)", logger: logger)
+            throw .genericError
+        }
+
+        await setBackupPlan { _ in
+            return .paidAsTester(optimizeLocalStorage: false)
+        }
+    }
+
+    // MARK: -
+
+    private func setBackupPlan(
+        block: (_ currentBackupPlan: BackupPlan) -> BackupPlan,
+    ) async {
+        await db.awaitableWrite { tx in
+            let newBackupPlan = block(backupPlanManager.backupPlan(tx: tx))
+            backupPlanManager.setBackupPlan(newBackupPlan, tx: tx)
+        }
+    }
+}

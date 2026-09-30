@@ -1,0 +1,36 @@
+//
+// Copyright 2018 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+public import SignalServiceKit
+
+public class ThreadDetailsInteraction: TSInteraction {
+
+    override public var isDynamicInteraction: Bool {
+        true
+    }
+
+    override public var interactionType: OWSInteractionType {
+        .threadDetails
+    }
+
+    public init(threadUniqueId: String, timestamp: UInt64) {
+        // Include timestamp in uniqueId to ensure invariant that
+        // interactions don't move in the chat history ordering.
+        super.init(
+            customUniqueId: "ThreadDetails_\(timestamp)",
+            timestamp: timestamp,
+            receivedAtTimestamp: 0,
+            threadUniqueId: threadUniqueId,
+        )
+    }
+
+    override public var shouldBeSaved: Bool {
+        return false
+    }
+
+    override public func anyWillInsert(with transaction: DBWriteTransaction) {
+        owsFailDebug("The transient interaction should not be saved in the database.")
+    }
+}

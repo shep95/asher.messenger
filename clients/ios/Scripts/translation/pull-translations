@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -x
+set -e
+
+BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+REPO_ROOT=$BIN_DIR/../..
+cd $REPO_ROOT
+swift run --package-path Scripts/translation-tool translation-tool download-resources
+swift build --package-path Scripts/translation-validator
+
+LOCALIZATION_ROOT=Signal/translations
+
+Scripts/translation-validator/.build/debug/translation-validator $LOCALIZATION_ROOT/en.lproj/Localizable.strings || true
+Scripts/translation-validator/.build/debug/translation-validator $LOCALIZATION_ROOT/en.lproj/InfoPlist.strings || true
+Scripts/translation-validator/.build/debug/translation-validator $LOCALIZATION_ROOT/en.lproj/PluralAware.stringsdict || true

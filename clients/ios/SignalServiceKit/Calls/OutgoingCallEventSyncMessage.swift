@@ -1,0 +1,204 @@
+//
+// Copyright 2022 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+/// Represents a call event that occurred on this device that we want to
+/// communicate to our linked devices.
+@objc(OutgoingCallEvent)
+class OutgoingCallEvent: NSObject, NSSecureCoding {
+    enum CallType: UInt {
+        case audio
+        case video
+        case group
+        case adHocCall
+    }
+
+    enum EventDirection: UInt {
+        case incoming
+        case outgoing
+    }
+
+    enum EventType: UInt {
+        case accepted
+        case notAccepted
+        case deleted
+        case observed
+    }
+
+    let timestamp: UInt64
+    let conversationId: Data
+    let callId: UInt64
+    let callType: CallType
+    let eventDirection: EventDirection
+    let eventType: EventType
+
+    init(
+        timestamp: UInt64,
+        conversationId: Data,
+        callId: UInt64,
+        callType: CallType,
+        eventDirection: EventDirection,
+        eventType: EventType,
+    ) {
+        self.timestamp = timestamp
+        self.conversationId = conversationId
+        self.callId = callId
+        self.callType = callType
+        self.eventDirection = eventDirection
+        self.eventType = eventType
+    }
+
+    // MARK: NSSecureCoding
+
+    private enum Keys {
+        static let timestamp = "timestamp"
+        static let conversationId = "peerUuid"
+        static let callId = "callId"
+        static let callType = "type"
+        static let eventDirection = "direction"
+        static let eventType = "event"
+    }
+
+    static var supportsSecureCoding: Bool { true }
+
+    func encode(with coder: NSCoder) {
+        coder.encode(NSNumber(value: timestamp), forKey: Keys.timestamp)
+        coder.encode(conversationId as NSData, forKey: Keys.conversationId)
+        coder.encode(NSNumber(value: callId), forKey: Keys.callId)
+        coder.encode(NSNumber(value: callType.rawValue), forKey: Keys.callType)
+        coder.encode(NSNumber(value: eventDirection.rawValue), forKey: Keys.eventDirection)
+        coder.encode(NSNumber(value: eventType.rawValue), forKey: Keys.eventType)
+    }
+
+    required init?(coder: NSCoder) {
+        guard
+            let timestamp = coder.decodeObject(of: NSNumber.self, forKey: Keys.timestamp)?.uint64Value,
+            let conversationId = coder.decodeObject(of: NSData.self, forKey: Keys.conversationId) as Data?,
+            let callId = coder.decodeObject(of: NSNumber.self, forKey: Keys.callId)?.uint64Value,
+            let callTypeRaw = coder.decodeObject(of: NSNumber.self, forKey: Keys.callType)?.uintValue,
+            let callType = CallType(rawValue: callTypeRaw),
+            let eventDirectionRaw = coder.decodeObject(of: NSNumber.self, forKey: Keys.eventDirection)?.uintValue,
+            let eventDirection = EventDirection(rawValue: eventDirectionRaw),
+            let eventTypeRaw = coder.decodeObject(of: NSNumber.self, forKey: Keys.eventType)?.uintValue,
+            let eventType = EventType(rawValue: eventTypeRaw)
+        else {
+            owsFailDebug("Missing or unrecognized fields!")
+            return nil
+        }
+
+        self.timestamp = timestamp
+        self.conversationId = conversationId
+        self.callId = callId
+        self.callType = callType
+        self.eventDirection = eventDirection
+        self.eventType = eventType
+    }
+}
+
+/// Represents a sync message containing a "call event".
+///
+/// Indicates to linked devices that a call has changed state. For example, that
+/// we accepted a ringing call on this device.
+///
+/// - SeeAlso ``IncomingCallEventSyncMessageManager``
+@objc(OutgoingCallEventSyncMessage)
+public class OutgoingCallEventSyncMessage: OutgoingSyncMessage {
+    override public class var supportsSecureCoding: Bool { true }
+
+    public required init?(coder: NSCoder) {
+        guard let callEvent = coder.decodeObject(of: OutgoingCallEvent.self, forKey: "event") else {
+            return nil
+        }
+        self.callEvent = callEvent
+        super.init(coder: coder)
+    }
+
+    override public func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(callEvent, forKey: "event")
+    }
+
+    override public var hash: Int {
+        var hasher = Hasher()
+        hasher.combine(super.hash)
+        hasher.combine(callEvent)
+        return hasher.finalize()
+    }
+
+    override public func isEqual(_ object: Any?) -> Bool {
+        guard let object = object as? Self else { return false }
+        guard super.isEqual(object) else { return false }
+        guard self.callEvent == object.callEvent else { return false }
+        return true
+    }
+
+    /// The call event.
+    let callEvent: OutgoingCallEvent
+
+    init(
+        localThread: TSContactThread,
+        event: OutgoingCallEvent,
+        tx: DBReadTransaction,
+    ) {
+        self.callEvent = event
+        super.init(localThread: localThread, tx: tx)
+    }
+
+    override public var isUrgent: Bool { false }
+
+    override public func syncMessageBuilder(tx: DBReadTransaction) -> SSKProtoSyncMessageBuilder? {
+        let callEventBuilder = SSKProtoSyncMessageCallEvent.builder()
+        callEventBuilder.setCallID(callEvent.callId)
+        callEventBuilder.setType(callEvent.callType.protoValue)
+        callEventBuilder.setDirection(callEvent.eventDirection.protoValue)
+        callEventBuilder.setEvent(callEvent.eventType.protoValue)
+        callEventBuilder.setTimestamp(callEvent.timestamp)
+        callEventBuilder.setConversationID(callEvent.conversationId)
+
+        let builder = SSKProtoSyncMessage.builder()
+        builder.setCallEvent(callEventBuilder.buildInfallibly())
+        return builder
+    }
+}
+
+private extension OutgoingCallEvent.CallType {
+    var protoValue: SSKProtoSyncMessageCallEventType {
+        switch self {
+        case .audio:
+            return .audioCall
+        case .video:
+            return .videoCall
+        case .group:
+            return .groupCall
+        case .adHocCall:
+            return .adHocCall
+        }
+    }
+}
+
+private extension OutgoingCallEvent.EventDirection {
+    var protoValue: SSKProtoSyncMessageCallEventDirection {
+        switch self {
+        case .incoming:
+            return .incoming
+        case .outgoing:
+            return .outgoing
+        }
+    }
+}
+
+private extension OutgoingCallEvent.EventType {
+    var protoValue: SSKProtoSyncMessageCallEventEvent {
+        switch self {
+        case .accepted:
+            return .accepted
+        case .notAccepted:
+            return .notAccepted
+        case .deleted:
+            return .deleted
+        case .observed:
+            return .observed
+        }
+    }
+}

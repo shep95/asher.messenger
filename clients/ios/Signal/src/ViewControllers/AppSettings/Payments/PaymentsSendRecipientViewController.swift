@@ -1,0 +1,121 @@
+//
+// Copyright 2019 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SignalServiceKit
+import SignalUI
+
+class PaymentsSendRecipientViewController: RecipientPickerContainerViewController, SendPaymentViewDelegate,
+    RecipientPickerDelegate, UsernameLinkScanDelegate
+{
+    private let isOutgoingTransfer: Bool
+
+    init(isOutgoingTransfer: Bool) {
+        self.isOutgoingTransfer = isOutgoingTransfer
+    }
+
+    static func presentAsFormSheet(fromViewController: UIViewController, isOutgoingTransfer: Bool) {
+        let view = PaymentsSendRecipientViewController(isOutgoingTransfer: isOutgoingTransfer)
+        let navigationController = OWSNavigationController(rootViewController: view)
+        fromViewController.presentFormSheet(navigationController, animated: true)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        title = OWSLocalizedString(
+            "SETTINGS_PAYMENTS_SEND_TO_RECIPIENT_TITLE",
+            comment: "Label for the 'send payment to recipient' view in the payment settings.",
+        )
+
+        view.backgroundColor = .Signal.groupedBackground
+
+        recipientPicker.allowsAddByAddress = false
+        recipientPicker.shouldHideLocalRecipient = true
+        recipientPicker.groupsToShow = .noGroups
+        recipientPicker.delegate = self
+
+        addRecipientPicker()
+
+        navigationItem.rightBarButtonItem = .doneButton { [weak self] in
+            self?.didTapDismiss()
+        }
+    }
+
+    private func didTapDismiss() {
+        dismiss(animated: true)
+    }
+
+    private func showSendPayment(address: SignalServiceAddress) {
+        guard let navigationController else {
+            owsFailDebug("Missing navigationController.")
+            return
+        }
+        SendPaymentViewController.present(
+            inNavigationController: navigationController,
+            delegate: self,
+            recipientAddress: address,
+            isOutgoingTransfer: isOutgoingTransfer,
+            mode: .fromPaymentSettings,
+        )
+    }
+
+    // MARK: - RecipientPickerDelegate
+
+    func recipientPicker(
+        _ recipientPickerViewController: RecipientPickerViewController,
+        selectionStyleForRecipient recipient: PickedRecipient,
+        transaction: DBReadTransaction,
+    ) -> UITableViewCell.SelectionStyle {
+        // TODO: Nice-to-have: filter out recipients that do not support payments.
+        return .default
+    }
+
+    func recipientPicker(
+        _ recipientPickerViewController: RecipientPickerViewController,
+        didSelectRecipient recipient: PickedRecipient,
+    ) {
+        switch recipient.identifier {
+        case .address(let address):
+            showSendPayment(address: address)
+        case .group:
+            owsFailDebug("Invalid recipient.")
+            dismiss(animated: true)
+        }
+    }
+
+    func recipientPicker(
+        _ recipientPickerViewController: RecipientPickerViewController,
+        attributedSubtitleForRecipient recipient: PickedRecipient,
+        transaction: DBReadTransaction,
+    ) -> NSAttributedString? {
+        // TODO: Nice-to-have: filter out recipients that do not support payments.
+        switch recipient.identifier {
+        case .address(let address):
+            guard !address.isLocalAddress else {
+                return nil
+            }
+            if let bioForDisplay = SSKEnvironment.shared.profileManagerImplRef.userProfile(for: address, tx: transaction)?.bioForDisplay {
+                return NSAttributedString(string: bioForDisplay)
+            }
+            return nil
+        case .group:
+            return nil
+        }
+    }
+
+    // MARK: - SendPaymentViewDelegate
+
+    func didSendPayment(success: Bool) {
+        dismiss(animated: true) {
+            guard success else {
+                // only prompt users to enable payments lock when successful.
+                return
+            }
+            PaymentOnboarding.presentBiometricLockPromptIfNeeded {
+                Logger.debug("Payments Lock Request Complete")
+            }
+        }
+    }
+}

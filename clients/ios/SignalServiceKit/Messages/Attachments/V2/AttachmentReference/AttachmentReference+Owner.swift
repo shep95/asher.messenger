@@ -1,0 +1,558 @@
+//
+// Copyright 2024 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+
+extension AttachmentReference {
+
+    /// A friendly representation of the "owner" of this attachment represented
+    /// by this attachment reference.
+    ///
+    /// Note that a given `Attachment` may have multiple "owners", if the same
+    /// attachment is present on this device in multiple contexts.
+    public enum Owner {
+        case message(MessageSource)
+        case storyMessage(StoryMessageSource)
+        case thread(ThreadSource)
+
+        // MARK: - ID
+
+        public enum ID: Hashable, Equatable {
+            case messageBodyAttachment(messageRowId: Int64)
+            case messageOversizeText(messageRowId: Int64)
+            case messageLinkPreview(messageRowId: Int64)
+            /// - Note
+            /// The `messageRowId` points to the message containing the quoted
+            /// reply, not the message being quoted.
+            case quotedReplyAttachment(messageRowId: Int64)
+            case messageSticker(messageRowId: Int64)
+            case messageContactAvatar(messageRowId: Int64)
+            case storyMessageMedia(storyMessageRowId: Int64)
+            case storyMessageLinkPreview(storyMessageRowId: Int64)
+            case threadWallpaperImage(threadRowId: Int64)
+            /// The global default thread wallpaper; a single global owner.
+            /// Has no associated owner in any other table; managed manually.
+            case globalThreadWallpaperImage
+        }
+
+        public var id: ID {
+            switch self {
+            case .message(.bodyAttachment(let metadata)): .messageBodyAttachment(messageRowId: metadata.messageRowId)
+            case .message(.oversizeText(let metadata)): .messageOversizeText(messageRowId: metadata.messageRowId)
+            case .message(.linkPreview(let metadata)): .messageLinkPreview(messageRowId: metadata.messageRowId)
+            case .message(.quotedReply(let metadata)): .quotedReplyAttachment(messageRowId: metadata.messageRowId)
+            case .message(.sticker(let metadata)): .messageSticker(messageRowId: metadata.messageRowId)
+            case .message(.contactAvatar(let metadata)): .messageContactAvatar(messageRowId: metadata.messageRowId)
+            case .storyMessage(.media(let metadata)): .storyMessageMedia(storyMessageRowId: metadata.storyMessageRowId)
+            case .storyMessage(.textStoryLinkPreview(let metadata)): .storyMessageLinkPreview(storyMessageRowId: metadata.storyMessageRowId)
+            case .thread(.threadWallpaperImage(let metadata)): .threadWallpaperImage(threadRowId: metadata.threadRowId)
+            case .thread(.globalThreadWallpaperImage): .globalThreadWallpaperImage
+            }
+        }
+
+        // MARK: - Message
+
+        public enum MessageSource {
+            case bodyAttachment(BodyAttachmentMetadata)
+            /// Always assumed to have a text content type.
+            case oversizeText(Metadata)
+            /// Always assumed to have an image content type.
+            case linkPreview(Metadata)
+            /// Note that the row id is for the parent message containing the quoted reply,
+            /// not the original message being quoted.
+            case quotedReply(QuotedReplyMetadata)
+            case sticker(StickerMetadata)
+            /// Always assumed to have an image content type.
+            case contactAvatar(Metadata)
+
+            // MARK: -
+
+            var persistedOwnerType: MessageAttachmentReferenceRecord.OwnerType {
+                switch self {
+                case .bodyAttachment: .bodyAttachment
+                case .oversizeText: .oversizeText
+                case .linkPreview: .linkPreview
+                case .quotedReply: .quotedReplyAttachment
+                case .sticker: .sticker
+                case .contactAvatar: .contactAvatar
+                }
+            }
+
+            // MARK: - Message Metadata
+
+            public class Metadata {
+                /// The sqlite row id of the message owner.
+                public let messageRowId: Int64
+
+                /// The local receivedAtTimestamp of the owning message.
+                public let receivedAtTimestamp: UInt64
+
+                /// The row id for the thread containing the owning message.
+                ///
+                /// Confusingly, this is NOT the foreign reference used when the source type is thread
+                /// (that's just set in ``threadOwnerRowId``!).
+                /// This isn't exposed to most consumers of this object; its used for indexing/filtering
+                /// when we want to e.g. get all files sent on messages in a thread.
+                let threadRowId: Int64
+
+                /// Mirrors the values of ``Attachment/contentType``, for the
+                /// referenced attachment, duplicated here for query purposes.
+                public let contentType: Attachment.ContentType
+
+                /// Mirrors the value of ``Attachment/mimeType``, for the
+                /// referenced attachment, duplicated here for query purposes.
+                public let mimeType: String
+
+                /// True if the owning message's ``TSEditState`` is `pastRevision`.
+                public let isPastEditRevision: Bool
+
+                init(
+                    messageRowId: Int64,
+                    receivedAtTimestamp: UInt64,
+                    threadRowId: Int64,
+                    contentType: Attachment.ContentType,
+                    mimeType: String,
+                    isPastEditRevision: Bool,
+                ) {
+                    self.messageRowId = messageRowId
+                    self.receivedAtTimestamp = receivedAtTimestamp
+                    self.threadRowId = threadRowId
+                    self.contentType = contentType
+                    self.mimeType = mimeType
+                    self.isPastEditRevision = isPastEditRevision
+                }
+            }
+
+            public class BodyAttachmentMetadata: MessageSource.Metadata {
+                /// Read-only in practice; we never set this for new message body attachments but
+                /// it may be set for older messages.
+                public let caption: String?
+
+                /// Flag from the sender giving us a hint for how it should be rendered.
+                public let renderingFlag: RenderingFlag
+
+                /// Order of this attachment appears in the owning message's "array" of body attachments.
+                /// Not necessarily an index; there may be gaps.
+                public let orderInMessage: UInt32
+                /// Uniquely identifies this attachment in the owning message's body attachments.
+                public let idInOwner: UUID?
+
+                /// If the message owning this body attachment is a view-once message
+                public let isViewOnce: Bool
+
+                init(
+                    messageRowId: Int64,
+                    receivedAtTimestamp: UInt64,
+                    threadRowId: Int64,
+                    contentType: Attachment.ContentType,
+                    mimeType: String,
+                    isPastEditRevision: Bool,
+                    caption: String?,
+                    renderingFlag: RenderingFlag,
+                    orderInMessage: UInt32,
+                    idInOwner: UUID?,
+                    isViewOnce: Bool,
+                ) {
+                    self.caption = caption
+                    self.renderingFlag = renderingFlag
+                    self.orderInMessage = orderInMessage
+                    self.idInOwner = idInOwner
+                    self.isViewOnce = isViewOnce
+                    super.init(
+                        messageRowId: messageRowId,
+                        receivedAtTimestamp: receivedAtTimestamp,
+                        threadRowId: threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: isPastEditRevision,
+                    )
+                }
+            }
+
+            public class QuotedReplyMetadata: MessageSource.Metadata {
+                /// Flag from the sender giving us a hint for how it should be rendered.
+                public let renderingFlag: RenderingFlag
+
+                init(
+                    messageRowId: Int64,
+                    receivedAtTimestamp: UInt64,
+                    threadRowId: Int64,
+                    contentType: Attachment.ContentType,
+                    mimeType: String,
+                    isPastEditRevision: Bool,
+                    renderingFlag: RenderingFlag,
+                ) {
+                    self.renderingFlag = renderingFlag
+                    super.init(
+                        messageRowId: messageRowId,
+                        receivedAtTimestamp: receivedAtTimestamp,
+                        threadRowId: threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: isPastEditRevision,
+                    )
+                }
+            }
+
+            public class StickerMetadata: MessageSource.Metadata {
+                /// Sticker pack info, only used (and required) for sticker messages.
+                public let stickerPackId: Data
+                public let stickerId: UInt32
+
+                init(
+                    messageRowId: Int64,
+                    receivedAtTimestamp: UInt64,
+                    threadRowId: Int64,
+                    contentType: Attachment.ContentType,
+                    mimeType: String,
+                    isPastEditRevision: Bool,
+                    stickerPackId: Data,
+                    stickerId: UInt32,
+                ) {
+                    self.stickerPackId = stickerPackId
+                    self.stickerId = stickerId
+                    super.init(
+                        messageRowId: messageRowId,
+                        receivedAtTimestamp: receivedAtTimestamp,
+                        threadRowId: threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: isPastEditRevision,
+                    )
+                }
+            }
+
+            public var messageRowId: Int64 {
+                switch self {
+                case .bodyAttachment(let metadata): metadata.messageRowId
+                case .oversizeText(let metadata): metadata.messageRowId
+                case .linkPreview(let metadata): metadata.messageRowId
+                case .quotedReply(let metadata): metadata.messageRowId
+                case .sticker(let metadata): metadata.messageRowId
+                case .contactAvatar(let metadata): metadata.messageRowId
+                }
+            }
+
+            public var idInMessage: UUID? {
+                switch self {
+                case .bodyAttachment(let metadata): metadata.idInOwner
+                case .oversizeText: nil
+                case .linkPreview: nil
+                case .quotedReply: nil
+                case .sticker: nil
+                case .contactAvatar: nil
+                }
+            }
+
+            public var receivedAtTimestamp: UInt64 {
+                switch self {
+                case .bodyAttachment(let metadata): metadata.receivedAtTimestamp
+                case .oversizeText(let metadata): metadata.receivedAtTimestamp
+                case .linkPreview(let metadata): metadata.receivedAtTimestamp
+                case .quotedReply(let metadata): metadata.receivedAtTimestamp
+                case .sticker(let metadata): metadata.receivedAtTimestamp
+                case .contactAvatar(let metadata): metadata.receivedAtTimestamp
+                }
+            }
+
+            public var threadRowId: Int64 {
+                switch self {
+                case .bodyAttachment(let metadata): metadata.threadRowId
+                case .oversizeText(let metadata): metadata.threadRowId
+                case .linkPreview(let metadata): metadata.threadRowId
+                case .quotedReply(let metadata): metadata.threadRowId
+                case .sticker(let metadata): metadata.threadRowId
+                case .contactAvatar(let metadata): metadata.threadRowId
+                }
+            }
+        }
+
+        // MARK: - Story Message
+
+        public enum StoryMessageSource {
+            case media(MediaMetadata)
+            case textStoryLinkPreview(StoryMessageSource.Metadata)
+
+            // MARK: -
+
+            var persistedOwnerType: StoryMessageAttachmentReferenceRecord.OwnerType {
+                switch self {
+                case .media: .media
+                case .textStoryLinkPreview: .linkPreview
+                }
+            }
+
+            // MARK: - Story Message Metadata
+
+            public class Metadata {
+                /// The sqlite row id of the story message owner.
+                public let storyMessageRowId: Int64
+
+                init(storyMessageRowId: Int64) {
+                    self.storyMessageRowId = storyMessageRowId
+                }
+            }
+
+            public class MediaMetadata: StoryMessageSource.Metadata {
+                /// Caption on the attachment.
+                public var caption: StyleOnlyMessageBody?
+                /// Equivalent to RenderingFlag.shouldLoop; the only allowed flag for stories.
+                public var shouldLoop: Bool
+
+                init(
+                    storyMessageRowId: Int64,
+                    caption: StyleOnlyMessageBody?,
+                    shouldLoop: Bool,
+                ) {
+                    self.caption = caption
+                    self.shouldLoop = shouldLoop
+                    super.init(storyMessageRowId: storyMessageRowId)
+                }
+            }
+
+            public var storyMessageRowId: Int64 {
+                switch self {
+                case .media(let metadata):
+                    return metadata.storyMessageRowId
+                case .textStoryLinkPreview(let metadata):
+                    return metadata.storyMessageRowId
+                }
+            }
+        }
+
+        // MARK: - Thread Metadata
+
+        public enum ThreadSource {
+            case threadWallpaperImage(ThreadMetadata)
+            /// creationTimestamp is the local timestamp at which this ownership reference was created
+            /// (in other words, when the user set this wallpaper).
+            case globalThreadWallpaperImage(creationTimestamp: UInt64)
+
+            public class ThreadMetadata {
+                /// The sqlite row id of the thread owner.
+                public let threadRowId: Int64
+                /// Local timestamp at which this ownership reference was created
+                /// (in other words, when the user set this wallpaper).
+                public let creationTimestamp: UInt64
+
+                init(threadRowId: Int64, creationTimestamp: UInt64) {
+                    self.threadRowId = threadRowId
+                    self.creationTimestamp = creationTimestamp
+                }
+            }
+
+            public var threadRowId: Int64? {
+                switch self {
+                case .threadWallpaperImage(let threadMetadata): threadMetadata.threadRowId
+                case .globalThreadWallpaperImage: nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Validation
+
+extension AttachmentReference.Owner {
+
+    static func validateAndBuild(record: AttachmentReference.MessageAttachmentReferenceRecord) throws -> AttachmentReference.Owner {
+        switch record.ownerType {
+        case .bodyAttachment:
+            guard let orderInMessage = record.orderInMessage else {
+                throw OWSAssertionError("orderInMessage required for body attachment")
+            }
+            return .message(.bodyAttachment(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+                caption: record.caption,
+                renderingFlag: try .init(rawValue: record.renderingFlag),
+                orderInMessage: orderInMessage,
+                idInOwner: record.idInMessage.flatMap { UUID(uuidString: $0) },
+                isViewOnce: record.isViewOnce,
+            )))
+        case .oversizeText:
+            return .message(.oversizeText(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+            )))
+        case .linkPreview:
+            return .message(.linkPreview(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+            )))
+        case .quotedReplyAttachment:
+            return .message(.quotedReply(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+                renderingFlag: try .init(rawValue: record.renderingFlag),
+            )))
+        case .sticker:
+            guard
+                let stickerId = record.stickerId,
+                let stickerPackId = record.stickerPackId
+            else {
+                throw OWSAssertionError("Sticker metadata required for sticker attachment")
+            }
+            return .message(.sticker(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+                stickerPackId: stickerPackId,
+                stickerId: stickerId,
+            )))
+        case .contactAvatar:
+            return .message(.contactAvatar(.init(
+                messageRowId: record.ownerRowId,
+                receivedAtTimestamp: record.receivedAtTimestamp,
+                threadRowId: record.threadRowId,
+                contentType: record.contentType,
+                mimeType: record.mimeType,
+                isPastEditRevision: record.ownerIsPastEditRevision,
+            )))
+        }
+    }
+
+    static func validateAndBuild(
+        record: AttachmentReference.StoryMessageAttachmentReferenceRecord,
+    ) throws -> AttachmentReference.Owner {
+        switch record.ownerType {
+        case .media:
+            let caption: StyleOnlyMessageBody? = try record.caption.map { text in
+                guard let rawRanges = record.captionBodyRanges else {
+                    return .init(plaintext: text)
+                }
+                let decoder = JSONDecoder()
+                let ranges = try decoder.decode([NSRangedValue<MessageBodyRanges.CollapsedStyle>].self, from: rawRanges)
+                return .init(text: text, collapsedStyles: ranges)
+            }
+            return .storyMessage(.media(.init(
+                storyMessageRowId: record.ownerRowId,
+                caption: caption,
+                shouldLoop: record.shouldLoop,
+            )))
+        case .linkPreview:
+            return .storyMessage(.textStoryLinkPreview(.init(storyMessageRowId: record.ownerRowId)))
+        }
+    }
+
+    static func validateAndBuild(record: AttachmentReference.ThreadAttachmentReferenceRecord) throws -> AttachmentReference.Owner {
+        if let ownerRowId = record.ownerRowId {
+            return .thread(.threadWallpaperImage(.init(threadRowId: ownerRowId, creationTimestamp: record.creationTimestamp)))
+        } else {
+            return .thread(.globalThreadWallpaperImage(creationTimestamp: record.creationTimestamp))
+        }
+    }
+
+    /// When we go from a pointer to a stream (e.g. by downloading) and find another attachment with the same plaintext hash,
+    /// we instead reassign the pointer's references to that existing attachment. When we do so, we need to update their contentType
+    /// to match the new/old attachment (theyre the same plaintext hash so same content type).
+    public func forReassignmentWithContentType(
+        _ contentType: Attachment.ContentType,
+        mimeType: String,
+    ) -> Self {
+        switch self {
+        case .message(let messageSource):
+            return .message({
+                switch messageSource {
+                case .bodyAttachment(let metadata):
+                    return .bodyAttachment(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                        caption: metadata.caption,
+                        renderingFlag: metadata.renderingFlag,
+                        orderInMessage: metadata.orderInMessage,
+                        idInOwner: metadata.idInOwner,
+                        isViewOnce: metadata.isViewOnce,
+                    ))
+                case .oversizeText(let metadata):
+                    return .oversizeText(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                    ))
+                case .linkPreview(let metadata):
+                    return .linkPreview(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                    ))
+                case .quotedReply(let metadata):
+                    return .quotedReply(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                        renderingFlag: metadata.renderingFlag,
+                    ))
+                case .sticker(let metadata):
+                    return .sticker(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                        stickerPackId: metadata.stickerPackId,
+                        stickerId: metadata.stickerId,
+                    ))
+                case .contactAvatar(let metadata):
+                    return .contactAvatar(.init(
+                        messageRowId: metadata.messageRowId,
+                        receivedAtTimestamp: metadata.receivedAtTimestamp,
+                        threadRowId: metadata.threadRowId,
+                        contentType: contentType,
+                        mimeType: mimeType,
+                        isPastEditRevision: metadata.isPastEditRevision,
+                    ))
+                }
+            }())
+        case .storyMessage(let storyMessageSource):
+            switch storyMessageSource {
+            case .media(let metadata):
+                return .storyMessage(.media(metadata))
+            case .textStoryLinkPreview(let metadata):
+                return .storyMessage(.textStoryLinkPreview(metadata))
+            }
+        case .thread(let threadSource):
+            switch threadSource {
+            case .threadWallpaperImage(let metadata):
+                return .thread(.threadWallpaperImage(metadata))
+            case .globalThreadWallpaperImage(let creationTimestamp):
+                return .thread(.globalThreadWallpaperImage(creationTimestamp: creationTimestamp))
+            }
+        }
+    }
+}

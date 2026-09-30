@@ -1,0 +1,47 @@
+//
+// Copyright 2025 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import SafariServices
+import SignalServiceKit
+
+final class InactivePrimaryDeviceReminderMegaphone: Megaphone {
+    init(
+        fromViewController: UIViewController,
+        experienceUpgrade: ExperienceUpgrade,
+    ) {
+        super.init(experienceUpgrade: experienceUpgrade)
+
+        titleText = OWSLocalizedString(
+            "INACTIVE_PRIMARY_DEVICE_REMINDER_MEGAPHONE_TITLE",
+            comment: "Title for an in-app megaphone about a user's inactive primary device.",
+        )
+
+        bodyText = OWSLocalizedString(
+            "INACTIVE_PRIMARY_DEVICE_REMINDER_MEGAPHONE_BODY",
+            comment: "Body for an in-app megaphone about a user's inactive primary device.",
+        )
+
+        image = .phoneWarning
+        imageContentMode = .center
+
+        let viewControllerRef = fromViewController
+        let learnMoreButton = Button(title: OWSLocalizedString(
+            "INACTIVE_PRIMARY_DEVICE_REMINDER_MEGAPHONE_LEARN_MORE_BUTTON",
+            comment: "Title for a button in an in-app megaphone about a user's inactive linked device, indicating the user wants to learn more.",
+        )) { [weak viewControllerRef] in
+            viewControllerRef?.present(SFSafariViewController(url: URL.Support.inactivePrimaryDevice), animated: true)
+        }
+
+        let gotItButton = snoozeButton(
+            fromViewController: fromViewController,
+            snoozeTitle: OWSLocalizedString(
+                "INACTIVE_PRIMARY_DEVICE_REMINDER_MEGAPHONE_GOT_IT_BUTTON",
+                comment: "Title for a button in an in-app megaphone about a user's inactive primary device, temporarily dismissing the megaphone.",
+            ),
+        )
+
+        buttons = [gotItButton, learnMoreButton]
+    }
+}

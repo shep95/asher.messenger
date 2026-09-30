@@ -1,0 +1,337 @@
+//
+// Copyright 2021 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+import LibSignalClient
+
+public class SpamChallengeResolver: NSObject, SpamChallengeSchedulingDelegate {
+
+    // All work should be done on this queue
+    var workQueue: DispatchQueue { Self.workQueue }
+    private static let workQueue = DispatchQueue(
+        label: "org.signal.spam-challenge-resolver",
+        target: .sharedUtility,
+    )
+
+    public var isPausingMessages: Bool {
+        challenges?.pausesMessages ?? false
+    }
+
+    private var challenges: [SpamChallenge]? {
+        didSet {
+            let oldValuePaused = oldValue?.pausesMessages ?? false
+            let newValuePauses = challenges?.pausesMessages ?? false
+            if oldValuePaused, !newValuePauses {
+                retryPausedMessagesIfReady()
+            }
+        }
+    }
+
+    private var nextAttemptTimer: Timer? {
+        didSet {
+            guard oldValue !== nextAttemptTimer else { return }
+            oldValue?.invalidate()
+            nextAttemptTimer.map { RunLoop.main.add($0, forMode: .default) }
+        }
+    }
+
+    private let appReadiness: AppReadiness
+
+    public init(appReadiness: AppReadiness) {
+        self.appReadiness = appReadiness
+        super.init()
+
+        appReadiness.runNowOrWhenAppDidBecomeReadySync {
+            self.workQueue.async {
+                self.loadChallengesFromDatabase()
+                if let challengeCount = self.challenges?.count, challengeCount > 0 {
+                    Logger.info("Loaded \(challengeCount) unresolved challenges")
+                }
+            }
+        }
+    }
+
+    // MARK: - Private
+
+    private func recheckChallenges() {
+        assertOnQueue(workQueue)
+
+        consolidateChallenges()
+        saveChallenges()
+        scheduleNextUpdate()
+        resolveChallenges()
+    }
+
+    // Perform any clean up work to consolidate any challenges
+    private func consolidateChallenges() {
+        assertOnQueue(workQueue)
+
+        let countBefore = challenges?.count ?? 0
+
+        challenges = challenges?.filter { $0.isLive }
+
+        if let countAfter = challenges?.count, countBefore != countAfter {
+            Logger.info("Removed \(countBefore - countAfter) complete, failed, or expired challenges")
+        }
+    }
+
+    private func scheduleNextUpdate() {
+        assertOnQueue(workQueue)
+
+        guard
+            let deferral = challenges?
+                .map({ $0.nextActionableDate })
+                .min() else { return }
+        guard deferral.isAfterNow else { return }
+        guard deferral != nextAttemptTimer?.fireDate else { return }
+
+        nextAttemptTimer = Timer(
+            timeInterval: deferral.timeIntervalSinceNow,
+            repeats: false,
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.workQueue.async {
+                self.nextAttemptTimer = nil
+                self.recheckChallenges()
+            }
+        }
+    }
+
+    private func resolveChallenges() {
+        assertOnQueue(workQueue)
+
+        challenges?.forEach { challenge in
+            if challenge.state.isActionable {
+                challenge.resolveChallenge()
+            }
+        }
+    }
+
+    public func retryPausedMessagesIfReady() {
+        guard !isPausingMessages else {
+            Logger.warn("Can't retry send. \(challenges?.count ?? 0) challenges remain unresolved.")
+            return
+        }
+        SSKEnvironment.shared.databaseStorageRef.asyncWrite { writeTx in
+            let pendingInteractionIds = InteractionFinder.pendingInteractionIds(transaction: writeTx)
+            Logger.info("retrying paused messages: \(pendingInteractionIds)")
+
+            pendingInteractionIds
+                .compactMap { TSOutgoingMessage.fetchOutgoingMessageViaCache(uniqueId: $0, transaction: writeTx) }
+                .forEach { message in
+                    let preparedMessage = PreparedOutgoingMessage.preprepared(
+                        forResending: message,
+                        messageRowId: message.sqliteRowId!,
+                    )
+                    SSKEnvironment.shared.messageSenderJobQueueRef.add(message: preparedMessage, transaction: writeTx)
+                }
+        }
+    }
+}
+
+// MARK: - Push challenges
+
+extension SpamChallengeResolver {
+    @objc
+    public static var NeedsCaptchaNotification: Notification.Name { .init("NeedsCaptchaNotification") }
+
+    public static let didCompleteAnyChallenge = Notification.Name("SpamChallengeResolver.DidCompleteAnyChallenge")
+
+    @objc
+    public func handleIncomingPushChallengeToken(_ token: String) {
+        guard appReadiness.isAppReady else {
+            owsFailDebug("App not ready")
+            return
+        }
+
+        workQueue.async {
+            Logger.info("Did receive push token")
+
+            let awaitingToken = self.challenges?
+                .compactMap { $0 as? PushChallenge }
+                .filter { $0.token == nil }
+                .min { $0.creationDate < $1.creationDate }
+
+            // If there's an existing push challenge without a token, fulfill that first
+            // Otherwise, create a new one
+            if let existingChallenge = awaitingToken {
+                Logger.info("Populating token for in-progress challenge")
+                existingChallenge.token = token
+            } else {
+                Logger.info("Creating new push challenge")
+
+                let challenge = PushChallenge(tokenIn: token)
+                challenge.schedulingDelegate = self
+                self.challenges?.append(challenge)
+                self.recheckChallenges()
+            }
+        }
+    }
+
+    @objc
+    public func handleIncomingCaptchaChallengeToken(_ token: String) {
+        guard appReadiness.isAppReady else {
+            owsFailDebug("App not ready")
+            return
+        }
+
+        workQueue.async {
+            Logger.info("Did receive captcha token")
+
+            let awaitingToken = self.challenges?
+                .compactMap { $0 as? CaptchaChallenge }
+                .filter { $0.captchaToken == nil }
+                .min { $0.creationDate < $1.creationDate }
+
+            awaitingToken?.captchaToken = token
+        }
+    }
+}
+
+// MARK: - Server challenges
+
+extension SpamChallengeResolver {
+
+    private func handleServerChallengeBody(
+        token: String,
+        options: Set<ChallengeOption>,
+        retryAfter: Date,
+        silentRecoveryCompletionHandler: @escaping (Bool) -> Void,
+    ) {
+        Logger.info("Received incoming spam challenge: \(options)")
+
+        workQueue.async {
+            // If we already have a pending captcha challenge, wait for that to
+            // resolve. If we were given a silent recovery, reply with a failure.
+            guard self.challenges?.contains(where: { $0 is CaptchaChallenge }) == false else {
+                Logger.info("Captcha challenge already in progress")
+                silentRecoveryCompletionHandler(false)
+                return
+            }
+
+            if options.contains(.pushChallenge) {
+                if let latestPushChallenge = self.challenges?.first(where: { $0 is PushChallenge && $0.isLive }) {
+                    Logger.info("Push challenge already in progress; attempting silent recovery")
+                    latestPushChallenge.completionHandlers.append(silentRecoveryCompletionHandler)
+                } else {
+                    Logger.info("Requesting push for silent recovery")
+                    let challenge = PushChallenge(expiry: Date(timeIntervalSinceNow: 10))
+                    challenge.schedulingDelegate = self
+                    challenge.completionHandlers.append({ didSucceed in
+                        Logger.info("Silent recovery \(didSucceed ? "did" : "did not") succeed")
+                        if !didSucceed {
+                            var options = options
+                            options.remove(.pushChallenge)
+                            // Try again without the option to use a pushChallenge
+                            self.handleServerChallengeBody(
+                                token: token,
+                                options: options,
+                                retryAfter: retryAfter,
+                                silentRecoveryCompletionHandler: { _ in },
+                            )
+                        }
+                        silentRecoveryCompletionHandler(didSucceed)
+                    })
+                    self.challenges?.append(challenge)
+                }
+                self.recheckChallenges()
+
+            } else if options.contains(.captcha) {
+                Logger.info("Registering captcha challenge")
+
+                let challenge = CaptchaChallenge(tokenIn: token, expiry: retryAfter)
+                challenge.schedulingDelegate = self
+                self.challenges?.append(challenge)
+                self.recheckChallenges()
+                silentRecoveryCompletionHandler(false)
+            }
+        }
+    }
+
+    func tryToHandleSilently(token: String, options: Set<ChallengeOption>, retryAfter: TimeInterval?) async throws {
+        guard let retryAfter else {
+            throw SpamChallengeRequiredError()
+        }
+        let retryAfterDate = Date(timeIntervalSinceNow: retryAfter)
+        try await withCheckedThrowingContinuation { continuation in
+            handleServerChallengeBody(token: token, options: options, retryAfter: retryAfterDate) { didResolve in
+                if didResolve {
+                    continuation.resume(returning: ())
+                } else {
+                    continuation.resume(throwing: SpamChallengeRequiredError())
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Storage
+
+extension SpamChallengeResolver {
+    private static let outstandingChallengesKey = "OutstandingChallengesArray"
+    private static let keyValueStore = KeyValueStore(collection: "SpamChallengeResolver")
+    private var outstandingChallengesKey: String { Self.outstandingChallengesKey }
+    private var keyValueStore: KeyValueStore { Self.keyValueStore }
+
+    private func loadChallengesFromDatabase() {
+        assertOnQueue(workQueue)
+        guard challenges == nil else {
+            owsFailDebug("")
+            return
+        }
+
+        do {
+            challenges = try SSKEnvironment.shared.databaseStorageRef.read { readTx in
+                try keyValueStore.getCodableValue(
+                    forKey: outstandingChallengesKey,
+                    transaction: readTx,
+                )
+            } ?? []
+        } catch {
+            owsFailDebug("Failed to fetch saved challenges")
+            challenges = []
+        }
+
+        self.recheckChallenges()
+    }
+
+    private func saveChallenges() {
+        assertOnQueue(workQueue)
+
+        do {
+            try SSKEnvironment.shared.databaseStorageRef.write { writeTx in
+                if let challenges {
+                    try keyValueStore.setCodable(challenges, key: outstandingChallengesKey, transaction: writeTx)
+                } else {
+                    keyValueStore.removeValue(forKey: outstandingChallengesKey, transaction: writeTx)
+                }
+            }
+        } catch {
+            owsFailDebug("Failed to save outstanding challenges")
+        }
+    }
+}
+
+// MARK: - <SpamChallengeSchedulingDelegate>
+
+extension SpamChallengeResolver {
+    func spamChallenge(
+        _ challenge: SpamChallenge,
+        stateDidChangeFrom priorState: SpamChallenge.State,
+    ) {
+        if challenge.state != .inProgress, challenge.state != priorState {
+            workQueue.async { self.recheckChallenges() }
+        }
+        if challenge.state == .complete {
+            NotificationCenter.default.postOnMainThread(name: Self.didCompleteAnyChallenge, object: self)
+        }
+    }
+}
+
+private extension Sequence where Element == SpamChallenge {
+    var pausesMessages: Bool {
+        contains(where: { $0.pausesMessages == true })
+    }
+}

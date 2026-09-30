@@ -1,0 +1,170 @@
+//
+// Copyright 2024 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+
+// MARK: - Message Backup
+
+extension OWSRequestFactory {
+    public static func backupAuthenticationCredentialRequest(
+        from fromRedemptionSeconds: UInt64,
+        to toRedemptionSeconds: UInt64,
+        auth: ChatServiceAuth,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        owsAssertDebug(fromRedemptionSeconds > 0)
+        owsAssertDebug(toRedemptionSeconds > 0)
+        var request = TSRequest(
+            url: URL(string: "v1/archives/auth?redemptionStartSeconds=\(fromRedemptionSeconds)&redemptionEndSeconds=\(toRedemptionSeconds)")!,
+            method: "GET",
+            parameters: nil,
+            logger: logger,
+        )
+        request.auth = .identified(auth)
+        return request
+    }
+
+    public static func backupInfoRequest(
+        auth: BackupServiceAuth,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives")!,
+            method: "GET",
+            parameters: nil,
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func backupRefreshInfoRequest(
+        auth: BackupServiceAuth,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives")!,
+            method: "PUT",
+            parameters: nil,
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func fetchBackupCDNCredentials(
+        auth: BackupServiceAuth,
+        cdn: Int32,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives/auth/read?cdn=\(cdn)")!,
+            method: "GET",
+            parameters: nil,
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func copyToMediaTier(
+        auth: BackupServiceAuth,
+        item: BackupArchive.Request.MediaItem,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives/media")!,
+            method: "PUT",
+            parameters: item.asParameters,
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func archiveMedia(
+        auth: BackupServiceAuth,
+        items: [BackupArchive.Request.MediaItem],
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        let parameters: [String: Any] = ["items": items.map(\.asParameters)]
+        var request = TSRequest(
+            url: URL(string: "v1/archives/media/batch")!,
+            method: "PUT",
+            parameters: parameters,
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func listMedia(
+        auth: BackupServiceAuth,
+        cursor: String?,
+        limit: UInt32?,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var urlComponents = URLComponents(string: "v1/archives/media")!
+        var queryItems = [URLQueryItem]()
+        if let limit {
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+        }
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        if !queryItems.isEmpty {
+            urlComponents.queryItems = queryItems
+        }
+        var request = TSRequest(
+            url: urlComponents.url!,
+            method: "GET",
+            parameters: [:],
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func deleteMedia(
+        auth: BackupServiceAuth,
+        objects: [BackupArchive.Request.DeleteMediaTarget],
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives/media/delete")!,
+            method: "POST",
+            parameters: ["mediaToDelete": NSArray(array: objects.map(\.asParameters))],
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+
+    public static func redeemReceipt(
+        receiptCredentialPresentation: Data,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        return TSRequest(
+            url: URL(string: "v1/archives/redeem-receipt")!,
+            method: "POST",
+            parameters: ["receiptCredentialPresentation": receiptCredentialPresentation.base64EncodedString()],
+            logger: logger,
+        )
+    }
+
+    public static func fetchSVRBAuthCredential(
+        auth: BackupServiceAuth,
+        logger: PrefixedLogger,
+    ) -> TSRequest {
+        var request = TSRequest(
+            url: URL(string: "v1/archives/auth/svrb")!,
+            method: "GET",
+            parameters: [:],
+            logger: logger,
+        )
+        request.auth = .backup(auth)
+        return request
+    }
+}

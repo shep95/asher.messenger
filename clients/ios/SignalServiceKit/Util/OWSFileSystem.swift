@@ -1,0 +1,551 @@
+//
+// Copyright 2020 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+
+public enum OWSFileSystem {
+
+    private static let tempDirComplete = {
+        let dirPath = NSTemporaryDirectory().appendingPathComponent("ows_temp_\(UUID())")
+        owsPrecondition(OWSFileSystem.ensureDirectoryExists(dirPath, fileProtectionType: .complete))
+        return dirPath
+    }()
+
+    private static let tempDirAfterFirstUnlock = {
+        let tmpPath = NSTemporaryDirectory()
+        owsPrecondition(OWSFileSystem.ensureDirectoryExists(tmpPath, fileProtectionType: .completeUntilFirstUserAuthentication))
+        let dirPath = tmpPath.appendingPathComponent("ows_temp_\(UUID())")
+        owsPrecondition(OWSFileSystem.ensureDirectoryExists(dirPath, fileProtectionType: .completeUntilFirstUserAuthentication))
+        return dirPath
+    }()
+
+    private static let cleanTmpDispatchQueue = DispatchQueue(label: "org.signal.clean-tmp", qos: .utility)
+
+    /// We need to call this method on launch AND every time the app becomes
+    /// active because file protection may prevent it from succeeding in the
+    /// background.
+    public static func clearOldTemporaryDirectories() {
+        let dispatchTime = DispatchTime.now() + .seconds(3)
+        cleanTmpDispatchQueue.asyncAfter(deadline: dispatchTime, execute: DispatchWorkItem(block: {
+            _clearOldTemporaryDirectories()
+        }))
+    }
+
+    private static func _clearOldTemporaryDirectories() {
+        // Ignore the "current" temp directory.
+        let currentTempDirNames = [
+            (tempDirComplete as NSString).lastPathComponent,
+            (tempDirAfterFirstUnlock as NSString).lastPathComponent,
+        ]
+
+        let thresholdDate = CurrentAppContext().appLaunchTime
+        let dirPath = NSTemporaryDirectory()
+        let fileNames: [String]
+        do {
+            fileNames = try FileManager.default.contentsOfDirectory(atPath: dirPath)
+        } catch {
+            owsFailDebug("contentsOfDirectoryAtPath error: \(error)")
+            return
+        }
+        for fileName in fileNames {
+            if currentTempDirNames.contains(fileName) {
+                continue
+            }
+
+            let filePath = dirPath.appendingPathComponent(fileName)
+
+            // Delete files with either:
+            //
+            // a) "ows_temp" name prefix.
+            // b) modified time before app launch time.
+            if !fileName.hasPrefix("ows_temp_") {
+                do {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: filePath)
+                    // Don't delete files which were created in the last N minutes.
+                    let mtime = attributes[.modificationDate] as? Date
+                    guard let mtime else {
+                        Logger.error("failed to get a modification date for file or directory at: \(filePath)")
+                        continue
+                    }
+                    if mtime > thresholdDate {
+                        continue
+                    }
+                } catch {
+                    // This is fine; the file may have been deleted since we found it.
+                    Logger.error("Could not get attributes of file or directory at: \(filePath)")
+                    continue
+                }
+            }
+
+            if !OWSFileSystem.deleteFileIfExists(filePath) {
+                // This can happen if the app launches before the phone is unlocked.
+                // Clean up will occur when app becomes active.
+                Logger.warn("Could not delete old temp directory: \(filePath)")
+            }
+        }
+    }
+
+    @discardableResult
+    private static func protectRecursiveContents(atPath path: String) -> Bool {
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return false
+        }
+        if !isDirectory.boolValue {
+            return Self.protectFileOrFolder(atPath: path)
+        }
+        let dirPath = path
+        guard let directoryEnumerator = FileManager.default.enumerator(atPath: dirPath) else {
+            return true
+        }
+
+        var success = true
+        for relativePath in directoryEnumerator {
+            guard let relativePath = relativePath as? String else {
+                owsFail("type of elements from FileManager.enumerator was not String")
+            }
+            let filePath = dirPath.appendingPathComponent(relativePath)
+            success = Self.protectFileOrFolder(atPath: filePath) && success
+        }
+        return success
+    }
+
+    @discardableResult
+    public static func protectFileOrFolder(atPath path: String, fileProtectionType: FileProtectionType = .completeUntilFirstUserAuthentication) -> Bool {
+        do {
+            try FileManager.default.setAttributes([.protectionKey: fileProtectionType], ofItemAtPath: path)
+        } catch CocoaError.fileReadNoSuchFile, CocoaError.fileNoSuchFile {
+            return false
+        } catch {
+            owsFailDebug("Could not protect file or folder: \(error)")
+            return false
+        }
+
+        var resourceAttrs = URLResourceValues()
+        resourceAttrs.isExcludedFromBackup = true
+        var resourceUrl = URL(fileURLWithPath: path)
+        do {
+            try resourceUrl.setResourceValues(resourceAttrs)
+        } catch CocoaError.fileReadNoSuchFile, CocoaError.fileNoSuchFile {
+            return false
+        } catch {
+            owsFailDebug("Could not protect file or folder: \(error)")
+            return false
+        }
+
+        return true
+    }
+
+    public static func appLibraryDirectoryPath() -> String {
+        guard let last = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).last else {
+            owsFail("no urls returned for the user library directory")
+        }
+        return last.path
+    }
+
+    public static func appDocumentDirectoryPath() -> String {
+        CurrentAppContext().appDocumentDirectoryPath()
+    }
+
+    public static func appSharedDataDirectoryURL() -> URL {
+        URL(fileURLWithPath: Self.appSharedDataDirectoryPath())
+    }
+
+    public static func appSharedDataDirectoryPath() -> String {
+        CurrentAppContext().appSharedDataDirectoryPath()
+    }
+
+    private static let cachesDirectoryPathPrecomputed: String = {
+        guard let result = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true).first else {
+            owsFail("no search paths returned for user caches directories")
+        }
+        return result
+    }()
+
+    public static func cachesDirectoryPath() -> String {
+        return cachesDirectoryPathPrecomputed
+    }
+
+    public static func moveFilePath(_ oldFilePath: String, toFilePath newFilePath: String) throws {
+        try FileManager.default.moveItem(atPath: oldFilePath, toPath: newFilePath)
+
+        // Ensure all files moved have the proper data protection class.
+        // On large directories this can take a while, so we dispatch async
+        // since we're in the launch path.
+        DispatchQueue.global().async {
+            _ = Self.protectRecursiveContents(atPath: newFilePath)
+        }
+    }
+
+    public static func ensureFileExists(_ filePath: String) -> Bool {
+        if FileManager.default.fileExists(atPath: filePath) || FileManager.default.createFile(atPath: filePath, contents: nil) {
+            return Self.protectFileOrFolder(atPath: filePath)
+        }
+
+        owsFailDebug("Failed to create file.")
+        return false
+    }
+
+    public static func deleteContents(ofDirectory dirPath: String) {
+        do {
+            let filePaths = try Self.recursiveFilesInDirectory(dirPath)
+            for filePath in filePaths {
+                Self.deleteFileIfExists(filePath)
+            }
+        } catch {
+            owsFailDebug("Could not retrieve files in directory.")
+        }
+    }
+
+    public static func fileSize(ofPath filePath: String) throws -> UInt64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: filePath)
+        return (attributes[.size] as! NSNumber).uint64Value
+    }
+
+    public static func fileSize(of fileUrl: URL) throws -> UInt64 {
+        return try fileSize(ofPath: fileUrl.path)
+    }
+
+    /// - Returns: false iff the directory does not exist and could not be created or setting the file protection type fails
+    @discardableResult
+    public static func ensureDirectoryExists(_ dirPath: String) -> Bool {
+        ensureDirectoryExists(dirPath, fileProtectionType: .completeUntilFirstUserAuthentication)
+    }
+
+    fileprivate static func ensureDirectoryExists(_ dirPath: String, fileProtectionType: FileProtectionType) -> Bool {
+        do {
+            try FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
+            return protectFileOrFolder(atPath: dirPath, fileProtectionType: fileProtectionType)
+        } catch {
+            owsFailDebug("Failed to create directory: \(dirPath), error: \(error)")
+            return false
+        }
+    }
+
+    public static func fileOrFolderExists(atPath filePath: String) -> Bool {
+        FileManager.default.fileExists(atPath: filePath)
+    }
+
+    public static func fileOrFolderExists(url: URL) -> Bool {
+        fileOrFolderExists(atPath: url.path)
+    }
+
+    public static func fileExistsAndIsNotDirectory(atPath filePath: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: filePath, isDirectory: &isDirectory)
+        return exists && !isDirectory.boolValue
+    }
+
+    public static func fileExistsAndIsNotDirectory(url: URL) -> Bool {
+        fileExistsAndIsNotDirectory(atPath: url.path)
+    }
+
+    @discardableResult
+    public static func deleteFile(_ filePath: String) -> Bool {
+        deleteFile(filePath, ignoreIfMissing: false)
+    }
+
+    @discardableResult
+    public static func deleteFileIfExists(_ filePath: String) -> Bool {
+        return deleteFile(filePath, ignoreIfMissing: true)
+    }
+
+    public static func deleteFile(url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+    }
+
+    public static func deleteFileIfExists(url: URL) throws {
+        do {
+            try deleteFile(url: url)
+        } catch POSIXError.ENOENT, CocoaError.fileNoSuchFile {
+            // this is fine
+        }
+    }
+
+    public static func moveFile(from fromUrl: URL, to toUrl: URL) throws {
+        guard FileManager.default.fileExists(atPath: fromUrl.path) else {
+            throw OWSAssertionError("Source file does not exist.")
+        }
+        guard !FileManager.default.fileExists(atPath: toUrl.path) else {
+            throw OWSAssertionError("Destination file already exists.")
+        }
+        try FileManager.default.moveItem(at: fromUrl, to: toUrl)
+
+        // Ensure all files moved have the proper data protection class.
+        // On large directories this can take a while, so we dispatch async
+        // since we're in the launch path.
+        DispatchQueue.global().async {
+            self.protectRecursiveContents(atPath: toUrl.path)
+        }
+
+#if TESTABLE_BUILD
+        guard !FileManager.default.fileExists(atPath: fromUrl.path) else {
+            throw OWSAssertionError("Source file does not exist.")
+        }
+        guard FileManager.default.fileExists(atPath: toUrl.path) else {
+            throw OWSAssertionError("Destination file already exists.")
+        }
+#endif
+    }
+
+    public static func copyFile(from fromUrl: URL, to toUrl: URL) throws {
+        guard FileManager.default.fileExists(atPath: fromUrl.path) else {
+            throw OWSAssertionError("Source file does not exist.")
+        }
+        guard !FileManager.default.fileExists(atPath: toUrl.path) else {
+            throw OWSAssertionError("Destination file already exists.")
+        }
+        try FileManager.default.copyItem(at: fromUrl, to: toUrl)
+
+        // Ensure all files copied have the proper data protection class.
+        // On large directories this can take a while, so we dispatch async
+        // since we're in the launch path.
+        DispatchQueue.global().async {
+            self.protectRecursiveContents(atPath: toUrl.path)
+        }
+
+#if TESTABLE_BUILD
+        guard FileManager.default.fileExists(atPath: toUrl.path) else {
+            throw OWSAssertionError("Destination file not created.")
+        }
+#endif
+    }
+
+    public static func recursiveFilesInDirectory(_ dirPath: String) throws -> [String] {
+        owsAssertDebug(!dirPath.isEmpty)
+
+        do {
+            return try FileManager.default.subpathsOfDirectory(atPath: dirPath)
+                .map { (dirPath as NSString).appendingPathComponent($0) }
+                .filter {
+                    var isDirectory: ObjCBool = false
+                    FileManager.default.fileExists(atPath: $0, isDirectory: &isDirectory)
+                    return !isDirectory.boolValue
+                }
+
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        }
+    }
+
+    // MARK: - Temporary Files
+
+    public static func temporaryFileUrl(
+        fileName: String? = nil,
+        fileExtension: String? = nil,
+        isAvailableWhileDeviceLocked: Bool,
+    ) -> URL {
+        return URL(fileURLWithPath: temporaryFilePath(
+            fileName: fileName,
+            fileExtension: fileExtension,
+            isAvailableWhileDeviceLocked: isAvailableWhileDeviceLocked,
+        ))
+    }
+
+    public static func temporaryFilePath(
+        fileName: String? = nil,
+        fileExtension: String? = nil,
+        isAvailableWhileDeviceLocked: Bool,
+    ) -> String {
+        var tempDirPath = tempDirPath(availableWhileDeviceLocked: isAvailableWhileDeviceLocked)
+        if fileName != nil {
+            tempDirPath = (tempDirPath as NSString).appendingPathComponent(UUID().uuidString)
+            let fileProtectionType: FileProtectionType = isAvailableWhileDeviceLocked ? .completeUntilFirstUserAuthentication : .complete
+            guard ensureDirectoryExists(tempDirPath, fileProtectionType: fileProtectionType) else {
+                owsFail("couldn't create temporary directory")
+            }
+        }
+        var fileName = fileName ?? UUID().uuidString
+        if let fileExtension, !fileExtension.isEmpty {
+            fileName += "." + fileExtension
+        }
+        let filePath = (tempDirPath as NSString).appendingPathComponent(fileName)
+        return filePath
+    }
+
+    private static func tempDirPath(availableWhileDeviceLocked: Bool) -> String {
+        return availableWhileDeviceLocked ? tempDirAfterFirstUnlock : tempDirComplete
+    }
+
+    // MARK: -
+
+    public static func deleteFile(_ filePath: String, ignoreIfMissing: Bool = false) -> Bool {
+        do {
+            try FileManager.default.removeItem(atPath: filePath)
+            return true
+        } catch POSIXError.ENOENT where ignoreIfMissing, CocoaError.fileNoSuchFile where ignoreIfMissing {
+            // Ignore "No such file or directory" error.
+            return true
+        } catch CocoaError.fileWriteNoPermission {
+            let attemptedUrl = URL(fileURLWithPath: filePath)
+            let knownNoWritePermissionUrls = [
+                OWSFileSystem.appSharedDataDirectoryURL().appendingPathComponent(".com.apple.mobile_container_manager.metadata.plist"),
+            ]
+            owsAssertDebug(knownNoWritePermissionUrls.contains(attemptedUrl))
+            return false
+        } catch {
+            owsFailDebug("\(error.shortDescription)")
+            return false
+        }
+    }
+
+    // MARK: - Remaining space
+
+    /// Get the remaining free space for a path's volume in bytes.
+    ///
+    /// See [Apple's example][0]. It checks "important" storage (versus "opportunistic" storage).
+    ///
+    /// [0]: https://developer.apple.com/documentation/foundation/nsurlresourcekey/checking_volume_storage_capacity
+    public static func freeSpaceInBytes(forPath path: URL) throws -> UInt64 {
+        let resourceValues = try path.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        guard let result = resourceValues.volumeAvailableCapacityForImportantUsage else {
+            throw OWSAssertionError("Missing expected resource value!")
+        }
+        guard result >= 0 else {
+            throw OWSAssertionError("Got negative remaining disk space!")
+        }
+        return UInt64(result)
+    }
+
+    /// Get the total capacity for a path's volume in bytes.
+    ///
+    /// This is the full size of the volume, including occupied space (e.g.,
+    /// ~16GB for a 16GB device), not just the space available to the app.
+    public static func totalSpaceInBytes(forPath path: URL) throws -> UInt64 {
+        let resourceValues = try path.resourceValues(forKeys: [.volumeTotalCapacityKey])
+        guard let result = resourceValues.volumeTotalCapacity else {
+            throw OWSAssertionError("Missing expected resource value!")
+        }
+        guard result >= 0 else {
+            throw OWSAssertionError("Got negative remaining disk space!")
+        }
+        return UInt64(result)
+    }
+}
+
+public enum OWSFileCoordinatorError: Error {
+    case fileNotFound
+}
+
+extension NSFileCoordinator {
+    func coordinateThrows(
+        writingItemAt url: URL,
+        options: WritingOptions = [],
+        by block: (URL) throws -> Void,
+    ) throws {
+        var blockError: Error?
+        var coordinatorError: NSError?
+        coordinate(
+            writingItemAt: url,
+            options: options,
+            error: &coordinatorError,
+        ) { url in
+            do { try block(url) }
+            catch { blockError = error }
+        }
+
+        if let blockError {
+            let nsError = blockError as NSError
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator blockError: \(blockError)")
+            } else {
+                Logger.error("NSFileCoordinator blockError \(nsError.shortDescription)")
+            }
+            if
+                nsError.domain == NSCocoaErrorDomain,
+                nsError.code == NSFileNoSuchFileError
+            {
+                throw OWSFileCoordinatorError.fileNotFound
+            }
+            throw OWSGenericError("NSFileCoordinator blockError")
+        }
+
+        if let coordinatorError {
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError)")
+            } else {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError.shortDescription)")
+            }
+            throw OWSGenericError("NSFileCoordinator coordinatorError")
+        }
+    }
+
+    func coordinateThrows(
+        readingItemAt url: URL,
+        options: ReadingOptions = [],
+        by block: (URL) throws -> Void,
+    ) throws {
+        var blockError: Error?
+        var coordinatorError: NSError?
+        coordinate(
+            readingItemAt: url,
+            options: options,
+            error: &coordinatorError,
+        ) { url in
+            do { try block(url) }
+            catch { blockError = error }
+        }
+
+        if let blockError {
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator blockError: \(blockError)")
+            } else {
+                let nsError = blockError as NSError
+                Logger.error("NSFileCoordinator blockError \(nsError.domain):\(nsError.code)")
+            }
+            throw OWSGenericError("NSFileCoordinator blockError")
+        }
+
+        if let coordinatorError {
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError)")
+            } else {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError.domain):\(coordinatorError.code)")
+            }
+            throw OWSGenericError("NSFileCoordinator coordinatorError")
+        }
+    }
+
+    func coordinateThrows(
+        writingItemAt url1: URL,
+        options options1: WritingOptions = [],
+        writingItemAt url2: URL,
+        options options2: WritingOptions = [],
+        by block: (URL, URL) throws -> Void,
+    ) throws {
+        var blockError: Error?
+        var coordinatorError: NSError?
+        coordinate(
+            writingItemAt: url1,
+            options: options1,
+            writingItemAt: url2,
+            options: options2,
+            error: &coordinatorError,
+        ) { url1, url2 in
+            do { try block(url1, url2) }
+            catch { blockError = error }
+        }
+
+        if let blockError {
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator blockError: \(blockError)")
+            } else {
+                let nsError = blockError as NSError
+                Logger.error("NSFileCoordinator blockError \(nsError.domain):\(nsError.code)")
+            }
+            throw OWSGenericError("NSFileCoordinator blockError")
+        }
+
+        if let coordinatorError {
+            if DebugFlags.internalLogging {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError)")
+            } else {
+                Logger.error("NSFileCoordinator coordinatorError: \(coordinatorError.domain):\(coordinatorError.code)")
+            }
+            throw OWSGenericError("NSFileCoordinator coordinatorError")
+        }
+    }
+
+}
