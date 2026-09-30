@@ -1,0 +1,687 @@
+/*
+ * Copyright 2023 Signal Messenger, LLC
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+package org.signal.integration;
+
+import static java.util.Objects.requireNonNull;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.google.common.io.Resources;
+import com.google.common.net.HttpHeaders;
+import com.webauthn4j.data.AuthenticatorAssertionResponse;
+import com.webauthn4j.data.PublicKeyCredential;
+import com.webauthn4j.data.PublicKeyCredentialDescriptor;
+import com.webauthn4j.data.PublicKeyCredentialRequestOptions;
+import com.webauthn4j.data.PublicKeyCredentialType;
+import com.webauthn4j.data.UserVerificationRequirement;
+import com.webauthn4j.data.client.challenge.DefaultChallenge;
+import com.webauthn4j.test.client.ClientPlatform;
+import io.dropwizard.configuration.ConfigurationValidationException;
+import io.dropwizard.jersey.validation.Validators;
+import io.grpc.ChannelCredentials;
+import io.grpc.ClientInterceptor;
+import io.grpc.Grpc;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.TlsChannelCredentials;
+import io.grpc.stub.MetadataUtils;
+import jakarta.validation.ConstraintViolation;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.invoke.MethodHandles;
+import java.net.URI;
+import java.net.URL;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.tuple.Pair;
+import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.http2.client.HTTP2Client;
+import org.eclipse.jetty.http2.client.transport.HttpClientTransportOverHTTP2;
+import org.eclipse.jetty.io.ClientConnector;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
+import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.signal.integration.config.Config;
+import org.signal.integration.config.WebAuthnConfiguration;
+import org.signal.libsignal.protocol.IdentityKey;
+import org.signal.libsignal.protocol.ecc.ECKeyPair;
+import org.signal.libsignal.protocol.ecc.ECPublicKey;
+import org.signal.libsignal.protocol.kem.KEMKeyPair;
+import org.signal.libsignal.protocol.kem.KEMKeyType;
+import org.signal.libsignal.protocol.kem.KEMPublicKey;
+import org.signal.libsignal.zkgroup.InvalidInputException;
+import org.signal.libsignal.zkgroup.ServerPublicParams;
+import org.signal.libsignal.zkgroup.VerificationFailedException;
+import org.signal.libsignal.zkgroup.receipts.ClientZkReceiptOperations;
+import org.signal.libsignal.zkgroup.receipts.ReceiptCredential;
+import org.signal.libsignal.zkgroup.receipts.ReceiptCredentialPresentation;
+import org.signal.libsignal.zkgroup.receipts.ReceiptSerial;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.whispersystems.textsecuregcm.auth.grpc.RequireAuthenticationInterceptor;
+import org.whispersystems.textsecuregcm.entities.AccountAttributes;
+import org.whispersystems.textsecuregcm.entities.AccountIdentityResponse;
+import org.whispersystems.textsecuregcm.entities.DeviceActivationRequest;
+import org.whispersystems.textsecuregcm.entities.ECSignedPreKey;
+import org.whispersystems.textsecuregcm.entities.KEMSignedPreKey;
+import org.whispersystems.textsecuregcm.entities.RegistrationRequest;
+import org.whispersystems.textsecuregcm.http.FaultTolerantHttpClient;
+import org.whispersystems.textsecuregcm.mappers.MfaFailureExceptionMapper;
+import org.whispersystems.textsecuregcm.storage.Device;
+import org.whispersystems.textsecuregcm.storage.TotpManager;
+import org.whispersystems.textsecuregcm.util.CertificateUtil;
+import org.whispersystems.textsecuregcm.util.HeaderUtils;
+import org.whispersystems.textsecuregcm.util.HttpUtils;
+import org.whispersystems.textsecuregcm.util.SystemMapper;
+import org.whispersystems.textsecuregcm.util.ThrowingSupplier;
+import org.whispersystems.textsecuregcm.util.Util;
+
+public final class Operations {
+
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+  private static final Config CONFIG = loadConfigFromClasspath("config.yml");
+
+  private static final String GRPC_DOMAIN = "grpc." + CONFIG.domain();
+
+  private static final IntegrationTools INTEGRATION_TOOLS = IntegrationTools.create(CONFIG);
+
+  private static final String USER_AGENT = "integration-test";
+
+  private static final FaultTolerantHttpClient CLIENT = buildClient();
+
+  private static final WebSocketClient WEB_SOCKET_CLIENT = buildWebSocketClient();
+
+  private static final ManagedChannel GRPC_CHANNEL = buildGrpcChannel();
+
+  private Operations() {
+    // utility class
+  }
+
+  public record Receipt(ReceiptSerial serial, ReceiptCredential credential) {}
+
+  public static Receipt getPrescribedReceipt() throws InvalidInputException {
+    return new Receipt(
+        new ReceiptSerial(Base64.getUrlDecoder().decode(CONFIG.prescribedReceiptSerial())),
+        new ReceiptCredential(Base64.getUrlDecoder().decode(CONFIG.prescribedReceiptCredential()))
+    );
+  }
+
+  public static WebAuthnConfiguration getWebAuthnConfiguration() {
+    return CONFIG.webAuthn();
+  }
+
+  public static TestUser registerNumberlessUser(final ReceiptCredential receiptCredential)
+      throws InvalidInputException, VerificationFailedException {
+    final String accountPassword = Base64.getEncoder().encodeToString(randomBytes(32));
+    final byte[] recoveryPassword = randomBytes(32);
+    final TestUser user = TestUser.createNumberless(accountPassword, recoveryPassword);
+
+    final ClientZkReceiptOperations clientOps = new ClientZkReceiptOperations(new ServerPublicParams(Base64.getDecoder().decode(CONFIG.serverZkPublicParams())));
+    final ReceiptCredentialPresentation receiptCredentialPresentation = clientOps.createReceiptCredentialPresentation(receiptCredential);
+
+    final ECKeyPair aciIdentityKeyPair = ECKeyPair.generate();
+    final RegistrationRequest registrationRequest = new RegistrationRequest(null,
+        null,
+        receiptCredentialPresentation.serialize(),
+        null,
+        null,
+        user.accountAttributes(),
+        true,
+        new IdentityKey(aciIdentityKeyPair.getPublicKey()),
+        null,
+        new DeviceActivationRequest(generateSignedECPreKey(1, aciIdentityKeyPair),
+            Optional.empty(),
+            generateSignedKEMPreKey(3, aciIdentityKeyPair),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty()));
+
+    final AccountIdentityResponse registrationResponse = apiPost("/v1/registration", registrationRequest)
+        // username must be present but can be set to anything for a numberless registration request
+        .authorized("test", accountPassword)
+        .executeExpectSuccess(AccountIdentityResponse.class);
+
+    user.setAciUuid(registrationResponse.uuid());
+    return user;
+  }
+
+  public static TestUser recoverNumberlessUserWithTotp(final TestUser testUser, final ThrowingSupplier<Integer, InvalidKeyException> totpSupplier) throws InvalidKeyException {
+    final TestUser recoveredUser = TestUser.createNumberlessForRecovery(testUser.accountPassword(), testUser.registrationPassword());
+    final ECKeyPair aciIdentityKeyPair = ECKeyPair.generate();
+    final ECKeyPair pniIdentityKeyPair = ECKeyPair.generate();
+    final DeviceActivationRequest deviceActivationRequest = new DeviceActivationRequest(
+        generateSignedECPreKey(1, aciIdentityKeyPair),
+        Optional.of(generateSignedECPreKey(2, pniIdentityKeyPair)),
+        generateSignedKEMPreKey(3, aciIdentityKeyPair),
+        Optional.of(generateSignedKEMPreKey(4, pniIdentityKeyPair)),
+        Optional.empty(),
+        Optional.empty());
+
+    // The server only allows one redemption of a TOTP per time-step, which we may have used up during `confirm`. Retry
+    // until the next time-step.
+    final Instant retryUntil = Instant.now().plus(TotpManager.TOTP.getTimeStep().plus(Duration.ofSeconds(1)));
+    while (true) {
+      final Pair<Integer, AccountIdentityResponse> registrationResponse = apiPost("/v1/registration",
+          new RegistrationRequest(null,
+              testUser.registrationPassword(),
+              null,
+              totpSupplier.get(),
+              null,
+              recoveredUser.accountAttributes(),
+              true,
+              new IdentityKey(aciIdentityKeyPair.getPublicKey()),
+              new IdentityKey(pniIdentityKeyPair.getPublicKey()),
+              deviceActivationRequest))
+          // For a numberless account recovery, the username is the ACI
+          .authorized(testUser.aciUuid().toString(), testUser.accountPassword())
+          .execute(AccountIdentityResponse.class);
+      if (registrationResponse.getLeft() == 441 && Instant.now().isBefore(retryUntil)) {
+        Util.sleep(Duration.ofSeconds(1).toMillis());
+        continue;
+      }
+
+      Validate.isTrue(HttpUtils.isSuccessfulResponse(registrationResponse.getLeft()),
+          "Unexpected response code: %d", registrationResponse.getLeft());
+      recoveredUser.setAciUuid(registrationResponse.getRight().uuid());
+      return recoveredUser;
+    }
+  }
+
+  public static TestUser recoverNumberlessUserWithWebAuthn(final TestUser testUser,
+      final ClientPlatform clientPlatform,
+      final byte[] credentialId,
+      final String relyingPartyId) {
+    final TestUser recoveredUser = TestUser.createNumberlessForRecovery(testUser.accountPassword(), testUser.registrationPassword());
+
+    final ECKeyPair aciIdentityKeyPair = ECKeyPair.generate();
+    final ECKeyPair pniIdentityKeyPair = ECKeyPair.generate();
+    final RegistrationRequest initialRequest = new RegistrationRequest(null,
+        testUser.registrationPassword(),
+        null,
+        null,
+        null,
+        recoveredUser.accountAttributes(),
+        true,
+        new IdentityKey(aciIdentityKeyPair.getPublicKey()),
+        new IdentityKey(pniIdentityKeyPair.getPublicKey()),
+        new DeviceActivationRequest(generateSignedECPreKey(1, aciIdentityKeyPair),
+            Optional.of(generateSignedECPreKey(2, pniIdentityKeyPair)),
+            generateSignedKEMPreKey(3, aciIdentityKeyPair),
+            Optional.of(generateSignedKEMPreKey(4, pniIdentityKeyPair)),
+            Optional.empty(),
+            Optional.empty()));
+
+    final Pair<Integer, MfaFailureExceptionMapper.MfaFailureResponse> initialResponse = apiPost("/v1/registration", initialRequest)
+        // For a numberless account recovery, the username is the ACI
+        .authorized(testUser.aciUuid().toString(), testUser.accountPassword())
+        .execute(MfaFailureExceptionMapper.MfaFailureResponse.class);
+
+    // we expect (and need) failure with status 441, which will contain the WebAuthn challenge
+    assert initialResponse.getLeft() == 441;
+
+    final MfaFailureExceptionMapper.MfaFailureResponse mfaFailureResponse = initialResponse.getRight();
+    assert mfaFailureResponse.webAuthnParameters().allowedCredentialIds()
+        .stream()
+        .anyMatch(allowedId -> Arrays.equals(allowedId, credentialId));
+
+    final PublicKeyCredential<AuthenticatorAssertionResponse, ?> credential =
+        clientPlatform.get(new PublicKeyCredentialRequestOptions(
+            new DefaultChallenge(mfaFailureResponse.webAuthnParameters().challenge()),
+            null,
+            relyingPartyId,
+            List.of(new PublicKeyCredentialDescriptor(PublicKeyCredentialType.PUBLIC_KEY, credentialId, null)),
+            UserVerificationRequirement.DISCOURAGED,
+            null));
+
+    final RegistrationRequest registrationRequest = new RegistrationRequest(null,
+        testUser.registrationPassword(),
+        null,
+        null,
+        webAuthnVerificationResponseJson(credential),
+        recoveredUser.accountAttributes(),
+        true,
+        new IdentityKey(aciIdentityKeyPair.getPublicKey()),
+        new IdentityKey(pniIdentityKeyPair.getPublicKey()),
+        new DeviceActivationRequest(generateSignedECPreKey(1, aciIdentityKeyPair),
+            Optional.of(generateSignedECPreKey(2, pniIdentityKeyPair)),
+            generateSignedKEMPreKey(3, aciIdentityKeyPair),
+            Optional.of(generateSignedKEMPreKey(4, pniIdentityKeyPair)),
+            Optional.empty(),
+            Optional.empty()));
+
+    final AccountIdentityResponse registrationResponse = apiPost("/v1/registration", registrationRequest)
+        // For a numberless account recovery, the username is the ACI
+        .authorized(testUser.aciUuid().toString(), testUser.accountPassword())
+        .executeExpectSuccess(AccountIdentityResponse.class);
+
+    recoveredUser.setAciUuid(registrationResponse.uuid());
+    return recoveredUser;
+  }
+
+  public static TestUser newRegisteredUser(final String number) {
+    final byte[] registrationPassword = populateRandomRecoveryPassword(number);
+    final String accountPassword = Base64.getEncoder().encodeToString(randomBytes(32));
+
+    final TestUser user = TestUser.create(number, accountPassword, registrationPassword);
+    final AccountAttributes accountAttributes = user.accountAttributes();
+
+    final ECKeyPair aciIdentityKeyPair = ECKeyPair.generate();
+    final ECKeyPair pniIdentityKeyPair = ECKeyPair.generate();
+
+    // register account
+    final RegistrationRequest registrationRequest = new RegistrationRequest(null,
+        registrationPassword,
+        null,
+        null,
+        null,
+        accountAttributes,
+        true,
+        new IdentityKey(aciIdentityKeyPair.getPublicKey()),
+        new IdentityKey(pniIdentityKeyPair.getPublicKey()),
+        new DeviceActivationRequest(generateSignedECPreKey(1, aciIdentityKeyPair),
+            Optional.of(generateSignedECPreKey(2, pniIdentityKeyPair)),
+            generateSignedKEMPreKey(3, aciIdentityKeyPair),
+            Optional.of(generateSignedKEMPreKey(4, pniIdentityKeyPair)),
+            Optional.empty(),
+            Optional.empty()));
+
+    final AccountIdentityResponse registrationResponse = apiPost("/v1/registration", registrationRequest)
+        .authorized(number, accountPassword)
+        .executeExpectSuccess(AccountIdentityResponse.class);
+
+    user.setAciUuid(registrationResponse.uuid());
+    registrationResponse.pni().ifPresent(user::setPniUuid);
+
+    return user;
+  }
+
+  public record PrescribedVerificationNumber(String number, String verificationCode) {}
+
+  public static PrescribedVerificationNumber prescribedVerificationNumber() {
+      return new PrescribedVerificationNumber(
+          CONFIG.prescribedRegistrationNumber(),
+          CONFIG.prescribedRegistrationCode());
+  }
+
+  public static void deleteUser(final TestUser user) {
+    apiDelete("/v1/accounts/me").authorized(user).executeExpectSuccess();
+  }
+
+  public static String peekVerificationSessionPushChallenge(final String sessionId) {
+    return INTEGRATION_TOOLS.peekVerificationSessionPushChallenge(sessionId)
+        .orElseThrow(() -> new RuntimeException("push challenge not found for the verification session"));
+  }
+
+  public static byte[] populateRandomRecoveryPassword(final String number) {
+    final byte[] recoveryPassword = randomBytes(32);
+    INTEGRATION_TOOLS.populateRecoveryPassword(number, recoveryPassword);
+
+    return recoveryPassword;
+  }
+
+  public static void clearChangeNumberWaitingPeriod(final TestUser user) {
+    INTEGRATION_TOOLS.clearChangeNumberWaitingPeriod(user);
+  }
+
+  public static void deleteReceipt(final ReceiptSerial receiptSerial) {
+    INTEGRATION_TOOLS.deleteRedeemedReceipt(receiptSerial);
+  }
+
+  public static <T> T sendEmptyRequestAuthenticated(
+      final String endpoint,
+      final String method,
+      final String username,
+      final String password,
+      final Class<T> outputType) {
+    try {
+      final HttpRequest request = HttpRequest.newBuilder()
+          .uri(serverUri(endpoint, Collections.emptyList()))
+          .method(method, HttpRequest.BodyPublishers.noBody())
+          .header(HttpHeaders.AUTHORIZATION, HeaderUtils.basicAuthHeader(username, password))
+          .header(HttpHeaders.CONTENT_TYPE, "application/json")
+          .build();
+      return CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+          .whenComplete((response, error) -> {
+            if (error != null) {
+              logger.error("request error", error);
+              error.printStackTrace();
+            } else {
+              logger.info("response: {}", response.statusCode());
+              System.out.println("response: " + response.statusCode() + ", " + response.body());
+            }
+          })
+          .thenApply(response -> {
+            try {
+              return outputType.equals(Void.class)
+                  ? null
+                  : SystemMapper.jsonMapper().readValue(response.body(), outputType);
+            } catch (final IOException e) {
+              throw new RuntimeException(e);
+            }
+          })
+          .get();
+    } catch (final Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public static byte[] randomBytes(final int numBytes) {
+    final byte[] bytes = new byte[numBytes];
+    new SecureRandom().nextBytes(bytes);
+    return bytes;
+  }
+
+  public static RequestBuilder apiGet(final String endpoint) {
+    return new RequestBuilder(HttpRequest.newBuilder().GET(), endpoint);
+  }
+
+  public static RequestBuilder apiDelete(final String endpoint) {
+    return new RequestBuilder(HttpRequest.newBuilder().DELETE(), endpoint);
+  }
+
+  public static <R> RequestBuilder apiPost(final String endpoint, final R input) {
+    return RequestBuilder.withJsonBody(endpoint, "POST", input);
+  }
+
+  public static <R> RequestBuilder apiPut(final String endpoint, final R input) {
+    return RequestBuilder.withJsonBody(endpoint, "PUT", input);
+  }
+
+  public static <R> RequestBuilder apiPatch(final String endpoint, final R input) {
+    return RequestBuilder.withJsonBody(endpoint, "PATCH", input);
+  }
+
+  private static URI serverUri(final String endpoint, final List<String> queryParams) {
+    final String query = queryParams.isEmpty()
+        ? StringUtils.EMPTY
+        : "?" + String.join("&", queryParams);
+    return URI.create("https://" + CONFIG.domain() + endpoint + query);
+  }
+
+  public static ManagedChannel grpcChannel() {
+    return GRPC_CHANNEL;
+  }
+
+  public static ClientInterceptor authorizationInterceptor(final TestUser user, final byte deviceId) {
+    final String username = "%s.%d".formatted(user.aciUuid().toString(), deviceId);
+
+    final Metadata metadata = new Metadata();
+    metadata.put(RequireAuthenticationInterceptor.AUTHORIZATION_METADATA_KEY,
+        HeaderUtils.basicAuthHeader(username, user.accountPassword()));
+
+    return MetadataUtils.newAttachHeadersInterceptor(metadata);
+  }
+
+  private static ManagedChannel buildGrpcChannel() {
+    try {
+      final ByteArrayInputStream rootCert =
+          new ByteArrayInputStream(CONFIG.rootCert().getBytes(StandardCharsets.UTF_8));
+      final ChannelCredentials credentials = TlsChannelCredentials.newBuilder().trustManager(rootCert).build();
+      return Grpc.newChannelBuilderForAddress(GRPC_DOMAIN, 443, credentials)
+          .userAgent(USER_AGENT)
+          .build();
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  public static class RequestBuilder {
+
+    private final HttpRequest.Builder builder;
+
+    private final String endpoint;
+
+    private final List<String> queryParams = new ArrayList<>();
+
+
+    private RequestBuilder(final HttpRequest.Builder builder, final String endpoint) {
+      this.builder = builder;
+      this.endpoint = endpoint;
+    }
+
+    private static <R> RequestBuilder withJsonBody(final String endpoint, final String method, final R input) {
+      final byte[] body = encodeJsonBody(input);
+      return new RequestBuilder(HttpRequest.newBuilder()
+          .header(HttpHeaders.CONTENT_TYPE, "application/json")
+          .method(method, HttpRequest.BodyPublishers.ofByteArray(body)), endpoint);
+    }
+
+    public RequestBuilder authorized(final TestUser user) {
+      return authorized(user, Device.PRIMARY_ID);
+    }
+
+    public RequestBuilder authorized(final TestUser user, final byte deviceId) {
+      final String username = "%s.%d".formatted(user.aciUuid().toString(), deviceId);
+      return authorized(username, user.accountPassword());
+    }
+
+    public RequestBuilder authorized(final String username, final String password) {
+      builder.header(HttpHeaders.AUTHORIZATION, HeaderUtils.basicAuthHeader(username, password));
+      return this;
+    }
+
+    public RequestBuilder queryParam(final String key, final String value) {
+      queryParams.add("%s=%s".formatted(key, value));
+      return this;
+    }
+
+    public RequestBuilder header(final String name, final String value) {
+      builder.header(name, value);
+      return this;
+    }
+
+    public Pair<Integer, Void> execute() {
+      return execute(Void.class);
+    }
+
+    public Pair<Integer, Void> executeExpectSuccess() {
+      final RawResponse response = executeRaw();
+      Validate.isTrue(
+          HttpUtils.isSuccessfulResponse(response.statusCode()),
+          "Unexpected response code: %d, body: %s",
+          response.statusCode(), response.body());
+      return Pair.of(response.statusCode(), null);
+    }
+
+    public <T> T executeExpectSuccess(final Class<T> expectedType) {
+      final RawResponse response = executeRaw();
+      Validate.isTrue(
+          HttpUtils.isSuccessfulResponse(response.statusCode()),
+          "Unexpected response code: %d, body: %s",
+          response.statusCode(), response.body());
+      return requireNonNull(parseBody(response.body(), expectedType));
+    }
+
+    public void executeExpectStatusCode(final int expectedStatusCode) {
+      final RawResponse response = executeRaw();
+      Validate.isTrue(
+          response.statusCode() == expectedStatusCode,
+          "Unexpected response code: %d (expected %d), body: %s",
+          response.statusCode(), expectedStatusCode, response.body());
+    }
+
+    public <T> Pair<Integer, T> execute(final Class<T> expectedType) {
+      final RawResponse response = executeRaw();
+      return Pair.of(response.statusCode(), parseBody(response.body(), expectedType));
+    }
+
+    private record RawResponse(int statusCode, String body) {}
+
+    private RawResponse executeRaw() {
+      builder.uri(serverUri(endpoint, queryParams))
+          .header(HttpHeaders.USER_AGENT, USER_AGENT);
+      return CLIENT.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+          .whenComplete((response, error) -> {
+            if (error != null) {
+              logger.error("request error", error);
+              error.printStackTrace();
+            }
+          })
+          .thenApply(response -> new RawResponse(response.statusCode(), response.body()))
+          .join();
+    }
+
+    @Nullable
+    private static <T> T parseBody(final String body, final Class<T> expectedType) {
+      if (expectedType.equals(Void.class)) {
+        return null;
+      }
+
+      try {
+        return SystemMapper.jsonMapper().readValue(body, expectedType);
+      } catch (final IOException e) {
+        throw new RuntimeException(
+            "Could not parse response body as %s, body: %s".formatted(expectedType.getSimpleName(), body), e);
+      }
+    }
+
+  }
+
+  private static FaultTolerantHttpClient buildClient() {
+    try {
+      return FaultTolerantHttpClient.newBuilder("integration-test", Executors.newFixedThreadPool(16))
+          .withTrustedServerCertificates(CONFIG.rootCert())
+          .build();
+    } catch (final CertificateException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  private static WebSocketClient buildWebSocketClient() {
+    try {
+      final KeyStore trustStore = CertificateUtil.buildKeyStoreForPem(CONFIG.rootCert());
+      final SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
+      sslContextFactory.setTrustStore(trustStore);
+
+      final ClientConnector connector = new ClientConnector();
+      connector.setSslContextFactory(sslContextFactory);
+
+      final HTTP2Client http2Client = new HTTP2Client(connector);
+      final HttpClient httpClient = new HttpClient(new HttpClientTransportOverHTTP2(http2Client));
+
+      final WebSocketClient wsClient = new WebSocketClient(httpClient);
+      wsClient.start();
+      return wsClient;
+    } catch (Exception e) {
+      throw new  RuntimeException(e);
+    }
+  }
+
+  public static WebsocketClientSession authenticatedWebsocket(final TestUser user, final byte deviceId) throws IOException {
+    final String username = "%s.%d".formatted(user.aciUuid().toString(), deviceId);
+    return connect("/v1/websocket/", Map.of(HttpHeaders.AUTHORIZATION, HeaderUtils.basicAuthHeader(username, user.accountPassword())));
+  }
+
+  public static WebsocketClientSession anonymousWebsocket() throws IOException {
+    return connect("/v1/websocket/", Collections.emptyMap());
+  }
+
+  private static WebsocketClientSession connect(
+      final String path,
+      final Map<String, String> headers) throws IOException {
+
+    final URI uri = URI.create("wss://" + GRPC_DOMAIN + path);
+    final ClientUpgradeRequest request = new ClientUpgradeRequest(uri);
+    headers.forEach(request::setHeader);
+
+    final WebsocketClientSession listener = new WebsocketClientSession();
+    try {
+      WEB_SOCKET_CLIENT.connect(listener, request).get(5, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      throw new IOException(e);
+    }
+    logger.info("Successfully connected to websocket on {}", uri);
+    return listener;
+  }
+
+  private static Config loadConfigFromClasspath(final String filename) {
+    try {
+      final URL configFileUrl = Resources.getResource(filename);
+      final Config config = SystemMapper.yamlMapper().readValue(Resources.toByteArray(configFileUrl), Config.class);
+
+      final Set<ConstraintViolation<Config>> constraintViolations = Validators.newValidator().validate(config);
+
+      if (!constraintViolations.isEmpty()) {
+        throw new ConfigurationValidationException(filename, constraintViolations);
+      }
+
+      return config;
+    } catch (final Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public static ECSignedPreKey generateSignedECPreKey(final long id, final ECKeyPair identityKeyPair) {
+    final ECPublicKey pubKey = ECKeyPair.generate().getPublicKey();
+    final byte[] signature = identityKeyPair.getPrivateKey().calculateSignature(pubKey.serialize());
+    return new ECSignedPreKey(id, pubKey, signature);
+  }
+
+  public static KEMSignedPreKey generateSignedKEMPreKey(final long id, final ECKeyPair identityKeyPair) {
+    final KEMPublicKey pubKey = KEMKeyPair.generate(KEMKeyType.KYBER_1024).getPublicKey();
+    final byte[] signature = identityKeyPair.getPrivateKey().calculateSignature(pubKey.serialize());
+    return new KEMSignedPreKey(id, pubKey, signature);
+  }
+
+  public static <R> byte[] encodeJsonBody(final R input) {
+    try {
+     return SystemMapper.jsonMapper().writeValueAsBytes(input);
+    } catch (final JsonProcessingException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /// Serializes an assertion into the [specification](https://www.w3.org/TR/webauthn/#dictdef-authenticationresponsejson) format.
+  static String webAuthnVerificationResponseJson(final PublicKeyCredential<AuthenticatorAssertionResponse, ?> credential) {
+    final AuthenticatorAssertionResponse response = credential.getResponse();
+
+    return """
+        {
+          "id": "%s",
+          "rawId": "%s",
+          "type": "public-key",
+          "clientExtensionResults": {},
+          "response": {
+            "clientDataJSON": "%s",
+            "authenticatorData": "%s",
+            "signature": "%s",
+            "userHandle": %s
+          }
+        }
+        """.formatted(
+        base64Url(credential.getRawId()),
+        base64Url(credential.getRawId()),
+        base64Url(response.getClientDataJSON()),
+        base64Url(response.getAuthenticatorData()),
+        base64Url(response.getSignature()),
+        response.getUserHandle() == null ? "null" : "\"" + base64Url(response.getUserHandle()) + "\"");
+  }
+
+  private static String base64Url(@Nullable final byte[] bytes) {
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+  }
+}
