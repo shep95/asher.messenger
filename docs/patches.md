@@ -18,6 +18,7 @@ except the changes below. Re-apply them after `tools/sync-upstream.sh`
 | Signal-iOS | `SignalServiceKit/Environment/BuildFlags+Generated.swift`, three `Info.plist`s, `Signal/DeviceTransfer/DeviceTransferRestore.swift` | I1-I3. | `docs/security-audit.md` |
 | Signal-Desktop | `app/ipcSenderGuard.main.ts` (new), `app/main.main.ts`, `app/sql_channel.main.ts`, `app/attachment_channel.main.ts`, `app/protocol_filter.node.ts`, `ts/types/LinkPreview.std.ts` | D1-D5. | `docs/security-audit.md` |
 | libsignal | `rust/net/src/env/brand.rs`, `rust/net/src/env.rs`, `rust/net/build.rs`, `rust/attest/src/brand.rs` (new), `rust/attest/src/svr2.rs`, `rust/attest/src/lib.rs`, `rust/keytrans/src/verify.rs` | L1-L3 on top of the brand override. | `docs/security-audit.md` |
+| libsignal | `Cargo.toml` (workspace member), `rust/meshlink/` (new crate) | `meshlink`: store-carry-forward offline transport carrying Signal Protocol ciphertext over BLE/LoRa/serial links, with contact-card prekey exchange and device-fingerprint addressing. | `docs/offline-mesh.md` |
 | ringrtc, svr2 | `Cargo.lock`, `host/go.mod`, `host/go.sum` | Dependency advisories. | `docs/security-audit.md` |
 
 Files that are generated and ignored by git: `clients/android/brand.properties`,

@@ -28,6 +28,7 @@ describes a brand (name, bundle ids, domains, server keys, root CA) and
 | `services/tls-proxy` | signalapp/Signal-TLS-Proxy | Censorship-circumvention TLS proxy |
 | `libs/libsignal` | signalapp/libsignal | Protocol, zkgroup, attestation and the network stack used by all clients |
 | `libs/ringrtc` | signalapp/ringrtc | WebRTC-based calling library |
+| `libs/libsignal/rust/meshlink` | — | Offline store-carry-forward transport (BLE / LoRa / serial / gateway links), see `docs/offline-mesh.md` |
 | `brands/` | — | Brand profiles (`signal-upstream` parity profile, `asher`) |
 | `tools/` | — | `brand/apply.py`, `sync-upstream.sh`, `fetch-submodules.sh`, `server/gen-keys.sh` |
 | `deploy/server/<brand>/` | — | Generated server config skeletons |
@@ -95,6 +96,17 @@ remain.
 To switch a checkout back to plain upstream Signal values run
 `tools/brand/apply.py --brand signal-upstream`; that is also the state this
 repository is committed in.
+
+## Working without the internet
+
+`libs/libsignal/rust/meshlink` carries Signal Protocol ciphertext over links
+that are not the internet: phone-to-phone Bluetooth, LoRa radios (RNode/KISS),
+serial cables and satellite gateways. Identity is the device's Signal identity
+key fingerprint, prekeys travel as signed contact cards (QR code or beacon),
+and delivery is store-carry-forward with multi-hop relay, so messages cross
+gaps in coverage and time without a server. Encryption is unchanged. Groups,
+storage and discovery still need the server. Design, test coverage, per-client
+integration seams and limits: `docs/offline-mesh.md`.
 
 ## Maintenance
 
