@@ -1,0 +1,159 @@
+# Evaluate BASEDIR immediately so it refers to the project C root ('c/')
+# and does not change when additional makefiles are included later.
+BASEDIR:=$(abspath $(shell dirname $(lastword $(MAKEFILE_LIST))))
+
+SHELL=/bin/bash -o pipefail  # needed for pipefail
+OE_DIR ?= /opt/openenclave
+JAVA_HOME ?= /usr/lib/jvm/java-17-openjdk-amd64
+
+CC=clang-11
+
+### General ###
+
+# Warning flags are kept separate because they don't work for dependencies.
+WARNING_CFLAGS=\
+  -Wall \
+  -Wextra \
+  -Wno-unused-parameter \
+  -Werror \
+##WARNING_CFLAGS
+BASE_CFLAGS=\
+  $(ADDITIONAL_CFLAGS) \
+  -fPIC \
+  -Ibuild \
+  -I$(BASEDIR)/noise-c/include \
+  -I$(BASEDIR)/halfsiphash \
+  -I$(JAVA_HOME)/include \
+  -I$(JAVA_HOME)/include/linux \
+  -iquote $(BASEDIR) \
+  -O3 \
+##BASE_CFLAGS
+
+UNTRUSTED_CC=$(CC)
+UNTRUSTED_CFLAGS= \
+  $(BASE_CFLAGS) \
+  $(shell pkg-config oehost-clang --cflags) \
+##UNTRUSTED_CFLAGS
+UNTRUSTED_LDFLAGS= \
+  $(shell pkg-config oehost-clang --libs) \
+  -fPIC \
+  -g \
+  -lpthread \
+##UNTRUSTED_LDFLAGS
+
+TRUSTED_CC=$(CC)
+TRUSTED_CFLAGS= \
+  $(BASE_CFLAGS) \
+  $(shell pkg-config oeenclave-clang --cflags) \
+  -DOE_API_VERSION=2 \
+  -DOE_BUILD_ENCLAVE \
+  -pthread \
+  -mllvm -x86-cmov-converter=false \
+##TRUSTED_CFLAGS
+TRUSTED_LDFLAGS=\
+  $(shell pkg-config oeenclave-clang --libs) \
+  -fPIC \
+  -nostdlib \
+  -nodefaultlibs \
+  -nostartfiles \
+  -Wl,--no-undefined,-Bstatic,-Bsymbolic,--export-dynamic,-pie,--build-id \
+  -Wl,-z,noexecstack \
+  -Wl,-z,now \
+  -Wl,-gc-sections \
+  -Wl,-wrap=noise_rand_bytes \
+##TRUSTED_LDFLAGS
+STAGING_CFLAGS= \
+  $(TRUSTED_CFLAGS) \
+  -DIS_STAGING \
+## STAGING_CFLAGS
+
+TEST_CC=$(CC)
+TEST_CFLAGS= \
+  $(BASE_CFLAGS) \
+  -I$(JAVA_HOME)/include \
+  -I$(JAVA_HOME)/include/linux \
+  -DIS_TEST \
+  -DINSECURE \
+  -g \
+  -I$(shell pkg-config oeenclave-clang --variable=includedir) \
+##TEST_CFLAGS
+TEST_LDFLAGS= \
+  -fPIC \
+  -lpthread \
+  -Wl,-z,noexecstack \
+  -lm \
+##TEST_LDFLAGS
+
+UNTRUSTED_TEST_CC=$(CC)
+UNTRUSTED_TEST_CFLAGS= \
+  $(BASE_CFLAGS) \
+  -DIS_TEST \
+  -DINSECURE \
+  -g \
+##UNTRUSTED_TEST_CFLAGS
+UNTRUSTED_TEST_LDFLAGS= \
+  -fPIC \
+  -lpthread \
+  -Wl,-z,noexecstack \
+##UNTRUSTED_TEST_LDFLAGS
+
+AFL_CC=afl-clang
+AFL_CFLAGS= \
+  $(BASE_CFLAGS) \
+  $(shell pkg-config oehost-clang --cflags) \
+##AFL_CFLAGS
+AFL_LDFLAGS= \
+  -fPIC \
+  -lpthread \
+  -lm \
+  $(shell pkg-config oehost-clang --libs) \
+##AFL_LDFLAGS
+
+### Jasmin toolchain ###
+
+JASMINC ?= jasminc
+JASMIN_CT ?= jasmin-ct
+
+JASMIN_SCT_SLICE=`(cat jasmin.slice 2>/dev/null || true) | while read func; do echo "--slice=$$func"; done`
+JASMIN_PROD_SLICE=`(cat jasmin.slice 2>/dev/null || true) | while read func; do echo "-slice=$$func"; done`
+
+JASMIN_TEST_FLAGS=\
+  -I ENV=$(BASEDIR)/jasmin.test \
+##JASMIN_TEST_FLAGS
+JASMIN_STAGING_FLAGS=\
+  -I ENV=$(BASEDIR)/jasmin.staging \
+##JASMIN_STAGING_FLAGS
+JASMIN_PROD_FLAGS=\
+  -I ENV=$(BASEDIR)/jasmin.prod \
+##JASMIN_PROD_FLAGS
+
+JASMIN_TEST_CT_FLAGS=\
+  -g \
+## JASMIN_TEST_CT_FLAGS
+JASMIN_PROD_CT_FLAGS=\
+  $(JASMIN_PROD_SLICE) \
+## JASMIN_PROD_CT_FLAGS
+JASMIN_STAGING_CT_FLAGS=\
+	$(JASMIN_PROD_CT_FLAGS) \
+## JASMIN_STAGING_CT_FLAGS
+
+# Common flags used when invoking jasmin tools
+JASMIN_FLAGS= \
+  -I UTIL=$(BASEDIR)/util/ \
+  -I SIPHASH=$(BASEDIR)/halfsiphash/ \
+  -I OHTABLE=$(BASEDIR)/ohtable/ \
+##JASMIN_FLAGS
+JASMIN_CT_FLAGS= \
+  --infer \
+  -IUTIL=$(BASEDIR)/util/ \
+  -ISIPHASH=$(BASEDIR)/halfsiphash/ \
+  -IOHTABLE=$(BASEDIR)/ohtable/ \
+##JASMIN_CT_FLAGS
+JASMIN_SCT_FLAGS= \
+  --infer \
+  --sct \
+  -IUTIL=$(BASEDIR)/util/ \
+  -ISIPHASH=$(BASEDIR)/halfsiphash/ \
+  -IOHTABLE=$(BASEDIR)/ohtable/ \
+  $(JASMIN_SCT_SLICE) \
+##JASMIN_SCT_FLAGS

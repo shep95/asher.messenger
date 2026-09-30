@@ -1,0 +1,540 @@
+// Copyright 2022 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+#include <inttypes.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include "ohtable/ohtable.h"
+#include "shard.h"
+#include "util/util.h"
+
+// Ownership of a shard's worker slot. IDLE -> RUNNING is claimed by shard_run(),
+// RUNNING -> STOPPING by shard_stop(); the worker returns to IDLE as it exits.
+enum shard_worker_state
+{
+    SHARD_WORKER_IDLE = 0,
+    SHARD_WORKER_RUNNING,
+    SHARD_WORKER_STOPPING,
+};
+
+// struct shard layout - Jasmin only accesses lb, ub fields.
+// Jasmin is the source of truth; validated at runtime by shard_validate_layout().
+struct shard
+{
+    u64 lb;
+    u64 ub;
+    size_t record_size_qwords;
+    int keep_alive;
+    ohtable *table;
+    queue *requests;
+    // Worker slot ownership, one of enum shard_worker_state. Must stay at the
+    // end of the struct: Jasmin owns the lb/ub offsets, checked by
+    // shard_validate_layout().
+    int running;
+};
+
+// Validate C layout matches Jasmin. Called at startup.
+extern size_t shard_lb_offset_jazz(void);
+extern size_t shard_ub_offset_jazz(void);
+extern size_t shard_request_records_offset_jazz(void);
+extern size_t shard_request_error_offset_jazz(void);
+
+__attribute__((constructor))
+static void shard_validate_layout(void) {
+    CHECK(offsetof(shard, lb) == shard_lb_offset_jazz());
+    CHECK(offsetof(shard, ub) == shard_ub_offset_jazz());
+}
+
+typedef struct {
+    // Thread-safe waiting for this request to complete.
+    // On completion (shard_waiter_finish), `done` is set to true.
+    // Waiting (shard_request_wait) waits for this to be the case.
+    pthread_mutex_t done_lock;
+    bool done;
+    pthread_cond_t done_cond;
+} shard_request_waiter;
+
+struct sharded_ohtable_request
+{
+    // Request type
+    sharded_ohtable_request_type type;
+    // Pointer to (not-owned) memory containing the request/response records.
+    // Request records have id field populated, everything else zero
+    u64 *records;
+    // Any error that occurred during the execution of this request
+    error_t err;
+    // If non-NULL, complete this waiter.
+    shard_request_waiter* wait;
+    // Size of the request in "request size" increments
+    size_t batch_size;
+};
+
+__attribute__((constructor))
+static void sharded_ohtable_request_validate_layout(void) {
+    CHECK(offsetof(struct sharded_ohtable_request, records) == shard_request_records_offset_jazz());
+    CHECK(offsetof(struct sharded_ohtable_request, err) == shard_request_error_offset_jazz());
+}
+
+
+error_t shard_request_error(sharded_ohtable_request* r) { return r->err; }
+u64* shard_request_records(sharded_ohtable_request* r) { return r->records; }
+
+void shard_add_zero_record(shard *shard)
+{
+
+    u64 *zero_record;
+    CHECK(zero_record = calloc(shard->record_size_qwords, sizeof(*zero_record)));
+    ohtable_put(shard->table, zero_record);
+    free(zero_record);
+}
+
+static shard* _create(ohtable* table, u64 lb, u64 ub, size_t record_size_qwords) {
+
+    shard *shard;
+    CHECK(shard = calloc(1, sizeof(*shard)));
+    shard->lb = lb;
+    shard->ub = ub;
+    shard->record_size_qwords = record_size_qwords;
+    shard->keep_alive = 0;
+    shard->table = table;
+    shard->requests = queue_create();
+    // every shard has a "zero record" inserted - this is the result for a dummy request
+    // meant to balance memory accesses between shards
+    shard_add_zero_record(shard);
+    return shard;
+}
+
+shard *shard_create(u64 lb, u64 ub, size_t record_size_qwords, entropy_func getentropy)
+{
+    ohtable* table = ohtable_create(record_size_qwords, getentropy);
+    shard* shard = _create(table, lb, ub, record_size_qwords);
+    shard_add_zero_record(shard);
+    return shard;
+}
+
+static shard_request_waiter* shard_waiter_create() {
+    shard_request_waiter* w;
+    CHECK(w = calloc(1, sizeof(*w)));
+    w->done = false;
+    CHECK(0 == pthread_mutex_init(&w->done_lock, NULL));
+    CHECK(0 == pthread_cond_init(&w->done_cond, NULL));
+    return w;
+}
+
+static sharded_ohtable_request *shard_request_create(sharded_ohtable_request_type type, u64 *records, shard_request_waiter* w, size_t batch_size)
+{
+    sharded_ohtable_request *r;
+    CHECK(r = calloc(1, sizeof(*r)));
+    r->type = type;
+    r->records = records;
+    r->wait = w;
+    r->batch_size = batch_size;
+    return r;
+}
+
+void shard_request_destroy(sharded_ohtable_request *req)
+{
+    if (!req) return;
+    free(req);
+}
+
+static void shard_waiter_destroy(shard_request_waiter* w) {
+    if (!w) return;
+    CHECK(0 == pthread_cond_destroy(&w->done_cond));
+    CHECK(0 == pthread_mutex_destroy(&w->done_lock));
+    free(w);
+}
+
+static void shard_request_waiter_wait(shard_request_waiter* w) {
+    CHECK(0 == pthread_mutex_lock(&w->done_lock));
+    while (!w->done) {
+      CHECK(0 == pthread_cond_wait(&w->done_cond, &w->done_lock));
+    }
+    CHECK(0 == pthread_mutex_unlock(&w->done_lock));
+}
+
+void shard_wait(shard* shard)
+{
+    shard_request_waiter* w = shard_waiter_create();
+    sharded_ohtable_request *r = shard_request_create(shard_request_wait, NULL, w, 0);
+    CHECK(err_SUCCESS == queue_add_item(shard->requests, r));
+    shard_request_waiter_wait(w);
+    shard_waiter_destroy(w);
+    shard_request_destroy(r);
+}
+
+static void shard_waiter_finish(shard_request_waiter* w)
+{
+    // Mark this request complete by unlocking the `done` mutex to allow
+    // shard_request_wait to complete.
+    CHECK(0 == pthread_mutex_lock(&w->done_lock));
+    w->done = true;
+    // We could probably _signal here, but this future-proofs us in case
+    // there are potentially more waiters.
+    CHECK(0 == pthread_cond_broadcast(&w->done_cond));
+    CHECK(0 == pthread_mutex_unlock(&w->done_lock));
+}
+
+void shard_destroy(shard *shard)
+{
+    if (shard)
+    {
+        queue_close(shard->requests);
+        sharded_ohtable_request* req;
+        while (NULL != (req = queue_next_item(shard->requests, false))) {
+          req->err = err_SHARD__DESTROYING;
+          if (req->wait) shard_waiter_finish(req->wait);
+        }
+        ohtable_destroy(shard->table);
+        queue_destroy(shard->requests);
+        free(shard);
+    }
+}
+
+
+ohtable_statistics* shard_report_ohtable_statisitics(shard* shard) {
+    return ohtable_statistics_create(shard->table);
+}
+
+sharded_ohtable_request* shard_clear(shard *shard)
+{
+    sharded_ohtable_request *r = shard_request_create(shard_request_clear, NULL, NULL, 0);
+    CHECK(err_SUCCESS == queue_add_item(shard->requests, r));
+    return r;
+}
+
+static void shard_do_clear(shard *shard)
+{
+    ohtable_clear(shard->table);
+    shard_add_zero_record(shard);
+}
+
+u64 shard_lb(const shard *shard)
+{
+    return shard->lb;
+}
+
+u64 shard_ub(const shard *shard)
+{
+    return shard->ub;
+}
+
+bool shard_contains(const shard *shard, u64 key)
+{
+    // & rather than && for constant-time.
+    return (shard->lb <= key) & (key < shard->ub);
+}
+
+static sharded_ohtable_request *shard_next_request(shard *shard)
+{
+    return (sharded_ohtable_request *)queue_next_item(shard->requests, true);
+}
+
+sharded_ohtable_request* shard_insert(shard *shard, u64 *records, size_t num_records)
+{
+    sharded_ohtable_request *r = shard_request_create(shard_request_insert, records, NULL, num_records);
+    CHECK(err_SUCCESS == queue_add_item(shard->requests, r));
+    return r;
+}
+
+sharded_ohtable_request* shard_query(shard *shard, u64 *records, size_t num_queries)
+{
+    sharded_ohtable_request *r = shard_request_create(shard_request_query, records, NULL, num_queries);
+    CHECK(err_SUCCESS == queue_add_item(shard->requests, r));
+    return r;
+}
+
+void shard_handle_request(shard *shard, sharded_ohtable_request *req)
+{
+    CHECK(req);
+    switch (req->type)
+    {
+    case shard_request_insert:
+        CHECK(req->records);
+        for (size_t i = 0; i < req->batch_size; i++) {
+          if (err_SUCCESS != (req->err = ohtable_put(shard->table, req->records + shard->record_size_qwords * i))) break;
+        }
+        break;
+    case shard_request_query:
+        CHECK(req->records);
+        for (size_t i = 0; i < req->batch_size; i++) {
+          if (err_SUCCESS != (req->err = ohtable_get(shard->table, req->records[shard->record_size_qwords * i], req->records + shard->record_size_qwords * i))) break;
+        }
+        break;
+    case shard_request_stop:
+        shard->keep_alive = 0;
+        break;
+    case shard_request_clear:
+        shard_do_clear(shard);
+        break;
+    case shard_request_wait:
+        break;
+    default:
+        TEST_LOG("received unsupported request type %d", req->type);
+        CHECK(false);
+        break;
+    }
+    if (req->wait) shard_waiter_finish(req->wait);
+}
+
+error_t shard_run(shard *shard)
+{
+    // At most one worker per shard. Refuse to start if one is already running.
+    int expected = SHARD_WORKER_IDLE;
+    if (!__atomic_compare_exchange_n(
+            &shard->running, &expected, SHARD_WORKER_RUNNING, false,
+            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        return err_SHARD__ALREADY_RUNNING;
+    }
+
+    shard->keep_alive = 1;
+    while (shard->keep_alive)
+    {
+        sharded_ohtable_request *req = shard_next_request(shard);
+        shard_handle_request(shard, req);
+    }
+
+    // Release on exit so the shard can be run again after a stop.
+    // The loop only exits via the stop request, which shard_stop() enqueues
+    // after moving us RUNNING -> STOPPING, so `running` is necessarily STOPPING
+    // here. Compare-exchange rather than a bare store to assert that.
+    expected = SHARD_WORKER_STOPPING;
+    CHECK(__atomic_compare_exchange_n(
+        &shard->running, &expected, SHARD_WORKER_IDLE, false,
+        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return err_SUCCESS;
+}
+error_t shard_stop(shard *shard)
+{
+    // Only a running worker dequeues the stop request below. Claim the worker
+    // slot first: with no worker, or with a stop already in flight, nothing
+    // would consume the request and the wait below would never return.
+    int expected = SHARD_WORKER_RUNNING;
+    if (!__atomic_compare_exchange_n(
+            &shard->running, &expected, SHARD_WORKER_STOPPING, false,
+            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        return err_SHARD__NOT_RUNNING;
+    }
+
+    // Don't clear keep_alive here: if the worker sees it cleared before it
+    // dequeues the stop request below, it exits without signalling our waiter
+    // and this blocks forever. The worker clears it itself when it handles
+    // shard_request_stop, which is paired with signalling the waiter.
+    shard_request_waiter* w = shard_waiter_create();
+    sharded_ohtable_request *req = shard_request_create(shard_request_stop, NULL, w, 0);
+    CHECK(err_SUCCESS == queue_add_item(shard->requests, req));
+    shard_request_waiter_wait(w);
+    // shard_destroy() also completes pending requests, so the waiter returning
+    // does not by itself mean the worker stopped cleanly.
+    error_t err = req->err;
+    shard_waiter_destroy(w);
+    shard_request_destroy(req);
+    return err;
+}
+
+#ifdef IS_TEST
+#include <stdio.h>
+#include <string.h>
+#include <pthread.h>
+#include <sys/random.h>
+#include "util/util.h"
+#include "util/tests.h"
+
+#define RECORDS_TO_INSERT 1000
+#define RECORD_SIZE_QWORDS 7
+
+static u64 mt_insert_records[RECORD_SIZE_QWORDS * RECORDS_TO_INSERT];
+static u64 mt_request_records[RECORD_SIZE_QWORDS * RECORDS_TO_INSERT];
+static sharded_ohtable_request* mt_requests[RECORDS_TO_INSERT];
+
+static void* consumer_mt(void* v_shard) {
+  shard* shard = v_shard;
+  for (int i = 0; i < RECORDS_TO_INSERT + /*number of shard_wait calls*/ 1; i++) {
+    shard_handle_request(shard, shard_next_request(shard));
+  }
+  return NULL;
+}
+
+int test_shard_receives_inserts_mt()
+{
+    shard *shard = shard_create(0, UINT64_MAX, RECORD_SIZE_QWORDS, getentropy);
+    pthread_t cons_tid;
+    pthread_create(&cons_tid, NULL, consumer_mt, shard);
+
+    memset(mt_insert_records, 0, RECORD_SIZE_QWORDS * RECORDS_TO_INSERT * 8);
+    for (size_t i = 0; i < RECORDS_TO_INSERT; ++i)
+    {
+        mt_insert_records[RECORD_SIZE_QWORDS * i] = i+1;
+    }
+
+    for (int i = 0; i < RECORDS_TO_INSERT; i++) {
+        mt_requests[i] = shard_insert(shard, mt_insert_records + RECORD_SIZE_QWORDS * i, 1);
+    }
+
+    shard_wait(shard);
+
+    for (int i = 0; i < RECORDS_TO_INSERT; i++) {
+        TEST_ERR(mt_requests[i]->err);
+        shard_request_destroy(mt_requests[i]);
+    }
+
+    void *cons_retval;
+    pthread_join(cons_tid, &cons_retval);
+    shard_destroy(shard);
+    return 0;
+}
+
+int test_shard_receives_queries_mt()
+{
+    shard *shard = shard_create(0, UINT64_MAX, RECORD_SIZE_QWORDS, getentropy);
+    pthread_t cons_tid;
+    pthread_create(&cons_tid, NULL, consumer_mt, shard);
+
+    memset(mt_request_records, 0, RECORDS_TO_INSERT * RECORD_SIZE_QWORDS * 8);
+    for (size_t i = 0; i < RECORDS_TO_INSERT; ++i)
+    {
+        mt_request_records[RECORD_SIZE_QWORDS * i] = i+1;
+    }
+
+    for (int i = 0; i < RECORDS_TO_INSERT; i++) {
+        mt_requests[i] = shard_query(shard, mt_request_records + i*RECORD_SIZE_QWORDS, 1);
+    }
+
+    shard_wait(shard);
+
+    for (int i = 0; i < RECORDS_TO_INSERT; i++) {
+        TEST_ERR(mt_requests[i]->err);
+        shard_request_destroy(mt_requests[i]);
+    }
+
+    void *cons_retval;
+    pthread_join(cons_tid, &cons_retval);
+    shard_destroy(shard);
+    return 0;
+}
+
+int test_shard_handle_request()
+{
+    shard *shard = shard_create(0, UINT64_MAX, RECORD_SIZE_QWORDS, getentropy);
+
+    // first try the query and see that it isn't there
+    {
+      u64 query_data[RECORD_SIZE_QWORDS] = {1234, 0, 0, 0, 0, 0, 0};
+      sharded_ohtable_request* query_req = shard_request_create(shard_request_query, query_data, NULL, 1);
+      shard_handle_request(shard, query_req);
+      TEST_ERR(query_req->err);
+      TEST_ASSERT(query_data[0] == UINT64_MAX);
+      shard_request_destroy(query_req);
+    }
+
+    u64 insert_record[RECORD_SIZE_QWORDS] = {1234, 1, 2, 3, 4, 5, 6};
+    // then insert and get response
+    {
+      sharded_ohtable_request* insert_req = shard_request_create(shard_request_insert, insert_record, NULL, 1);
+      shard_handle_request(shard, insert_req);
+      TEST_ERR(insert_req->err);
+      shard_request_destroy(insert_req);
+    }
+
+    // then query again and confirm it is there
+    {
+      u64 query_data[RECORD_SIZE_QWORDS] = {1234, 0, 0, 0, 0, 0, 0};
+      sharded_ohtable_request* query_req = shard_request_create(shard_request_query, query_data, NULL, 1);
+      shard_handle_request(shard, query_req);
+      TEST_ERR(query_req->err);
+      TEST_ASSERT(0 == memcmp(query_data, insert_record, sizeof(insert_record)));
+      shard_request_destroy(query_req);
+    }
+
+    shard_destroy(shard);
+
+    return err_SUCCESS;
+}
+
+// Returns shard_run()'s error_t as a pointer-sized value the joiner can read.
+static void* worker_thread(void* v_shard) {
+    shard* shard = v_shard;
+    return (void*)(uintptr_t)shard_run(shard);
+}
+
+// A second worker for an already-running shard is refused; the running worker
+// keeps serving; ownership is released on stop so the shard can run again.
+int test_shard_rejects_duplicate_worker()
+{
+    shard *shard = shard_create(0, UINT64_MAX, RECORD_SIZE_QWORDS, getentropy);
+
+    // First worker takes ownership of the shard.
+    pthread_t first_tid;
+    pthread_create(&first_tid, NULL, worker_thread, shard);
+
+    // Wait until the first worker is definitely inside its loop, so that the
+    // second attempt below races against a genuinely running worker.
+    shard_wait(shard);
+
+    // Second worker must be refused rather than joining the queue.
+    pthread_t second_tid;
+    pthread_create(&second_tid, NULL, worker_thread, shard);
+    void *second_retval;
+    pthread_join(second_tid, &second_retval);
+    TEST_ASSERT((error_t)(uintptr_t)second_retval == err_SHARD__ALREADY_RUNNING);
+
+    // The original worker is unaffected and still services requests.
+    u64 query_record[RECORD_SIZE_QWORDS] = {1234, 0, 0, 0, 0, 0, 0};
+    sharded_ohtable_request* req = shard_query(shard, query_record, 1);
+    shard_wait(shard);
+    TEST_ERR(req->err);
+    shard_request_destroy(req);
+
+    // After a clean stop, ownership is released and the shard can run again.
+    shard_stop(shard);
+    void *first_retval;
+    pthread_join(first_tid, &first_retval);
+    TEST_ASSERT((error_t)(uintptr_t)first_retval == err_SUCCESS);
+
+    pthread_t restart_tid;
+    pthread_create(&restart_tid, NULL, worker_thread, shard);
+    shard_wait(shard);
+    shard_stop(shard);
+    void *restart_retval;
+    pthread_join(restart_tid, &restart_retval);
+    TEST_ASSERT((error_t)(uintptr_t)restart_retval == err_SUCCESS);
+
+    shard_destroy(shard);
+    return 0;
+}
+
+// Stopping a shard that has no worker is refused instead of queueing a request
+// nothing will ever dequeue.
+int test_shard_stop_requires_running_worker()
+{
+    shard *shard = shard_create(0, UINT64_MAX, RECORD_SIZE_QWORDS, getentropy);
+
+    // No worker has ever run this shard.
+    TEST_ASSERT(shard_stop(shard) == err_SHARD__NOT_RUNNING);
+
+    pthread_t tid;
+    pthread_create(&tid, NULL, worker_thread, shard);
+    shard_wait(shard);
+
+    TEST_ERR(shard_stop(shard));
+    void *retval;
+    pthread_join(tid, &retval);
+    TEST_ASSERT((error_t)(uintptr_t)retval == err_SUCCESS);
+
+    // The worker released the shard as it exited, so there is nothing left to stop.
+    TEST_ASSERT(shard_stop(shard) == err_SHARD__NOT_RUNNING);
+
+    shard_destroy(shard);
+    return 0;
+}
+
+void run_shard_tests()
+{
+    RUN_TEST(test_shard_receives_inserts_mt());
+    RUN_TEST(test_shard_receives_queries_mt());
+    RUN_TEST(test_shard_handle_request());
+    RUN_TEST(test_shard_rejects_duplicate_worker());
+    RUN_TEST(test_shard_stop_requires_running_worker());
+}
+#endif // IS_TEST

@@ -1,0 +1,59 @@
+name: Enclave artifacts
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha
+  DOCKER_BUILDKIT: 1
+  BUILDX_CONTAINER: container
+
+jobs:
+  build_release_enclave:
+    name: Build release enclave
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout main project
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Expose Docker environment variables for gha cache
+        # This action takes in the ID tokens etc provided by the permissions,
+        # as well as some environment data, and exposes them to future steps
+        # in the correct locations and formats for their use with the `gha`
+        # GitHub Actions cache for Docker.
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+      - name: Setup Docker
+        run: docker buildx create --use --name container --driver docker-container
+
+      - name: Set up JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+          cache: 'maven'
+
+      - name: Set up necessary SGX stuff
+        run: sudo ./c/docker/sgx_runtime_libraries.sh
+
+      - name: Build and test with Maven
+        run: ./mvnw -e -B exec:exec@enclave-release
+
+      - name: Get untracked artifacts
+        id: artifacts
+        run: |
+            git ls-files --others --exclude-standard src/main/resources
+            echo 'artifacts<<EOF' >> "$GITHUB_OUTPUT"
+            git ls-files --others --exclude-standard src/main/resources >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+
+      -  name: Upload enclave and JNI shim
+         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+         with:
+          name: enclave-and-jnishim
+          path: ${{steps.artifacts.outputs.artifacts}}

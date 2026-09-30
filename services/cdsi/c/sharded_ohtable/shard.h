@@ -1,0 +1,164 @@
+// Copyright 2022 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+
+#ifndef LIBORAM_SHARDED_OHTABLE_SHARD_H
+#define LIBORAM_SHARDED_OHTABLE_SHARD_H 1
+
+#include <stdbool.h>
+#include "util/util.h"
+#include "util/statistics.h"
+#include "sharded_ohtable/queue.h"
+
+/**
+ * @brief The `shard` is a component used by the `sharded_ohtable` and is
+ * not designed to be used directly.
+ *
+ */
+
+typedef struct shard shard;
+
+// Jasmin-exported layout functions (source of truth for struct shard layout)
+// Note: Jasmin only accesses lb, ub fields
+extern size_t shard_lb_offset_jazz(void);
+extern size_t shard_ub_offset_jazz(void);
+
+typedef enum
+{
+    shard_request_unknown,
+    shard_request_insert,
+    shard_request_query,
+    shard_request_stop,
+    shard_request_clear,
+    shard_request_wait,
+} sharded_ohtable_request_type;
+
+typedef struct sharded_ohtable_request sharded_ohtable_request;
+
+/**
+ * @brief Used internally by `sharded_ohtable`.
+ * Create a table shard with a range of values to be managed.
+ * ORAM capacity and stash size are compile-time Jasmin parameters.
+ *
+ * @param lb Lower bound for keys stored in this shard.
+ * @param ub Upper bound for keys stored in this shard.
+ * @param record_size_qwords Size of a data record in 64-bit words.
+ * @param getentropy entropy function used by internal ORAM for randomness.
+ * @return shard*
+ */
+shard* shard_create(u64 lb, u64 ub, size_t record_size_qwords, entropy_func getentropy);
+
+/**
+ * @brief Release all resources owned by this shard
+ *
+ * @param shard
+ */
+void shard_destroy(shard *shard);
+
+/**
+ * @brief Clear all data in a shard's table.
+ *
+ * @param shard
+ */
+sharded_ohtable_request* shard_clear(shard *shard);
+
+/**
+ * @brief Determines if a shard manages this key.
+ *
+ * @param shard
+ * @param key
+ * @return true
+ * @return false
+ */
+bool shard_contains(const shard *shard, u64 key);
+
+/**
+ * @brief Add a record to a shard.
+ *
+ * @param shard shard to hold record
+ * @param records records to insert.  Must live longer than the request.
+ * @param num_records number of records to insert.
+ * @return async request.  Call shard_wait() before using.
+ */
+sharded_ohtable_request* shard_insert(shard *shard, u64 *records, size_t num_records);
+
+/**
+ * @brief Check the table to see if a record is present for a given key.
+ *
+ * @param shard shard to query
+ * @param records Records have keys set, fields zeroed on input. Records that are found will be
+ *        populated on return.  Records must match backing ohtable's record size.
+ *          Must live longer than the request.
+ * @return async request.  Call shard_wait() before using.
+ */
+sharded_ohtable_request* shard_query(shard *shard, u64* records, size_t num_queries);
+
+/**
+ * @brief Wait synchronously for all previously submitted requests to complete.
+ */
+void shard_wait(shard* shard);
+
+/**
+ * @brief Free resources allocated for a response.
+ *
+ * @param r
+ */
+void shard_request_destroy(sharded_ohtable_request *r);
+
+/** @brief Get the error out of a finished request.
+ *
+ * Must call shard_wait before this.
+ *
+ * @param r
+ */
+error_t shard_request_error(sharded_ohtable_request* r);
+
+/** @brief Get the response records out of a finished request.
+ *
+ * Must call shard_wait before this.
+ *
+ * @param r
+ */
+u64* shard_request_records(sharded_ohtable_request* r);
+
+/**
+ * @brief  Listens to a request queue for inserts and queries and processses them.
+ * Run by shard worker thread.
+ *
+ * At most one worker may run a given shard at a time. If a worker is already
+ * running this shard, returns err_SHARD__ALREADY_RUNNING without touching the
+ * queue. Callers must not assume the shard is being serviced unless this
+ * returns err_SUCCESS.
+ *
+ * @param shard
+ * @return err_SUCCESS after a clean stop, err_SHARD__ALREADY_RUNNING if this
+ *         shard already has a worker.
+ */
+error_t shard_run(shard *shard);
+
+/**
+ * @brief Signals a running shard to stop. Shard will process and respond to all previous queires
+ * before stopping.
+ *
+ * Blocks until the worker has handled the stop request. The worker releases the
+ * shard just after that, so join its thread before running the shard again. A
+ * shard with no worker cannot be stopped, and only one stop may be in flight at
+ * a time; in both cases this returns without queueing anything.
+ *
+ * @param shard
+ * @return err_SUCCESS once the worker has stopped, err_SHARD__NOT_RUNNING if
+ *         the shard has no worker or is already stopping.
+ */
+error_t shard_stop(shard *shard);
+/**
+ * @brief Collect health statistics about this shard's table.
+ * 
+ * @param shard 
+ * @return ohtable_statistics* Must be destroyed with `ohtable_statistics_destroy`.
+ */
+ohtable_statistics* shard_report_ohtable_statisitics(shard* shard);
+
+#ifdef IS_TEST
+void run_shard_tests();
+#endif // IS_TEST
+
+#endif // LIBORAM_SHARDED_OHTABLE_SHARD_H
