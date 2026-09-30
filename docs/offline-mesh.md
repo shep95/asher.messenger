@@ -71,11 +71,57 @@ u16 len + payload (<= 4096 bytes)
 
 ```
 u8  version = 1
-u8  kind   1 text, 2 group text ([group id 16][text]), 3 group invite, 4 card share
+u8  kind   1 text, 2 group text ([group id 16][text]), 3 group invite, 4 card share,
+           5 call signal (opaque app bytes), 6 attachment manifest, 7 attachment chunk
 16  ack token
 u16 len + body (<= 2048)
 zero padding to a multiple of 256 bytes
 ```
+
+### Attachments (`src/attachment.rs`)
+
+A file, image or voice note (up to 4 MiB) is one **manifest** envelope plus
+N **chunk** envelopes, each its own Signal-encrypted bundle, so routing,
+carrying and acknowledgements are unchanged:
+
+```
+manifest  u8 version = 1, 16 transfer id, u8 kind (1 file, 2 image, 3 voice),
+          u16-len name (<= 255), u16-len mime (<= 127), u32 size, u32 chunks, 32 sha256
+chunk     16 transfer id, u32 index, data (<= 2028 bytes)
+```
+
+The transfer id is the first 16 bytes of the SHA-256 of the data and the
+deduplication key. A chunk carries 2028 bytes, the most that still fits one
+bundle when the ciphertext is a PreKeySignalMessage with a Kyber-1024
+ciphertext (every message before the recipient's first reply is one). The
+receiver keeps at most 8 half-finished transfers per sender, 64 in all,
+32 MiB in all, for at most 7 days, persisted across restarts; the whole is
+verified against the manifest's digest before the app sees it.
+
+### Call signalling
+
+Envelope kind 5 with a 90 s bundle lifetime. A bundle whose lifetime is at
+most 120 s is *urgent*: nodes offer and send it ahead of everything else and
+do not hold it back for pacing. Priority is thus expressed by the TTL already
+on the wire; relays have nothing new to trust. Media then flows over direct
+IP; only the signalling crosses the mesh.
+
+### Backup (`src/backup.rs`)
+
+```
+"ASHB"  u8 version = 1  salt 16  nonce 12  ciphertext
+```
+
+Key: Argon2id(passphrase, salt; 64 MiB, 3 passes). Cipher: AES-256-GCM-SIV
+with the 33-byte header as associated data. Plaintext: `u32 len + identity
+export`, then the snapshot (below). A wrong passphrase is a clean
+`BadPassphrase` error; a backup of another identity `IdentityMismatch`.
+
+### Snapshot (`src/persist.rs`)
+
+Version 2 = version 1 (bundles, contacts, groups, outstanding acks) plus the
+nearby table, half-finished attachments and delivered transfer ids. Version 1
+files still load.
 
 ### Contact card (`src/identity.rs`)
 
@@ -119,19 +165,49 @@ node.send_text(fp, bytes)                       // internal crypto
 node.prepare_text(fp, bytes) -> Prepared{to, commit, plaintext}; node.send_ciphertext(to, commit, type, ct)
 node.create_group(name, members) / send_group_text(gid, bytes)      (+ prepare_* twins)
 node.deliver_plaintext(bundle_id, plaintext) / defer(bundle_id)      // external crypto
-node.subscribe() -> Event::{Ciphertext, Message, GroupMessage, GroupInvite, Contact, Delivered, Neighbour, LinkClosed}
+node.prepare_attachment(fp, kind, name, mime, data) -> Vec<Prepared>   (+ send_attachment twin)
+node.prepare_call_signal(fp, data) -> Prepared                         (+ send_call_signal twin)
+node.nearby() -> Vec<Nearby{fingerprint, name, last_seen, direct}>
+node.export_backup(passphrase) -> bytes / import_backup(passphrase, bytes); MeshIdentity::from_backup
+node.self_test(timeout) -> String
+node.subscribe() -> Event::{Ciphertext, Message, GroupMessage, GroupInvite, Contact, Delivered,
+                            Neighbour, LinkClosed, CallSignal, AttachmentProgress, Attachment}
 node.stats() / flush()
 ```
 
-Defaults (`NodeConfig`): 7 hops, 7-day message TTL, 24-hour acks and beacons
-(beacons 3 hops), 15 s anti-entropy interval, 8 MiB carry store with a 1 MiB
-per-source quota, 1024-frame link queues, 120 s reassembly timeout, 10 new
-bundles/s per source (burst 600), 5 decrypts/s per source (burst 200), 1
-beacon per 20 s per source (burst 3), 10 000 learned contacts, 1 000 groups.
+Defaults (`NodeConfig`): 7 hops, 7-day message TTL, 90 s call signals,
+24-hour acks and beacons (beacons 3 hops), 15 s anti-entropy interval, 16 MiB
+carry store with a 1 MiB per-source quota, 1024-frame link queues, 120 s
+reassembly timeout, 50 new bundles/s per source (burst 1000), 20 decrypts/s
+per source (burst 600), 1 beacon per 20 s per source (burst 3), 10 000
+learned contacts, 1 000 groups, 256 nearby peers for 24 h.
 
 Messages for us that cannot be decrypted yet (a ratchet message that overtook
 its session-starting message on another path) are deferred and retried when a
-session from that sender appears and on every tick; they are never lost.
+session from that sender appears and on every tick; they are never lost. A
+message for us that arrives while the decrypt budget is spent, or while the
+app already has 512 ciphertexts pending, is refused *before* its id is marked
+seen, so the neighbour re-offers it in a later summary: back-pressure, not
+loss. That is what lets an attachment arrive as hundreds of bundles at once.
+
+Attachments arrive in any order (chunks may overtake the manifest); each
+chunk raises `AttachmentProgress`, the verified whole `Attachment`, and every
+piece is acknowledged individually so relays drain as it lands. A transfer
+whose data does not match the manifest's digest is dropped, and a transfer id
+already delivered is ignored.
+
+The nearby table remembers every card seen (beacons, card shares) and every
+neighbour that said hello, saved contact or not, with the last time and
+whether the peer is on a link right now; it is what replaces server contact
+discovery.
+
+`self_test` builds throwaway peers with fresh identities in the same process,
+joins them to the node through in-memory pipes and exchanges a card broadcast
+and a text both ways (an internal-crypto node talks to one peer; an
+external-crypto app node relays between two, which exercises everything but
+the app's own encryption). The peers are quarantined while it runs, so
+nothing they send is learned, and every bundle of the test is removed at the
+end.
 
 ## 5. Threat model and what bounds it
 
@@ -188,8 +264,15 @@ bundle cap, deliberate).
 | `floods_are_bounded_and_do_not_starve_real_traffic` | Bundle, fragment, garbage and future-timestamp floods stay within quota; real traffic still flows |
 | `external_crypto_mode_round_trip_with_app_side_sessions` | The bridge flow with app-side stores, including defer and re-announce |
 | `tcp_transport_between_two_nodes` | TCP link end to end |
+| `attachment_round_trip_over_a_lossy_lora_link` | 12 kB image over 200-byte frames with one frame in nine lost; progress events, digest verified, every piece acknowledged, a resend deduplicated, size limits |
+| `prepared_attachment_list_has_the_bridge_shape` | Manifest first, then chunks, all to one recipient, distinct commitments |
+| `call_signal_round_trip_is_short_lived_and_urgent` | 90 s TTL, urgent, delivered as `CallSignal`; the prepared commitment carries the TTL through `send_ciphertext` |
+| `nearby_lists_cards_and_neighbours_and_persists` | Beacon and hello both listed, `direct` follows the link, survives a restart |
+| `backup_round_trip_and_wrong_passphrase` | Identity, contacts, group, carried bundle and outstanding ack restored into a fresh node, which then delivers; wrong passphrase, other identity and garbage all clean errors |
+| `self_test_passes_and_leaves_no_trace` | PASS for an internal-crypto and an external-crypto node; no contact, nearby entry, bundle or link left behind |
+| `decoders_never_panic` | Truncated, bit-flipped and random inputs to every decoder, now including manifest, chunk, half-finished transfer, nearby table (both encodings), snapshot v2, backup body and sealed blob |
 | `sixty_four_nodes_lora_frames`, `ingest_throughput_single_node` | Section 6 |
-| unit tests | wire, bundle validation and commitments, envelope padding, fragmentation and flood bounds, KISS, rate limiters, store quotas and caps, card tamper detection, identity export/import/install, groups, snapshots |
+| unit tests | wire, bundle validation and commitments, envelope padding, fragmentation and flood bounds, KISS, rate limiters, store quotas and caps, card tamper detection, identity export/import/install, groups, snapshots (v1 and v2), attachment split/reassembly/bounds/expiry, nearby bounds and ordering, backup seal/open |
 
 ## 8. Bridge (apps)
 
@@ -206,17 +289,49 @@ MeshNode_NextEvent(timeoutMs) -> encoded event
 MeshNode_PrepareText / SendCiphertext / DeliverPlaintext / Defer
 MeshNode_AddContact / Contact / Contacts / SafetyNumber / BroadcastCard / Rename
 MeshNode_PrepareGroupCreate / PrepareGroupText / Groups / Group
+MeshNode_PrepareAttachment(to, kind, name, mime, data) -> prepared list (manifest first)
+MeshNode_PrepareCallSignal(to, data) -> prepared list (one item, 90 s, urgent)
+MeshNode_Nearby() -> bytes
+MeshNode_ExportBackup(passphrase) -> bytes; MeshNode_ImportBackup(passphrase, blob)
+MeshNode_SelfTest(timeoutMs) -> String
+MeshNode_SendAttachment / SendCallSignal                    (internal-crypto twins)
 MeshNode_Stats / Flush
-MeshIdentity_FromIdentityKeyPair / Export / Import / Card / SignedPreKeyRecord / KyberPreKeyRecord
+MeshIdentity_FromIdentityKeyPair / FromBackup / Export / Import / Card / SignedPreKeyRecord / KyberPreKeyRecord
 MeshContactCard_Decode / FromBase64 / PreKeyBundle / AddressName / SafetyNumber / ...
 ```
 
-Encodings (`rust/bridge/shared/types/src/mesh.rs`): an event is a tag byte
-(1 Ciphertext, 2 Message, 3 GroupMessage, 4 GroupInvite, 5 Contact,
-6 Delivered, 7 Neighbour, 8 LinkClosed) followed by its fixed fields, with
-variable fields u16-length-prefixed; a prepared list is `u16 count` then
-`[to 16][commit 16][plaintext u16-len]`; stats are eighteen big-endian u64s in
-the order of the `Stats` fields.
+Encodings (`rust/bridge/shared/types/src/mesh.rs`), all big-endian: an event
+is a tag byte followed by its fixed fields, with variable fields
+u16-length-prefixed unless stated:
+
+```
+1  Ciphertext          [from 16][bundle 16][commit 16][type u8][ciphertext]
+2  Message             [from 16][bundle 16][knownSender u8][plaintext]
+3  GroupMessage        [group 16][from 16][bundle 16][plaintext]
+4  GroupInvite         [group 16][from 16]
+5  Contact             [fingerprint 16]
+6  Delivered           [bundle 16]
+7  Neighbour           [link u64][fingerprint 16]
+8  LinkClosed          [link u64]
+9  AttachmentProgress  [from 16][transfer 16][received u32][total u32]   (chunk counts; total 0 until the manifest)
+10 Attachment          [from 16][transfer 16][kind u8][name][mime][data u32-len]
+11 CallSignal          [from 16][bundle 16][data]
+```
+
+A prepared list is `u16 count` then `[to 16][commit 16][plaintext u16-len]`;
+the app encrypts every entry with its own session and passes each to
+`MeshNode_SendCiphertext` in order (an attachment is delivered when its
+manifest's bundle is acknowledged; the manifest is the first entry). The
+nearby list is `u16 count` then `[fingerprint 16][name][lastSeenSecs u64]
+[direct u8]`, most recent first. Stats are eighteen big-endian u64s in the
+order of the `Stats` fields.
+
+Attachment `kind` is 1 file, 2 image, 3 voice note; data at most 4 MiB
+(`TooLarge` beyond); call signalling data at most 2048 bytes (the envelope
+body limit). Backup errors: wrong passphrase or tampered blob is
+`BadPassphrase` (Kotlin `InvalidMessageException`, Swift `InvalidMessage`),
+another identity's backup `IdentityMismatch` (`IllegalArgumentException` /
+`InvalidArgument`).
 
 The app's session for a mesh contact is stored under
 `ProtocolAddress(name = fingerprint hex, deviceId = 1)`, and the mesh prekey
@@ -268,8 +383,15 @@ put the daemon behind whatever the satellite terminal or uplink presents.
 
 ## 11. Limits, stated plainly
 
-* No storage service, contact discovery, attachments or calls without a
-  server. Groups are pairwise and small.
+* Groups are pairwise and small. Attachments are capped at 4 MiB and
+  travel as about 2 000 bundles; that is practical on a LAN or BLE link and
+  slow on LoRa, and a relay carries at most 1 MiB per foreign source at a
+  time, so multi-hop attachments trickle. Call signalling crosses the mesh
+  (2 kB per message); the media itself needs a direct IP path.
+* Nearby discovery is only what the radio heard in the last day; there is no
+  directory. The backup is only as strong as its passphrase (Argon2id at
+  64 MiB slows guessing; it does not stop a short passphrase from being
+  guessed).
 * Bandwidth is the radio's. The 4 kB bundle cap is deliberate.
 * Epidemic routing floods; quotas and hop limits bound it, but dense
   deployments want smarter routing (PRoPHET/gradient) inside
@@ -286,10 +408,11 @@ libs/libsignal/rust/meshlink/
   src/lib.rs bundle.rs envelope.rs wire.rs        formats
   src/identity.rs stores.rs                       cards, identity, protocol-store seam
   src/store.rs limits.rs frame.rs kiss.rs         carry store, rate limits, link layer, KISS
-  src/group.rs persist.rs                         groups, snapshots
-  src/node.rs                                     the node
+  src/group.rs persist.rs                         groups, snapshots (v1 + v2)
+  src/attachment.rs nearby.rs backup.rs           attachments, nearby table, encrypted backup
+  src/node.rs                                     the node (incl. call signalling, self-test)
   src/transport/{mod,memory,tcp}.rs               links
   src/bin/meshlinkd.rs                            gateway daemon
-  tests/mesh.rs tests/stress.rs
+  tests/mesh.rs tests/v3.rs tests/robustness.rs tests/stress.rs
 libs/libsignal/rust/bridge/shared/src/mesh.rs, shared/types/src/mesh.rs   bridge
 ```

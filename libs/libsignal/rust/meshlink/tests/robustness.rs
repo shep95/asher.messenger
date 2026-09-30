@@ -7,11 +7,14 @@
 //! random inputs may be rejected but may never panic or allocate without
 //! bound. This is the cheap half of fuzzing, run on every test pass.
 
+use meshlink::attachment::{AttachmentKind, Chunk, Incoming, Manifest, Reassembly};
+use meshlink::backup::{self, Backup};
 use meshlink::bundle::{Bundle, BundleKind};
 use meshlink::envelope::{Envelope, EnvelopeKind};
 use meshlink::frame::{Frame, Reassembler};
 use meshlink::group::MeshGroup;
 use meshlink::identity::ContactCard;
+use meshlink::nearby::{NearbyTable, decode_nearby, encode_nearby};
 use meshlink::persist::Snapshot;
 use meshlink::{MeshIdentity, kiss};
 use rand::{Rng as _, SeedableRng as _, TryRngCore as _};
@@ -82,17 +85,94 @@ fn decoders_never_panic() {
     for m in mutations(&group.encode(), &mut rng) {
         let _ = MeshGroup::decode(&m);
     }
+    // Attachments: manifest, chunk, half-finished transfer.
+    let data: Vec<u8> = (0..5000u32).map(|i| (i % 253) as u8).collect();
+    let (manifest, chunks) =
+        meshlink::attachment::split(AttachmentKind::Image, "pic.jpg", "image/jpeg", &data).unwrap();
+    for m in mutations(&manifest.encode(), &mut rng) {
+        let _ = Manifest::decode(&m);
+    }
+    for m in mutations(&chunks[1].encode(), &mut rng) {
+        let _ = Chunk::decode(&m);
+    }
+    let mut parts = std::collections::BTreeMap::new();
+    parts.insert(0u32, chunks[0].data.clone());
+    let incoming = Incoming {
+        from: [4; 16],
+        transfer: manifest.transfer,
+        manifest: Some(manifest.clone()),
+        parts,
+        started_at: 5,
+    };
+    for m in mutations(&incoming.encode(), &mut rng) {
+        let _ = Incoming::decode(&m);
+    }
+    // Reassembly fed random manifests and chunks stays within its caps.
+    let mut reassembly = Reassembly::new();
+    for i in 0..3000u32 {
+        let from = [(i % 40) as u8; 16];
+        let mut transfer = [0u8; 16];
+        transfer[..4].copy_from_slice(&(i % 500).to_be_bytes());
+        let c = Chunk {
+            transfer,
+            index: rng.random_range(0..3000),
+            data: (0..rng.random_range(1..2100))
+                .map(|_| rng.random())
+                .collect(),
+        };
+        let _ = reassembly.chunk(from, c, i as u64);
+        assert!(reassembly.len() <= meshlink::attachment::MAX_TRANSFERS);
+    }
+    // Nearby table (snapshot form and bridge form).
+    let mut nearby = NearbyTable::new();
+    nearby.seen([1; 16], Some("Ada"), 100);
+    nearby.seen([2; 16], None, 101);
+    for m in mutations(&nearby.encode(), &mut rng) {
+        let _ = NearbyTable::decode(&m);
+    }
+    let listed = nearby.list(200, |_| true);
+    for m in mutations(&encode_nearby(&listed), &mut rng) {
+        let _ = decode_nearby(&m);
+    }
     let snap = Snapshot {
         bundles: vec![bundle.clone()],
         contacts: vec![(me.card().clone(), true)],
         groups: vec![group],
         outstanding: vec![(bundle.id(), [3; 16])],
+        nearby: nearby.encode(),
+        transfers: vec![incoming],
+        completed_transfers: vec![([4; 16], [5; 16], 9)],
     };
     for m in mutations(&snap.encode(), &mut rng) {
         let _ = Snapshot::decode(&m);
     }
     for m in mutations(&me.export().unwrap(), &mut rng) {
         let _ = MeshIdentity::import(&m, &mut os);
+    }
+    // Backup: the plaintext body with the full treatment, the sealed blob
+    // with a smaller one (every well-formed header costs a key derivation).
+    let backup = Backup {
+        identity: me.export().unwrap(),
+        snapshot: snap,
+    };
+    for m in mutations(&backup.encode(), &mut rng) {
+        let _ = Backup::decode(&m);
+    }
+    let sealed = backup.seal("pw").unwrap();
+    let mut few: Vec<Vec<u8>> = (0..40).map(|cut| sealed[..cut].to_vec()).collect();
+    for _ in 0..12 {
+        let mut m = sealed.clone();
+        let i = rng.random_range(0..m.len());
+        m[i] ^= 1 << rng.random_range(0..8);
+        few.push(m);
+    }
+    for _ in 0..12 {
+        let n = rng.random_range(0..200);
+        few.push((0..n).map(|_| rng.random()).collect());
+    }
+    for m in few {
+        assert!(backup::open("pw", &m).is_err());
+        let _ = MeshIdentity::from_backup("pw", &m, &mut os);
     }
     // KISS decoder: arbitrary byte soup in arbitrary chunk sizes.
     let mut dec = kiss::Decoder::new();

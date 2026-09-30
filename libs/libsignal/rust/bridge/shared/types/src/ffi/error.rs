@@ -513,7 +513,10 @@ impl IntoFfiError for DeviceTransferError {
 impl IntoFfiError for meshlink::Error {
     fn into_ffi_error(self) -> impl Into<SignalFfiError> {
         let code = match &self {
-            Self::Wire(_) | Self::TooLarge(_, _) => SignalErrorCode::InvalidArgument,
+            Self::Wire(_) | Self::TooLarge(_, _) | Self::IdentityMismatch => {
+                SignalErrorCode::InvalidArgument
+            }
+            Self::BadPassphrase => SignalErrorCode::InvalidMessage,
             Self::BadCardSignature => SignalErrorCode::InvalidSignature,
             Self::Curve(_) => SignalErrorCode::InvalidKey,
             Self::UnknownContact(_) => SignalErrorCode::SessionNotFound,

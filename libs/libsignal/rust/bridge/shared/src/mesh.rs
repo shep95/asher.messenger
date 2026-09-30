@@ -64,6 +64,19 @@ fn MeshIdentity_Export(identity: &MeshIdentity) -> Result<Vec<u8>> {
     identity.0.export()
 }
 
+/// Recovers the identity from a passphrase-encrypted backup made by
+/// `MeshNode_ExportBackup`; the node is then created from it and the rest of
+/// the backup merged with `MeshNode_ImportBackup`.
+#[bridge_fn]
+fn MeshIdentity_FromBackup(passphrase: String, blob: &[u8]) -> Result<MeshIdentity> {
+    let mut rng = rand::rngs::OsRng.unwrap_err();
+    Ok(MeshIdentity(meshlink::MeshIdentity::from_backup(
+        &passphrase,
+        blob,
+        &mut rng,
+    )?))
+}
+
 #[bridge_fn]
 fn MeshIdentity_Fingerprint(identity: &MeshIdentity) -> Vec<u8> {
     identity.0.fingerprint().to_vec()
@@ -347,4 +360,87 @@ fn MeshNode_Stats(node: &MeshNode) -> Vec<u8> {
 #[bridge_fn]
 fn MeshNode_Flush(node: &MeshNode) -> Result<()> {
     node.flush()
+}
+
+/// External-crypto mode: prepared list (manifest first, then the chunks; the
+/// app encrypts and sends every entry in order). `kind`: 1 file, 2 image,
+/// 3 voice note. `data` at most 4 MiB.
+#[bridge_fn]
+fn MeshNode_PrepareAttachment(
+    node: &MeshNode,
+    to: &[u8],
+    kind: u8,
+    name: String,
+    mime: String,
+    data: &[u8],
+) -> Result<Vec<u8>> {
+    node.prepare_attachment(
+        sixteen(to, "fingerprint must be 16 bytes")?,
+        kind,
+        &name,
+        &mime,
+        data,
+    )
+}
+
+/// Internal-crypto mode: concatenated bundle ids, the manifest's first.
+#[bridge_fn]
+fn MeshNode_SendAttachment(
+    node: &MeshNode,
+    to: &[u8],
+    kind: u8,
+    name: String,
+    mime: String,
+    data: &[u8],
+) -> Result<Vec<u8>> {
+    node.send_attachment(
+        sixteen(to, "fingerprint must be 16 bytes")?,
+        kind,
+        &name,
+        &mime,
+        data,
+    )
+}
+
+/// External-crypto mode: prepared list (one item) for an opaque call
+/// signalling message; sent with a 90 s lifetime ahead of other traffic.
+#[bridge_fn]
+fn MeshNode_PrepareCallSignal(node: &MeshNode, to: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    node.prepare_call_signal(sixteen(to, "fingerprint must be 16 bytes")?, data)
+}
+
+/// Internal-crypto mode.
+#[bridge_fn]
+fn MeshNode_SendCallSignal(node: &MeshNode, to: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    Ok(node
+        .send_call_signal(sixteen(to, "fingerprint must be 16 bytes")?, data)?
+        .to_vec())
+}
+
+/// Everyone seen on the mesh in the last day: `u16 count` then per entry
+/// `[fingerprint 16][name u16-len][lastSeenSecs u64][direct u8]`, most
+/// recent first.
+#[bridge_fn]
+fn MeshNode_Nearby(node: &MeshNode) -> Vec<u8> {
+    node.nearby()
+}
+
+/// Identity plus the whole mesh state, sealed under `passphrase`
+/// (`"ASHB"`, version, salt, nonce, AES-256-GCM-SIV ciphertext; Argon2id key).
+#[bridge_fn]
+fn MeshNode_ExportBackup(node: &MeshNode, passphrase: String) -> Result<Vec<u8>> {
+    node.export_backup(&passphrase)
+}
+
+/// Merges a backup of this same identity into the running node.
+#[bridge_fn]
+fn MeshNode_ImportBackup(node: &MeshNode, passphrase: String, blob: &[u8]) -> Result<()> {
+    node.import_backup(&passphrase, blob)
+}
+
+/// Loopback end-to-end test against throwaway in-process peers; returns a
+/// multi-line "PASS ..."/"FAIL ..." report and never throws for a failure.
+#[bridge_fn]
+fn MeshNode_SelfTest(node: &MeshNode, timeout_ms: u32) -> String {
+    node.self_test(timeout_ms)
 }

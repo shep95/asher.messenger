@@ -2147,6 +2147,10 @@ type NativeFunctions = {
   MeshIdentity_Fingerprint: (
     identity: Wrapper<MeshIdentity>
   ) => Uint8Array<ArrayBuffer>;
+  MeshIdentity_FromBackup: (
+    passphrase: string,
+    blob: Uint8Array<ArrayBuffer>
+  ) => MeshIdentity;
   MeshIdentity_FromIdentityKeyPair: (
     key_pair: Uint8Array<ArrayBuffer>,
     registration_id: number,
@@ -2194,6 +2198,10 @@ type NativeFunctions = {
     plaintext: Uint8Array<ArrayBuffer>
   ) => void;
   MeshNode_DetachLink: (node: Wrapper<MeshNode>, link: bigint) => void;
+  MeshNode_ExportBackup: (
+    node: Wrapper<MeshNode>,
+    passphrase: string
+  ) => Uint8Array<ArrayBuffer>;
   MeshNode_Fingerprint: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
   MeshNode_Flush: (node: Wrapper<MeshNode>) => void;
   MeshNode_Group: (
@@ -2201,6 +2209,11 @@ type NativeFunctions = {
     group: Uint8Array<ArrayBuffer>
   ) => Uint8Array<ArrayBuffer>;
   MeshNode_Groups: (node: Wrapper<MeshNode>) => Array<Uint8Array<ArrayBuffer>>;
+  MeshNode_ImportBackup: (
+    node: Wrapper<MeshNode>,
+    passphrase: string,
+    blob: Uint8Array<ArrayBuffer>
+  ) => void;
   MeshNode_LinkRead: (
     node: Wrapper<MeshNode>,
     link: bigint,
@@ -2211,6 +2224,7 @@ type NativeFunctions = {
     link: bigint,
     frame: Uint8Array<ArrayBuffer>
   ) => boolean;
+  MeshNode_Nearby: (node: Wrapper<MeshNode>) => Uint8Array<ArrayBuffer>;
   MeshNode_New: (
     identity: Wrapper<MeshIdentity>,
     state_path: string | null,
@@ -2220,6 +2234,19 @@ type NativeFunctions = {
   MeshNode_NextEvent: (
     node: Wrapper<MeshNode>,
     timeout_ms: number
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_PrepareAttachment: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    kind: number,
+    name: string,
+    mime: string,
+    data: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_PrepareCallSignal: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    data: Uint8Array<ArrayBuffer>
   ) => Uint8Array<ArrayBuffer>;
   MeshNode_PrepareGroupCreate: (
     node: Wrapper<MeshNode>,
@@ -2245,6 +2272,20 @@ type NativeFunctions = {
     node: Wrapper<MeshNode>,
     fingerprint: Uint8Array<ArrayBuffer>
   ) => string;
+  MeshNode_SelfTest: (node: Wrapper<MeshNode>, timeout_ms: number) => string;
+  MeshNode_SendAttachment: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    kind: number,
+    name: string,
+    mime: string,
+    data: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
+  MeshNode_SendCallSignal: (
+    node: Wrapper<MeshNode>,
+    to: Uint8Array<ArrayBuffer>,
+    data: Uint8Array<ArrayBuffer>
+  ) => Uint8Array<ArrayBuffer>;
   MeshNode_SendCiphertext: (
     node: Wrapper<MeshNode>,
     to: Uint8Array<ArrayBuffer>,
@@ -4420,6 +4461,7 @@ const {
   MeshIdentity_Card,
   MeshIdentity_Export,
   MeshIdentity_Fingerprint,
+  MeshIdentity_FromBackup,
   MeshIdentity_FromIdentityKeyPair,
   MeshIdentity_Generate,
   MeshIdentity_Import,
@@ -4435,20 +4477,28 @@ const {
   MeshNode_Defer,
   MeshNode_DeliverPlaintext,
   MeshNode_DetachLink,
+  MeshNode_ExportBackup,
   MeshNode_Fingerprint,
   MeshNode_Flush,
   MeshNode_Group,
   MeshNode_Groups,
+  MeshNode_ImportBackup,
   MeshNode_LinkRead,
   MeshNode_LinkWrite,
+  MeshNode_Nearby,
   MeshNode_New,
   MeshNode_NextEvent,
+  MeshNode_PrepareAttachment,
+  MeshNode_PrepareCallSignal,
   MeshNode_PrepareGroupCreate,
   MeshNode_PrepareGroupText,
   MeshNode_PrepareText,
   MeshNode_RemoveContact,
   MeshNode_Rename,
   MeshNode_SafetyNumber,
+  MeshNode_SelfTest,
+  MeshNode_SendAttachment,
+  MeshNode_SendCallSignal,
   MeshNode_SendCiphertext,
   MeshNode_SendGroupText,
   MeshNode_SendText,
@@ -5278,6 +5328,7 @@ export {
   MeshIdentity_Card,
   MeshIdentity_Export,
   MeshIdentity_Fingerprint,
+  MeshIdentity_FromBackup,
   MeshIdentity_FromIdentityKeyPair,
   MeshIdentity_Generate,
   MeshIdentity_Import,
@@ -5293,20 +5344,28 @@ export {
   MeshNode_Defer,
   MeshNode_DeliverPlaintext,
   MeshNode_DetachLink,
+  MeshNode_ExportBackup,
   MeshNode_Fingerprint,
   MeshNode_Flush,
   MeshNode_Group,
   MeshNode_Groups,
+  MeshNode_ImportBackup,
   MeshNode_LinkRead,
   MeshNode_LinkWrite,
+  MeshNode_Nearby,
   MeshNode_New,
   MeshNode_NextEvent,
+  MeshNode_PrepareAttachment,
+  MeshNode_PrepareCallSignal,
   MeshNode_PrepareGroupCreate,
   MeshNode_PrepareGroupText,
   MeshNode_PrepareText,
   MeshNode_RemoveContact,
   MeshNode_Rename,
   MeshNode_SafetyNumber,
+  MeshNode_SelfTest,
+  MeshNode_SendAttachment,
+  MeshNode_SendCallSignal,
   MeshNode_SendCiphertext,
   MeshNode_SendGroupText,
   MeshNode_SendText,

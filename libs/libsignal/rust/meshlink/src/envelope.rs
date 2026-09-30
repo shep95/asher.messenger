@@ -7,7 +7,8 @@
 //!
 //! ```text
 //! u8   version = 1
-//! u8   kind          1 text, 2 group text, 3 group invite, 4 card share
+//! u8   kind          1 text, 2 group text, 3 group invite, 4 card share,
+//!                    5 call signal, 6 attachment manifest, 7 attachment chunk
 //! 16   ack token     opens the bundle header's ack commitment
 //! u16  body length + body
 //! ...  zero padding to a multiple of PAD_BLOCK bytes
@@ -40,6 +41,13 @@ pub enum EnvelopeKind {
     /// Body: an encoded [`crate::ContactCard`] of a third party (its own
     /// signature makes it trustworthy regardless of who forwarded it).
     CardShare = 4,
+    /// Body: the app's own serialized call signalling message (offer, answer,
+    /// ICE candidates, hangup). Opaque to meshlink; sent with a short TTL.
+    CallSignal = 5,
+    /// Body: an encoded [`crate::attachment::Manifest`].
+    AttachmentManifest = 6,
+    /// Body: an encoded [`crate::attachment::Chunk`].
+    AttachmentChunk = 7,
 }
 
 impl TryFrom<u8> for EnvelopeKind {
@@ -50,6 +58,9 @@ impl TryFrom<u8> for EnvelopeKind {
             2 => Self::GroupText,
             3 => Self::GroupInvite,
             4 => Self::CardShare,
+            5 => Self::CallSignal,
+            6 => Self::AttachmentManifest,
+            7 => Self::AttachmentChunk,
             _ => return Err(Error::Wire("unknown envelope kind")),
         })
     }

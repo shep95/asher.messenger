@@ -3484,6 +3484,8 @@ checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
 name = "meshlink"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm-siv",
+ "argon2",
  "base64",
  "hex",
  "libsignal-core",

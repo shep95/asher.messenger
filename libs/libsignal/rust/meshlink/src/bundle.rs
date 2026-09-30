@@ -51,6 +51,11 @@ pub const MAX_CLOCK_SKEW_SECS: u64 = 300;
 /// Creation times are rounded down to this many seconds so a bundle does not
 /// leak the exact moment it was written.
 pub const TIME_GRANULARITY_SECS: u64 = 60;
+/// A bundle whose lifetime is at most this is *urgent* (call signalling):
+/// nodes offer and send it ahead of everything else and do not hold it back
+/// for pacing. Priority is thus expressed by the TTL already on the wire;
+/// nothing new for a relay to trust.
+pub const URGENT_TTL_SECS: u32 = 120;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -154,6 +159,12 @@ impl Bundle {
 
     pub fn is_broadcast(&self) -> bool {
         self.dst == BROADCAST
+    }
+
+    /// Whether this bundle should go ahead of ordinary traffic (see
+    /// [`URGENT_TTL_SECS`]).
+    pub fn is_urgent(&self) -> bool {
+        self.kind == BundleKind::Message && self.ttl_secs <= URGENT_TTL_SECS
     }
 
     /// Whether a relay may pass this bundle on to another node.

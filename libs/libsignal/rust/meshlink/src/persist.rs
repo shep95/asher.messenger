@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-//! Durable mesh state: the carry store, contacts, groups and the ids of our
-//! own unacknowledged messages. Sessions are *not* here; they live in the
-//! app's Signal Protocol stores.
+//! Durable mesh state: the carry store, contacts, groups, the ids of our
+//! own unacknowledged messages, the nearby table and half-finished incoming
+//! attachments. Sessions are *not* here; they live in the app's Signal
+//! Protocol stores.
 //!
 //! The node snapshots its state through [`MeshPersistence`] whenever it has
 //! changed and a tick comes round, so a phone that reboots still carries what
@@ -15,15 +16,19 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::bundle::{AckCommitment, Bundle, BundleId};
+use crate::attachment::{Incoming, MAX_COMPLETED, MAX_TRANSFERS, TransferId};
+use crate::bundle::{AckCommitment, Bundle, BundleId, Fingerprint};
 use crate::group::MeshGroup;
 use crate::identity::ContactCard;
+use crate::nearby::NearbyTable;
 use crate::wire::{Reader, Writer};
 use crate::{Error, Result};
 
-const SNAPSHOT_VERSION: u8 = 1;
-/// A snapshot larger than this is refused on load (64 MiB).
-pub const MAX_SNAPSHOT_LEN: usize = 64 << 20;
+/// Version 1 ends after the outstanding acks; version 2 adds the nearby
+/// table and incoming attachments. Both are read.
+const SNAPSHOT_VERSION: u8 = 2;
+/// A snapshot larger than this is refused on load (128 MiB).
+pub const MAX_SNAPSHOT_LEN: usize = 128 << 20;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
@@ -35,6 +40,13 @@ pub struct Snapshot {
     /// Our own messages still awaiting an acknowledgement, with the
     /// commitment an acknowledgement must open.
     pub outstanding: Vec<(BundleId, AckCommitment)>,
+    /// Encoded [`NearbyTable`] (see [`NearbyTable::encode`]).
+    pub nearby: Vec<u8>,
+    /// Half-finished incoming attachments.
+    pub transfers: Vec<Incoming>,
+    /// Delivered attachments remembered for deduplication: sender,
+    /// transfer id, when.
+    pub completed_transfers: Vec<(Fingerprint, TransferId, u64)>,
 }
 
 impl Snapshot {
@@ -59,6 +71,22 @@ impl Snapshot {
         for (id, commit) in &self.outstanding {
             w.fixed(id).fixed(commit);
         }
+        // Version 2 additions.
+        let nearby = if self.nearby.is_empty() {
+            NearbyTable::new().encode()
+        } else {
+            self.nearby.clone()
+        };
+        w.u32(nearby.len() as u32).fixed(&nearby);
+        w.u32(self.transfers.len().min(MAX_TRANSFERS) as u32);
+        for t in self.transfers.iter().take(MAX_TRANSFERS) {
+            let enc = t.encode();
+            w.u32(enc.len() as u32).fixed(&enc);
+        }
+        w.u32(self.completed_transfers.len().min(MAX_COMPLETED) as u32);
+        for (from, transfer, at) in self.completed_transfers.iter().take(MAX_COMPLETED) {
+            w.fixed(from).fixed(transfer).u64(*at);
+        }
         w.finish()
     }
 
@@ -69,7 +97,8 @@ impl Snapshot {
             return Err(Error::TooLarge(data.len(), MAX_SNAPSHOT_LEN));
         }
         let mut r = Reader::new(data);
-        if r.u8()? != SNAPSHOT_VERSION {
+        let version = r.u8()?;
+        if version != 1 && version != SNAPSHOT_VERSION {
             return Err(Error::Wire("unsupported snapshot version"));
         }
         let mut snap = Snapshot::default();
@@ -101,6 +130,36 @@ impl Snapshot {
         let n = r.u32()? as usize;
         for _ in 0..n {
             snap.outstanding.push((r.fixed::<16>()?, r.fixed::<16>()?));
+        }
+        if version == 1 {
+            r.finish()?;
+            return Ok(snap);
+        }
+        let len = r.u32()? as usize;
+        let nearby = r.take(len)?;
+        // Validated here so a corrupt table is dropped, not fatal; an empty
+        // table stays the empty default.
+        if NearbyTable::decode(nearby).is_ok_and(|t| !t.is_empty()) {
+            snap.nearby = nearby.to_vec();
+        }
+        let n = r.u32()? as usize;
+        if n > MAX_TRANSFERS {
+            return Err(Error::Wire("too many transfers in snapshot"));
+        }
+        for _ in 0..n {
+            let len = r.u32()? as usize;
+            let rec = r.take(len)?;
+            if let Ok(t) = Incoming::decode(rec) {
+                snap.transfers.push(t);
+            }
+        }
+        let n = r.u32()? as usize;
+        if n > MAX_COMPLETED {
+            return Err(Error::Wire("too many completed transfers in snapshot"));
+        }
+        for _ in 0..n {
+            snap.completed_transfers
+                .push((r.fixed::<16>()?, r.fixed::<16>()?, r.u64()?));
         }
         r.finish()?;
         Ok(snap)
@@ -192,6 +251,7 @@ mod test {
             contacts: vec![(me.card().clone(), true)],
             groups: vec![group.clone()],
             outstanding: vec![(bundle.id(), [3; 16])],
+            ..Snapshot::default()
         };
         let dir = std::env::temp_dir().join(format!("meshlink-persist-{}", rand::random::<u64>()));
         let mut fp = FilePersistence::new(dir.join("state.bin"));
@@ -208,6 +268,46 @@ mod test {
         assert_eq!(back.contacts[0].0.fingerprint(), me.fingerprint());
         assert!(back.contacts[0].1);
         let _ = std::fs::remove_dir_all(dir);
+
+        // Version 2 sections round-trip too.
+        let mut nearby = crate::nearby::NearbyTable::new();
+        nearby.seen([7; 16], Some("Bob"), 42);
+        let (manifest, chunks) = crate::attachment::split(
+            crate::attachment::AttachmentKind::File,
+            "f",
+            "text/plain",
+            &[1, 2, 3],
+        )
+        .unwrap();
+        let incoming = crate::attachment::Incoming {
+            from: [8; 16],
+            transfer: manifest.transfer,
+            manifest: None,
+            parts: [(0u32, chunks[0].data.clone())].into_iter().collect(),
+            started_at: 7,
+        };
+        let v2 = Snapshot {
+            nearby: nearby.encode(),
+            transfers: vec![incoming],
+            completed_transfers: vec![([1; 16], [2; 16], 3)],
+            ..snap.clone()
+        };
+        let back = Snapshot::decode(&v2.encode()).unwrap();
+        assert_eq!(back.nearby, v2.nearby);
+        assert_eq!(back.transfers, v2.transfers);
+        assert_eq!(back.completed_transfers, v2.completed_transfers);
+        // A version 1 snapshot (no trailing sections) still loads.
+        let mut w = crate::wire::Writer::new();
+        w.u8(1)
+            .u32(0)
+            .u32(0)
+            .u32(0)
+            .u32(1)
+            .fixed(&[1; 16])
+            .fixed(&[2; 16]);
+        let old = Snapshot::decode(&w.finish()).unwrap();
+        assert_eq!(old.outstanding, vec![([1; 16], [2; 16])]);
+        assert!(old.nearby.is_empty());
 
         // A corrupt contact record is skipped, not fatal.
         let mut bad = snap.clone();

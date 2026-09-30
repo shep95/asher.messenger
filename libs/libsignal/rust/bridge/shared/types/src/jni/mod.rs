@@ -689,8 +689,11 @@ impl MessageOnlyExceptionJniError for DeviceTransferError {
 impl MessageOnlyExceptionJniError for MeshlinkError {
     fn exception_class(&self) -> ClassName<'static> {
         match self {
-            MeshlinkError::Wire(_) | MeshlinkError::TooLarge(_, _) => {
-                ClassName("java.lang.IllegalArgumentException")
+            MeshlinkError::Wire(_)
+            | MeshlinkError::TooLarge(_, _)
+            | MeshlinkError::IdentityMismatch => ClassName("java.lang.IllegalArgumentException"),
+            MeshlinkError::BadPassphrase => {
+                ClassName("org.signal.libsignal.protocol.InvalidMessageException")
             }
             MeshlinkError::BadCardSignature => {
                 ClassName("org.signal.libsignal.protocol.InvalidKeyException")

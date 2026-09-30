@@ -5449,6 +5449,11 @@ SignalFfiError* signal_mesh_identity_fingerprint(
   SignalOwnedBuffer* out,
   SignalConstPointerMeshIdentity identity
 );
+SignalFfiError* signal_mesh_identity_from_backup(
+  SignalMutPointerMeshIdentity* out,
+  const int8_t* passphrase,
+  SignalBorrowedBuffer blob
+);
 SignalFfiError* signal_mesh_identity_from_identity_key_pair(
   SignalMutPointerMeshIdentity* out,
   SignalBorrowedBuffer key_pair,
@@ -5522,6 +5527,11 @@ SignalFfiError* signal_mesh_node_detach_link(
   SignalConstPointerMeshNode node,
   uint64_t link
 );
+SignalFfiError* signal_mesh_node_export_backup(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  const int8_t* passphrase
+);
 SignalFfiError* signal_mesh_node_fingerprint(
   SignalOwnedBuffer* out,
   SignalConstPointerMeshNode node
@@ -5538,6 +5548,11 @@ SignalFfiError* signal_mesh_node_groups(
   SignalBytestringArray* out,
   SignalConstPointerMeshNode node
 );
+SignalFfiError* signal_mesh_node_import_backup(
+  SignalConstPointerMeshNode node,
+  const int8_t* passphrase,
+  SignalBorrowedBuffer blob
+);
 SignalFfiError* signal_mesh_node_link_read(
   SignalOwnedBuffer* out,
   SignalConstPointerMeshNode node,
@@ -5550,6 +5565,10 @@ SignalFfiError* signal_mesh_node_link_write(
   uint64_t link,
   SignalBorrowedBuffer frame
 );
+SignalFfiError* signal_mesh_node_nearby(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node
+);
 SignalFfiError* signal_mesh_node_new(
   SignalMutPointerMeshNode* out,
   SignalConstPointerMeshIdentity identity,
@@ -5561,6 +5580,21 @@ SignalFfiError* signal_mesh_node_next_event(
   SignalOwnedBuffer* out,
   SignalConstPointerMeshNode node,
   uint32_t timeout_ms
+);
+SignalFfiError* signal_mesh_node_prepare_attachment(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  uint8_t kind,
+  const int8_t* name,
+  const int8_t* mime,
+  SignalBorrowedBuffer data
+);
+SignalFfiError* signal_mesh_node_prepare_call_signal(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  SignalBorrowedBuffer data
 );
 SignalFfiError* signal_mesh_node_prepare_group_create(
   SignalOwnedBuffer* out,
@@ -5593,6 +5627,26 @@ SignalFfiError* signal_mesh_node_safety_number(
   SignalCStringPtr* out,
   SignalConstPointerMeshNode node,
   SignalBorrowedBuffer fingerprint
+);
+SignalFfiError* signal_mesh_node_self_test(
+  SignalCStringPtr* out,
+  SignalConstPointerMeshNode node,
+  uint32_t timeout_ms
+);
+SignalFfiError* signal_mesh_node_send_attachment(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  uint8_t kind,
+  const int8_t* name,
+  const int8_t* mime,
+  SignalBorrowedBuffer data
+);
+SignalFfiError* signal_mesh_node_send_call_signal(
+  SignalOwnedBuffer* out,
+  SignalConstPointerMeshNode node,
+  SignalBorrowedBuffer to,
+  SignalBorrowedBuffer data
 );
 SignalFfiError* signal_mesh_node_send_ciphertext(
   SignalOwnedBuffer* out,

@@ -7,9 +7,9 @@
 //! runtime and exposes blocking, poll-style calls (the apps drive it from a
 //! background thread), plus identity and contact-card handles.
 //!
-//! Events, prepared plaintexts and statistics cross the bridge as compact
-//! byte strings encoded with meshlink's wire writer; the platform layers
-//! decode them (see `docs/offline-mesh.md`, "Bridge encoding").
+//! Events, prepared plaintexts, the nearby list and statistics cross the
+//! bridge as compact byte strings encoded with meshlink's wire writer; the
+//! platform layers decode them (see `docs/offline-mesh.md`, "Bridge").
 
 use std::collections::HashMap;
 use std::panic::RefUnwindSafe;
@@ -19,8 +19,8 @@ use std::time::Duration;
 use meshlink::bundle::{AckCommitment, BundleId, Fingerprint};
 use meshlink::wire::Writer;
 use meshlink::{
-    ContactCard, Event, FilePersistence, GroupId, LinkId, LinkOptions, Node, NodeConfig, Prepared,
-    Result, Stats,
+    AttachmentKind, ContactCard, Event, FilePersistence, GroupId, LinkId, LinkOptions, Node,
+    NodeConfig, Prepared, Result, Stats,
 };
 use tokio::sync::{broadcast, mpsc};
 
@@ -294,6 +294,63 @@ impl MeshNode {
     pub fn flush(&self) -> Result<()> {
         self.block(self.node.flush())
     }
+
+    /// External-crypto mode: prepared list, manifest first then the chunks.
+    pub fn prepare_attachment(
+        &self,
+        to: Fingerprint,
+        kind: u8,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
+        let kind = AttachmentKind::try_from(kind)?;
+        let prepared = self.block(self.node.prepare_attachment(to, kind, name, mime, data))?;
+        Ok(encode_prepared(&prepared))
+    }
+
+    /// Internal-crypto mode: concatenated bundle ids, the manifest's first.
+    pub fn send_attachment(
+        &self,
+        to: Fingerprint,
+        kind: u8,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
+        let kind = AttachmentKind::try_from(kind)?;
+        let ids = self.block(self.node.send_attachment(to, kind, name, mime, data))?;
+        Ok(ids.concat())
+    }
+
+    /// External-crypto mode: prepared list with one item.
+    pub fn prepare_call_signal(&self, to: Fingerprint, data: &[u8]) -> Result<Vec<u8>> {
+        let p = self.block(self.node.prepare_call_signal(to, data))?;
+        Ok(encode_prepared(&[p]))
+    }
+
+    pub fn send_call_signal(&self, to: Fingerprint, data: &[u8]) -> Result<BundleId> {
+        self.block(self.node.send_call_signal(to, data))
+    }
+
+    pub fn nearby(&self) -> Vec<u8> {
+        meshlink::nearby::encode_nearby(&self.block(self.node.nearby()))
+    }
+
+    pub fn export_backup(&self, passphrase: &str) -> Result<Vec<u8>> {
+        self.block(self.node.export_backup(passphrase))
+    }
+
+    pub fn import_backup(&self, passphrase: &str, blob: &[u8]) -> Result<()> {
+        self.block(self.node.import_backup(passphrase, blob))
+    }
+
+    pub fn self_test(&self, timeout_ms: u32) -> String {
+        self.block(
+            self.node
+                .self_test(Duration::from_millis(u64::from(timeout_ms))),
+        )
+    }
 }
 
 /// Event tags on the bridge.
@@ -306,6 +363,9 @@ pub mod event_tag {
     pub const DELIVERED: u8 = 6;
     pub const NEIGHBOUR: u8 = 7;
     pub const LINK_CLOSED: u8 = 8;
+    pub const ATTACHMENT_PROGRESS: u8 = 9;
+    pub const ATTACHMENT: u8 = 10;
+    pub const CALL_SIGNAL: u8 = 11;
 }
 
 /// `[tag u8]` then tag-specific fixed fields; variable fields are u16
@@ -365,6 +425,45 @@ pub fn encode_event(event: &Event) -> Vec<u8> {
         }
         Event::LinkClosed { link } => {
             w.u8(event_tag::LINK_CLOSED).u64(*link);
+        }
+        Event::AttachmentProgress {
+            from,
+            transfer,
+            received,
+            total,
+        } => {
+            w.u8(event_tag::ATTACHMENT_PROGRESS)
+                .fixed(from)
+                .fixed(transfer)
+                .u32(*received)
+                .u32(*total);
+        }
+        Event::Attachment {
+            from,
+            transfer,
+            kind,
+            name,
+            mime,
+            data,
+        } => {
+            w.u8(event_tag::ATTACHMENT)
+                .fixed(from)
+                .fixed(transfer)
+                .u8(*kind)
+                .bytes(name.as_bytes())
+                .bytes(mime.as_bytes())
+                .u32(u32::try_from(data.len()).expect("bounded by MAX_ATTACHMENT_BYTES"))
+                .fixed(data);
+        }
+        Event::CallSignal {
+            from,
+            bundle_id,
+            data,
+        } => {
+            w.u8(event_tag::CALL_SIGNAL)
+                .fixed(from)
+                .fixed(bundle_id)
+                .bytes(data);
         }
     }
     w.finish()

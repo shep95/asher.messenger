@@ -28,11 +28,19 @@
 //!   limit). A node can therefore carry a message across a gap and deliver it
 //!   hours later.
 //!
+//! * **Attachments, call signalling, nearby discovery and encrypted backups**
+//!   ride the same bundles: files are split into chunks that each fit one
+//!   bundle, call signalling messages are short-lived urgent bundles, every
+//!   card seen on the air is remembered for a day, and the whole state can be
+//!   sealed under a passphrase ([`backup`]).
+//!
 //! What it does not do: reach a satellite from a phone radio, or replace the
-//! server for groups, storage or discovery. Gateways (a node with an Iridium
+//! server for groups. Gateways (a node with an Iridium
 //! SBD modem or a LoRa satellite ground station) attach as ordinary links; see
 //! `docs/offline-mesh.md`.
 
+pub mod attachment;
+pub mod backup;
 pub mod bundle;
 pub mod envelope;
 pub mod frame;
@@ -40,6 +48,7 @@ pub mod group;
 pub mod identity;
 pub mod kiss;
 pub mod limits;
+pub mod nearby;
 pub mod node;
 pub mod persist;
 pub mod store;
@@ -47,9 +56,11 @@ pub mod stores;
 pub mod transport;
 pub mod wire;
 
+pub use attachment::{AttachmentKind, TransferId};
 pub use bundle::{BROADCAST, Bundle, BundleId, BundleKind, Fingerprint};
 pub use group::{GroupId, MeshGroup};
 pub use identity::{ContactCard, MeshIdentity, safety_number};
+pub use nearby::Nearby;
 pub use node::{Crypto, Event, LinkId, Node, NodeBuilder, NodeConfig, Prepared, Stats};
 pub use persist::{FilePersistence, MeshPersistence, NoPersistence, Snapshot};
 pub use store::BundleStore;
@@ -69,6 +80,10 @@ pub enum Error {
     TooLarge(usize, usize),
     #[error("link {0} is gone")]
     LinkClosed(u64),
+    #[error("wrong passphrase or corrupt backup")]
+    BadPassphrase,
+    #[error("the backup belongs to a different identity")]
+    IdentityMismatch,
     #[error(transparent)]
     Protocol(#[from] libsignal_protocol::SignalProtocolError),
     #[error(transparent)]

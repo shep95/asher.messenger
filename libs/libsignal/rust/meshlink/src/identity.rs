@@ -390,6 +390,19 @@ impl MeshIdentity {
         )
     }
 
+    /// Recovers the identity from a passphrase-encrypted backup (see
+    /// [`crate::backup`]); the first step of restoring a node, since the
+    /// node is built around its identity. A wrong passphrase is
+    /// [`Error::BadPassphrase`].
+    pub fn from_backup<R: Rng + CryptoRng>(
+        passphrase: &str,
+        blob: &[u8],
+        csprng: &mut R,
+    ) -> Result<Self> {
+        let backup = crate::backup::Backup::open(passphrase, blob)?;
+        Self::import(&backup.identity, csprng)
+    }
+
     /// Re-issues the card with a new name (and a fresh issue time so peers
     /// accept it as newer).
     pub fn rename<R: Rng + CryptoRng>(&mut self, name: &str, csprng: &mut R) -> Result<()> {

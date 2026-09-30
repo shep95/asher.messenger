@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use libsignal_protocol::{
     CiphertextMessage, CiphertextMessageType, InMemSignalProtocolStore, PreKeySignalMessage,
@@ -25,6 +25,8 @@ use log::{debug, info, warn};
 use rand::TryRngCore as _;
 use tokio::sync::{Mutex, broadcast, mpsc};
 
+use crate::attachment::{self, AttachmentKind, Chunk, Manifest, Progress, Reassembly, TransferId};
+use crate::backup::Backup;
 use crate::bundle::{
     AckCommitment, BROADCAST, Bundle, BundleId, BundleKind, Fingerprint, ack_commitment, ack_opens,
     ack_payload, fingerprint_hex, parse_ack,
@@ -34,6 +36,7 @@ use crate::frame::{Frame, Reassembler, chunk_ids, fragment_bundle};
 use crate::group::{GroupId, MeshGroup};
 use crate::identity::{ContactCard, MeshIdentity, safety_number};
 use crate::limits::{Bucket, KeyedLimiter};
+use crate::nearby::{Nearby, NearbyTable};
 use crate::persist::{MeshPersistence, NoPersistence, Snapshot};
 use crate::store::BundleStore;
 use crate::stores::ProtocolStores;
@@ -55,6 +58,11 @@ const FULL_SUMMARY_EVERY: u64 = 4;
 /// in total.
 const MAX_DEFERRED_PER_SRC: usize = 32;
 const MAX_DEFERRED: usize = 512;
+/// Commitments of prepared call signals waiting for the app's ciphertext;
+/// bounded so a forgetful app cannot grow it.
+const MAX_URGENT_COMMITS: usize = 256;
+/// Events buffered for a slow subscriber before it starts missing some.
+const EVENT_QUEUE: usize = 4096;
 
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
@@ -90,6 +98,9 @@ pub struct NodeConfig {
     /// Deliver messages from senders whose card we do not hold (Signal's
     /// "message request" behaviour). The session is still authenticated.
     pub accept_unknown_senders: bool,
+    /// Lifetime of call signalling bundles (offers, answers, candidates,
+    /// hangups); at most [`crate::bundle::URGENT_TTL_SECS`] to stay urgent.
+    pub call_signal_ttl_secs: u32,
 }
 
 impl Default for NodeConfig {
@@ -101,16 +112,17 @@ impl Default for NodeConfig {
             beacon_ttl_secs: 24 * 3600,
             beacon_max_hops: 3,
             anti_entropy_interval: Duration::from_secs(15),
-            store_bytes: 8 * 1024 * 1024,
+            store_bytes: 16 * 1024 * 1024,
             store_src_quota_bytes: 1024 * 1024,
             link_queue: 1024,
             reassembly_timeout_secs: 120,
-            ingest_per_src: (10.0, 600.0),
-            decrypt_per_src: (5.0, 200.0),
+            ingest_per_src: (50.0, 1000.0),
+            decrypt_per_src: (20.0, 600.0),
             beacons_per_src: (0.05, 3.0),
             max_learned_contacts: 10_000,
             max_groups: 1_000,
             accept_unknown_senders: true,
+            call_signal_ttl_secs: 90,
         }
     }
 }
@@ -157,6 +169,30 @@ pub enum Event {
     },
     /// A link went away.
     LinkClosed { link: LinkId },
+    /// A call signalling message for us (opaque app bytes).
+    CallSignal {
+        from: Fingerprint,
+        bundle_id: BundleId,
+        data: Vec<u8>,
+    },
+    /// A chunk of an incoming attachment arrived: `received` of `total`
+    /// chunks are in (`total` is 0 until the manifest has arrived).
+    AttachmentProgress {
+        from: Fingerprint,
+        transfer: TransferId,
+        received: u32,
+        total: u32,
+    },
+    /// A complete attachment, verified against its manifest's SHA-256.
+    Attachment {
+        from: Fingerprint,
+        transfer: TransferId,
+        /// [`AttachmentKind`] as a byte: 1 file, 2 image, 3 voice note.
+        kind: u8,
+        name: String,
+        mime: String,
+        data: Vec<u8>,
+    },
 }
 
 /// Who holds the Signal sessions.
@@ -243,6 +279,16 @@ struct Inner {
     deferred: HashMap<Fingerprint, Vec<Bundle>>,
     /// External-crypto mode: messages handed to the app, by bundle id.
     awaiting_app: HashMap<BundleId, Bundle>,
+    /// Commitments of prepared call signals, so the app's ciphertext for
+    /// them gets the short lifetime and the priority.
+    urgent_commits: HashSet<AckCommitment>,
+    /// Who has been seen on the mesh lately.
+    nearby: NearbyTable,
+    /// Half-finished incoming attachments.
+    transfers: Reassembly,
+    /// Fingerprints whose cards and hellos are not learned or reported
+    /// (the throwaway peers of a running self-test).
+    quarantine: HashSet<Fingerprint>,
 }
 
 /// Cheaply clonable handle to a running node.
@@ -342,8 +388,17 @@ impl NodeBuilder {
         }
         let groups = snapshot.groups.into_iter().map(|g| (g.id, g)).collect();
         let outstanding = snapshot.outstanding.into_iter().collect();
+        let mut nearby = NearbyTable::decode(&snapshot.nearby).unwrap_or_default();
+        nearby.expire(now);
+        let mut transfers = Reassembly::new();
+        for (from, transfer, at) in snapshot.completed_transfers {
+            transfers.restore_completed(from, transfer, at);
+        }
+        for t in snapshot.transfers {
+            transfers.restore(t, now);
+        }
 
-        let (events, _) = broadcast::channel(1024);
+        let (events, _) = broadcast::channel(EVENT_QUEUE);
         let interval = config.anti_entropy_interval;
         let inner = Inner {
             identity,
@@ -371,6 +426,10 @@ impl NodeBuilder {
             ticks: 0,
             deferred,
             awaiting_app: HashMap::new(),
+            urgent_commits: HashSet::new(),
+            nearby,
+            transfers,
+            quarantine: HashSet::new(),
             config,
         };
         let node = Node {
@@ -498,6 +557,11 @@ impl Node {
         self.inner.lock().await.store.contains(&id)
     }
 
+    /// The bundle the carry store holds under `id`, if any.
+    pub async fn bundle(&self, id: BundleId) -> Option<Bundle> {
+        self.inner.lock().await.store.get(&id).cloned()
+    }
+
     /// Whether `id` has been processed (delivered, carried or acknowledged).
     pub async fn has_seen(&self, id: BundleId) -> bool {
         self.inner.lock().await.store.has_seen(&id)
@@ -616,7 +680,152 @@ impl Node {
         payload.push(message_type);
         payload.extend_from_slice(ciphertext);
         let mut inner = self.inner.lock().await;
-        Self::send_payload(&mut inner, to, commit, payload)
+        let ttl = if inner.urgent_commits.remove(&commit) {
+            inner.config.call_signal_ttl_secs
+        } else {
+            inner.config.message_ttl_secs
+        };
+        Self::send_payload(&mut inner, to, commit, payload, ttl)
+    }
+
+    /// Splits an attachment into a manifest plus chunks, each a plaintext
+    /// the app must encrypt for `to` and send in order (external-crypto
+    /// mode). Up to [`attachment::MAX_ATTACHMENT_BYTES`].
+    pub async fn prepare_attachment(
+        &self,
+        to: Fingerprint,
+        kind: AttachmentKind,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<Vec<Prepared>> {
+        let inner = self.inner.lock().await;
+        Self::plan_attachment(&inner, to, kind, name, mime, data)
+    }
+
+    /// Internal-crypto mode: encrypts and sends an attachment. Returns one
+    /// bundle id per piece; the first is the manifest's.
+    pub async fn send_attachment(
+        &self,
+        to: Fingerprint,
+        kind: AttachmentKind,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<Vec<BundleId>> {
+        let mut inner = self.inner.lock().await;
+        let prepared = Self::plan_attachment(&inner, to, kind, name, mime, data)?;
+        let mut ids = Vec::with_capacity(prepared.len());
+        for p in &prepared {
+            ids.push(Self::encrypt_and_send(&mut inner, p)?);
+        }
+        Ok(ids)
+    }
+
+    /// External-crypto mode: a call signalling message (opaque to meshlink)
+    /// for `to`, sent with a short lifetime and ahead of other traffic once
+    /// the app passes its ciphertext to [`Node::send_ciphertext`].
+    pub async fn prepare_call_signal(&self, to: Fingerprint, data: &[u8]) -> Result<Prepared> {
+        let envelope = Envelope::new(EnvelopeKind::CallSignal, data.to_vec())?;
+        let mut inner = self.inner.lock().await;
+        let prepared = Self::prepare(&inner, to, &envelope)?;
+        if inner.urgent_commits.len() >= MAX_URGENT_COMMITS {
+            inner.urgent_commits.clear();
+        }
+        inner.urgent_commits.insert(prepared.commit);
+        Ok(prepared)
+    }
+
+    /// Internal-crypto mode: encrypts and sends a call signalling message.
+    pub async fn send_call_signal(&self, to: Fingerprint, data: &[u8]) -> Result<BundleId> {
+        let envelope = Envelope::new(EnvelopeKind::CallSignal, data.to_vec())?;
+        let mut inner = self.inner.lock().await;
+        let prepared = Self::prepare(&inner, to, &envelope)?;
+        let ttl = inner.config.call_signal_ttl_secs;
+        Self::encrypt_and_send_with_ttl(&mut inner, &prepared, ttl)
+    }
+
+    /// Everyone whose card or hello was seen on the mesh in the last day,
+    /// most recent first, whether or not they are saved contacts.
+    pub async fn nearby(&self) -> Vec<Nearby> {
+        let inner = self.inner.lock().await;
+        let neighbours: HashSet<Fingerprint> =
+            inner.links.values().filter_map(|l| l.peer).collect();
+        inner
+            .nearby
+            .list(crate::now_secs(), |fp| neighbours.contains(fp))
+    }
+
+    /// Identity plus the whole snapshot, sealed under `passphrase` (see
+    /// [`crate::backup`]).
+    pub async fn export_backup(&self, passphrase: &str) -> Result<Vec<u8>> {
+        let backup = {
+            let inner = self.inner.lock().await;
+            Backup {
+                identity: inner.identity.export()?,
+                snapshot: Self::snapshot(&inner),
+            }
+        };
+        // Key derivation is deliberately slow; do it without the lock.
+        backup.seal(passphrase)
+    }
+
+    /// Merges a backup made by this same identity into the running node:
+    /// contacts, groups, carried bundles, outstanding acks, nearby list and
+    /// half-finished attachments. A backup of another identity is
+    /// [`Error::IdentityMismatch`]; a wrong passphrase [`Error::BadPassphrase`].
+    pub async fn import_backup(&self, passphrase: &str, blob: &[u8]) -> Result<()> {
+        let backup = Backup::open(passphrase, blob)?;
+        let mut rng = rand::rngs::OsRng.unwrap_err();
+        let identity = MeshIdentity::import(&backup.identity, &mut rng)?;
+        let mut inner = self.inner.lock().await;
+        let inner = &mut *inner;
+        let me = inner.identity.fingerprint();
+        if identity.fingerprint() != me {
+            return Err(Error::IdentityMismatch);
+        }
+        let now = crate::now_secs();
+        let snap = backup.snapshot;
+        for (card, pinned) in snap.contacts {
+            if card.verify().is_ok() && card.fingerprint() != me {
+                Self::learn_contact(inner, card, pinned, now);
+            }
+        }
+        for g in snap.groups {
+            let replace = match inner.groups.get(&g.id) {
+                None => inner.groups.len() < inner.config.max_groups,
+                Some(old) => old.created_by == g.created_by && old.created_at < g.created_at,
+            };
+            if replace {
+                inner.groups.insert(g.id, g);
+            }
+        }
+        for (id, commit) in snap.outstanding {
+            inner.outstanding.entry(id).or_insert(commit);
+        }
+        for b in snap.bundles {
+            if b.validate(now).is_err() || b.is_expired(now) || inner.store.has_seen(&b.id()) {
+                continue;
+            }
+            if b.kind == BundleKind::Message && b.dst == me {
+                inner.store.mark_seen(b.id(), now);
+                Self::defer_bundle(inner, b);
+            } else {
+                inner.store.insert(b, now);
+            }
+        }
+        if let Ok(table) = NearbyTable::decode(&snap.nearby) {
+            inner.nearby.merge(&table);
+        }
+        for (from, transfer, at) in snap.completed_transfers {
+            inner.transfers.restore_completed(from, transfer, at);
+        }
+        for t in snap.transfers {
+            inner.transfers.restore(t, now);
+        }
+        inner.dirty = true;
+        self.retry_deferred(inner, None, now);
+        Ok(())
     }
 
     /// Creates a group and tells every member about it and about each other.
@@ -691,6 +900,306 @@ impl Node {
         Ok(())
     }
 
+    /// A software end-to-end test with no hardware: throwaway peers with
+    /// fresh identities are attached to this node through in-memory pipes
+    /// and a card broadcast and a text are exchanged both ways. An
+    /// internal-crypto node talks to one peer itself; an external-crypto
+    /// node (the apps, whose sessions live outside meshlink) relays between
+    /// two peers, which exercises every part of it except the app's own
+    /// encryption. Returns a multi-line "PASS ..."/"FAIL ..." report and
+    /// never fails for a test failure. Nothing learned during the test is
+    /// kept: the peers' cards are quarantined, their bundles removed.
+    pub async fn self_test(&self, timeout: Duration) -> String {
+        let started = Instant::now();
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut lines: Vec<String> = Vec::new();
+        let mut passed = 0usize;
+        let mut failed = 0usize;
+        let mut check =
+            |lines: &mut Vec<String>, what: &str, r: std::result::Result<(), String>| {
+                let ms = started.elapsed().as_millis();
+                match r {
+                    Ok(()) => {
+                        passed += 1;
+                        lines.push(format!("PASS {what} ({ms} ms)"));
+                        true
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        lines.push(format!("FAIL {what}: {e} ({ms} ms)"));
+                        false
+                    }
+                }
+            };
+
+        let (me, external, interval) = {
+            let inner = self.inner.lock().await;
+            (
+                inner.identity.fingerprint(),
+                matches!(inner.crypto, Crypto::External),
+                inner.config.anti_entropy_interval,
+            )
+        };
+        lines.push(format!(
+            "meshlink self-test: {} node {}",
+            if external {
+                "external-crypto"
+            } else {
+                "internal-crypto"
+            },
+            fingerprint_hex(&me)
+        ));
+        let peer_config = NodeConfig {
+            anti_entropy_interval: interval.min(Duration::from_millis(500)),
+            message_ttl_secs: 120,
+            ack_ttl_secs: 120,
+            beacon_ttl_secs: 120,
+            beacon_max_hops: 2,
+            max_hops: 2,
+            ..NodeConfig::default()
+        };
+        let make_peer = |name: &str| {
+            let mut rng = rand::rngs::OsRng.unwrap_err();
+            MeshIdentity::generate(name, &mut rng)
+                .map_err(|e| e.to_string())
+                .and_then(|id| {
+                    Node::builder(id)
+                        .config(peer_config.clone())
+                        .start()
+                        .map_err(|e| e.to_string())
+                })
+        };
+        let a = match make_peer("self-test peer A") {
+            Ok(n) => n,
+            Err(e) => {
+                check(&mut lines, "create test peer", Err(e));
+                lines.push("RESULT: FAIL (0 checks passed)".into());
+                return lines.join("\n");
+            }
+        };
+        let a_fp = a.fingerprint().await;
+        let mut my_events = self.subscribe();
+        let mut a_events = a.subscribe();
+        self.inner.lock().await.quarantine.insert(a_fp);
+        // Bundles of the test that are ours (our beacon, our acks for the
+        // peers' texts) are scrubbed at the end by id.
+        let mut scrub: Vec<BundleId> = Vec::new();
+
+        if external {
+            let b = match make_peer("self-test peer B") {
+                Ok(n) => n,
+                Err(e) => {
+                    check(&mut lines, "create test peer", Err(e));
+                    self.self_test_cleanup(&[a_fp], &scrub).await;
+                    lines.push("RESULT: FAIL (0 checks passed)".into());
+                    return lines.join("\n");
+                }
+            };
+            let b_fp = b.fingerprint().await;
+            self.inner.lock().await.quarantine.insert(b_fp);
+            let mut b_events = b.subscribe();
+            let link_a = crate::transport::memory::MemoryLink::connect(self, &a, 1500);
+            let link_b = crate::transport::memory::MemoryLink::connect(self, &b, 1500);
+
+            let hello = wait_event(&mut my_events, deadline, |e| {
+                matches!(e, Event::Neighbour { fingerprint, .. } if *fingerprint == a_fp || *fingerprint == b_fp)
+                    .then_some(())
+            })
+            .await;
+            let hello = match hello {
+                Ok(()) => wait_event(&mut my_events, deadline, |e| {
+                    matches!(e, Event::Neighbour { fingerprint, .. } if *fingerprint == a_fp || *fingerprint == b_fp)
+                        .then_some(())
+                })
+                .await,
+                Err(e) => Err(e),
+            };
+            check(&mut lines, "links up: hello from both test peers", hello);
+
+            // A's card reaches B only through this node.
+            let bc = match a.broadcast_card().await {
+                Ok(_) => {
+                    wait_event(&mut b_events, deadline, |e| {
+                        matches!(e, Event::Contact { fingerprint } if *fingerprint == a_fp)
+                            .then_some(())
+                    })
+                    .await
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(&mut lines, "card broadcast relayed through this node", bc);
+
+            let _ = b.add_contact(a.card().await).await;
+            let _ = a.add_contact(b.card().await).await;
+            let ab = match a.send_text(b_fp, b"self-test ping").await {
+                Ok(id) => {
+                    scrub.push(id);
+                    let got = wait_event(&mut b_events, deadline, |e| {
+                        matches!(e, Event::Message { plaintext, from, .. } if *from == a_fp && plaintext == b"self-test ping")
+                            .then_some(())
+                    })
+                    .await;
+                    match got {
+                        Ok(()) => {
+                            wait_event(&mut a_events, deadline, |e| {
+                                matches!(e, Event::Delivered { bundle_id } if *bundle_id == id)
+                                    .then_some(())
+                            })
+                            .await
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(&mut lines, "text A -> B relayed and acknowledged", ab);
+            let ba = match b.send_text(a_fp, b"self-test pong").await {
+                Ok(id) => {
+                    scrub.push(id);
+                    let got = wait_event(&mut a_events, deadline, |e| {
+                        matches!(e, Event::Message { plaintext, from, .. } if *from == b_fp && plaintext == b"self-test pong")
+                            .then_some(())
+                    })
+                    .await;
+                    match got {
+                        Ok(()) => {
+                            wait_event(&mut b_events, deadline, |e| {
+                                matches!(e, Event::Delivered { bundle_id } if *bundle_id == id)
+                                    .then_some(())
+                            })
+                            .await
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(&mut lines, "text B -> A relayed and acknowledged", ba);
+            let forwarded = self.stats().await.bundles_forwarded;
+            check(
+                &mut lines,
+                "this node carried the test bundles",
+                if forwarded > 0 {
+                    Ok(())
+                } else {
+                    Err("nothing forwarded".into())
+                },
+            );
+            link_a.disconnect();
+            link_b.disconnect();
+            self.self_test_cleanup(&[a_fp, b_fp], &scrub).await;
+        } else {
+            let link = crate::transport::memory::MemoryLink::connect(self, &a, 1500);
+            let hello = wait_event(&mut my_events, deadline, |e| {
+                matches!(e, Event::Neighbour { fingerprint, .. } if *fingerprint == a_fp)
+                    .then_some(())
+            })
+            .await;
+            check(&mut lines, "link up: hello from the test peer", hello);
+
+            // Our card reaches the peer over the air; the peer's card we take
+            // directly (it is quarantined so nothing sticks).
+            let bc = match self.broadcast_card().await {
+                Ok(id) => {
+                    scrub.push(id);
+                    wait_event(&mut a_events, deadline, |e| {
+                        matches!(e, Event::Contact { fingerprint } if *fingerprint == me)
+                            .then_some(())
+                    })
+                    .await
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(&mut lines, "card broadcast received by the test peer", bc);
+            {
+                let mut inner = self.inner.lock().await;
+                Self::learn_contact(&mut inner, a.card().await, false, crate::now_secs());
+            }
+            let out = match self.send_text(a_fp, b"self-test ping").await {
+                Ok(id) => {
+                    scrub.push(id);
+                    let got = wait_event(&mut a_events, deadline, |e| {
+                        matches!(e, Event::Message { plaintext, .. } if plaintext == b"self-test ping")
+                            .then_some(())
+                    })
+                    .await;
+                    match got {
+                        Ok(()) => {
+                            wait_event(&mut my_events, deadline, |e| {
+                                matches!(e, Event::Delivered { bundle_id } if *bundle_id == id)
+                                    .then_some(())
+                            })
+                            .await
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(
+                &mut lines,
+                "text to the test peer delivered and acknowledged",
+                out,
+            );
+            let back = match a.send_text(me, b"self-test pong").await {
+                Ok(id) => {
+                    scrub.push(id);
+                    wait_event(&mut my_events, deadline, |e| {
+                        matches!(e, Event::Message { plaintext, from, .. } if *from == a_fp && plaintext == b"self-test pong")
+                            .then_some(())
+                    })
+                    .await
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            check(&mut lines, "text from the test peer decrypted", back);
+            link.disconnect();
+            self.self_test_cleanup(&[a_fp], &scrub).await;
+        }
+        let verdict = if failed == 0 { "PASS" } else { "FAIL" };
+        lines.push(format!(
+            "RESULT: {verdict} ({passed}/{} checks passed in {} ms)",
+            passed + failed,
+            started.elapsed().as_millis()
+        ));
+        lines.join("\n")
+    }
+
+    /// Removes every trace of the self-test peers: their cards, everything
+    /// from or to them, and our own bundles of the test (`scrub`: our beacon
+    /// and texts, plus the acks we issued for the peers' texts).
+    async fn self_test_cleanup(&self, peers: &[Fingerprint], scrub: &[BundleId]) {
+        let mut inner = self.inner.lock().await;
+        let inner = &mut *inner;
+        for fp in peers {
+            inner.quarantine.remove(fp);
+            inner.contacts.remove(fp);
+            inner.nearby.forget(fp);
+            inner.transfers.forget(fp);
+            inner.deferred.remove(fp);
+        }
+        let victims: Vec<BundleId> = inner
+            .store
+            .iter()
+            .filter(|b| {
+                peers.contains(&b.src)
+                    || peers.contains(&b.dst)
+                    || scrub.contains(&b.id())
+                    || (b.kind == BundleKind::Ack
+                        && parse_ack(&b.payload)
+                            .map(|(acked, _)| scrub.contains(&acked))
+                            .unwrap_or(false))
+            })
+            .map(Bundle::id)
+            .collect();
+        for id in &victims {
+            inner.store.remove(id);
+        }
+        inner.outstanding.retain(|id, _| !victims.contains(id));
+        inner.awaiting_app.retain(|_, b| !peers.contains(&b.src));
+        inner.dirty = true;
+    }
+
     /// Broadcasts our contact card so nearby nodes can message us without an
     /// out-of-band exchange.
     pub async fn broadcast_card(&self) -> Result<BundleId> {
@@ -732,6 +1241,9 @@ impl Node {
         for link in inner.links.values_mut() {
             link.reassembler.expire(now);
         }
+        if inner.nearby.expire(now) > 0 || inner.transfers.expire(now) > 0 {
+            inner.dirty = true;
+        }
         inner.ticks += 1;
         self.retry_deferred(inner, None, now);
         let full = inner.ticks % FULL_SUMMARY_EVERY == 0;
@@ -749,7 +1261,15 @@ impl Node {
         if !inner.dirty {
             return Ok(());
         }
-        let snapshot = Snapshot {
+        let snapshot = Self::snapshot(inner);
+        inner.persistence.save(&snapshot)?;
+        inner.dirty = false;
+        Ok(())
+    }
+
+    /// Everything durable about the node, as one snapshot.
+    fn snapshot(inner: &Inner) -> Snapshot {
+        Snapshot {
             bundles: inner
                 .store
                 .iter()
@@ -764,10 +1284,14 @@ impl Node {
                 .collect(),
             groups: inner.groups.values().cloned().collect(),
             outstanding: inner.outstanding.iter().map(|(k, v)| (*k, *v)).collect(),
-        };
-        inner.persistence.save(&snapshot)?;
-        inner.dirty = false;
-        Ok(())
+            nearby: inner.nearby.encode(),
+            transfers: inner.transfers.iter().cloned().collect(),
+            completed_transfers: inner
+                .transfers
+                .completed()
+                .map(|(f, t, at)| (*f, *t, *at))
+                .collect(),
+        }
     }
 
     /// Builds the plaintext for `to` (checks we hold a card) and its commitment.
@@ -785,6 +1309,15 @@ impl Node {
     /// Internal-crypto mode: encrypts a prepared plaintext with our stores
     /// (starting the session from the card if needed) and sends it.
     fn encrypt_and_send(inner: &mut Inner, prepared: &Prepared) -> Result<BundleId> {
+        let ttl = inner.config.message_ttl_secs;
+        Self::encrypt_and_send_with_ttl(inner, prepared, ttl)
+    }
+
+    fn encrypt_and_send_with_ttl(
+        inner: &mut Inner,
+        prepared: &Prepared,
+        ttl_secs: u32,
+    ) -> Result<BundleId> {
         let mut rng = rand::rngs::OsRng.unwrap_err();
         let card = inner
             .contacts
@@ -823,7 +1356,7 @@ impl Node {
         let mut payload = Vec::with_capacity(ct.serialize().len() + 1);
         payload.push(ct.message_type() as u8);
         payload.extend_from_slice(ct.serialize());
-        Self::send_payload(inner, prepared.to, prepared.commit, payload)
+        Self::send_payload(inner, prepared.to, prepared.commit, payload, ttl_secs)
     }
 
     /// Wraps ciphertext in a message bundle, remembers it as outstanding and
@@ -833,12 +1366,13 @@ impl Node {
         to: Fingerprint,
         commit: AckCommitment,
         payload: Vec<u8>,
+        ttl_secs: u32,
     ) -> Result<BundleId> {
         let bundle = Bundle::new(
             BundleKind::Message,
             inner.identity.fingerprint(),
             to,
-            inner.config.message_ttl_secs,
+            ttl_secs,
             inner.config.max_hops,
             commit,
             payload,
@@ -911,6 +1445,28 @@ impl Node {
         Ok(out)
     }
 
+    fn plan_attachment(
+        inner: &Inner,
+        to: Fingerprint,
+        kind: AttachmentKind,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<Vec<Prepared>> {
+        if !inner.contacts.contains_key(&to) {
+            return Err(Error::UnknownContact(fingerprint_hex(&to)));
+        }
+        let (manifest, chunks) = attachment::split(kind, name, mime, data)?;
+        let mut out = Vec::with_capacity(chunks.len() + 1);
+        let env = Envelope::new(EnvelopeKind::AttachmentManifest, manifest.encode())?;
+        out.push(Self::prepare(inner, to, &env)?);
+        for c in &chunks {
+            let env = Envelope::new(EnvelopeKind::AttachmentChunk, c.encode())?;
+            out.push(Self::prepare(inner, to, &env)?);
+        }
+        Ok(out)
+    }
+
     async fn on_link_up(&self, id: LinkId) {
         let mut inner = self.inner.lock().await;
         let inner = &mut *inner;
@@ -937,7 +1493,14 @@ impl Node {
                     .map(Bundle::id),
             );
         }
+        Self::urgent_first(inner, &mut ids);
         ids
+    }
+
+    /// Orders ids so urgent bundles (call signalling) are offered and sent
+    /// before everything else.
+    fn urgent_first(inner: &Inner, ids: &mut [BundleId]) {
+        ids.sort_by_key(|id| !inner.store.get(id).map(Bundle::is_urgent).unwrap_or(false));
     }
 
     /// Whether `bundle` may be sent on `link` now.
@@ -978,6 +1541,16 @@ impl Node {
                 if let Some(l) = inner.links.get_mut(&link_id) {
                     l.peer = Some(fingerprint);
                 }
+                if fingerprint != inner.identity.fingerprint()
+                    && !inner.quarantine.contains(&fingerprint)
+                {
+                    let name = inner
+                        .contacts
+                        .get(&fingerprint)
+                        .map(|c| c.card.name.clone());
+                    inner.nearby.seen(fingerprint, name.as_deref(), now);
+                    inner.dirty = true;
+                }
                 let _ = self.events.send(Event::Neighbour {
                     link: link_id,
                     fingerprint,
@@ -1002,7 +1575,8 @@ impl Node {
                     }
                 }
             }
-            Frame::Want { ids } => {
+            Frame::Want { mut ids } => {
+                Self::urgent_first(inner, &mut ids);
                 for id in ids {
                     if let Some(b) = inner.store.get(&id).cloned() {
                         if Self::may_send(inner, link_id, &b, now) {
@@ -1075,11 +1649,19 @@ impl Node {
 
         match bundle.kind {
             BundleKind::Message if bundle.dst == me => {
-                inner.store.mark_seen(id, now);
-                if !inner.decrypt_limit.take(&bundle.src, 1.0, now_ms) {
-                    Self::defer_bundle(inner, bundle);
-                    return Ok(());
+                // Refused here (before the id is marked seen) the bundle stays
+                // unseen and the neighbour re-offers it in a later summary:
+                // back-pressure, not loss. Matters for attachments, which
+                // arrive as hundreds of bundles at once.
+                let app_busy = matches!(inner.crypto, Crypto::External)
+                    && inner.awaiting_app.len() >= MAX_AWAITING_APP;
+                if app_busy || !inner.decrypt_limit.take(&bundle.src, 1.0, now_ms) {
+                    inner.stats.bundles_dropped_rate += 1;
+                    return Err(Error::Other(
+                        "decrypt budget exhausted; bundle will be re-offered".into(),
+                    ));
                 }
+                inner.store.mark_seen(id, now);
                 if matches!(inner.crypto, Crypto::External) {
                     self.hand_to_app(inner, bundle);
                     return Ok(());
@@ -1099,12 +1681,18 @@ impl Node {
                 Self::carry(inner, bundle, from, now);
             }
             BundleKind::Beacon => {
+                if inner.quarantine.contains(&bundle.src) {
+                    Self::carry(inner, bundle, from, now);
+                    return Ok(());
+                }
                 if inner.beacon_limit.take(&bundle.src, 1.0, now_ms) {
                     match ContactCard::decode(&bundle.payload) {
                         Ok(card)
                             if card.fingerprint() == bundle.src
                                 && card.created_at <= now + crate::bundle::MAX_CLOCK_SKEW_SECS =>
                         {
+                            inner.nearby.seen(bundle.src, Some(&card.name), now);
+                            inner.dirty = true;
                             if Self::learn_contact(inner, card, false, now) {
                                 let _ = self.events.send(Event::Contact {
                                     fingerprint: bundle.src,
@@ -1362,8 +1950,13 @@ impl Node {
                 Err(e) => warn!("bad group invite: {e}"),
             },
             EnvelopeKind::CardShare => match ContactCard::decode(&body) {
-                Ok(card) if card.fingerprint() != inner.identity.fingerprint() => {
+                Ok(card)
+                    if card.fingerprint() != inner.identity.fingerprint()
+                        && !inner.quarantine.contains(&card.fingerprint()) =>
+                {
                     let fp = card.fingerprint();
+                    inner.nearby.seen(fp, Some(&card.name), now);
+                    inner.dirty = true;
                     if Self::learn_contact(inner, card, false, now) {
                         let _ = self.events.send(Event::Contact { fingerprint: fp });
                     }
@@ -1371,6 +1964,93 @@ impl Node {
                 Ok(_) => {}
                 Err(e) => warn!("bad card share: {e}"),
             },
+            EnvelopeKind::CallSignal => {
+                if known_sender || inner.config.accept_unknown_senders {
+                    let _ = self.events.send(Event::CallSignal {
+                        from,
+                        bundle_id: id,
+                        data: body,
+                    });
+                }
+            }
+            EnvelopeKind::AttachmentManifest => {
+                if !(known_sender || inner.config.accept_unknown_senders) {
+                    return;
+                }
+                match Manifest::decode(&body) {
+                    Ok(m) => {
+                        let progress = inner.transfers.manifest(from, m, now);
+                        self.attachment_progress(inner, from, progress, false);
+                    }
+                    Err(e) => warn!(
+                        "bad attachment manifest from {}: {e}",
+                        fingerprint_hex(&from)
+                    ),
+                }
+            }
+            EnvelopeKind::AttachmentChunk => {
+                if !(known_sender || inner.config.accept_unknown_senders) {
+                    return;
+                }
+                match Chunk::decode(&body) {
+                    Ok(c) => {
+                        let progress = inner.transfers.chunk(from, c, now);
+                        self.attachment_progress(inner, from, progress, true);
+                    }
+                    Err(e) => warn!("bad attachment chunk from {}: {e}", fingerprint_hex(&from)),
+                }
+            }
+        }
+    }
+
+    /// Reports what a manifest or chunk did to its transfer.
+    fn attachment_progress(
+        &self,
+        inner: &mut Inner,
+        from: Fingerprint,
+        progress: Result<Progress>,
+        is_chunk: bool,
+    ) {
+        inner.dirty = true;
+        match progress {
+            Ok(Progress::Ignored) => {}
+            Ok(Progress::Partial {
+                transfer,
+                received,
+                total,
+            }) => {
+                // Progress is reported per chunk; a manifest that arrives after
+                // some chunks reports too so the app learns the total.
+                if is_chunk || received > 0 {
+                    let _ = self.events.send(Event::AttachmentProgress {
+                        from,
+                        transfer,
+                        received,
+                        total,
+                    });
+                }
+            }
+            Ok(Progress::Complete(a)) => {
+                let total = attachment::chunk_count(a.data.len());
+                let _ = self.events.send(Event::AttachmentProgress {
+                    from,
+                    transfer: a.transfer,
+                    received: total,
+                    total,
+                });
+                let _ = self.events.send(Event::Attachment {
+                    from: a.from,
+                    transfer: a.transfer,
+                    kind: a.kind as u8,
+                    name: a.name,
+                    mime: a.mime,
+                    data: a.data,
+                });
+            }
+            Err(e) => {
+                inner.stats.bundles_dropped_invalid += 1;
+                warn!("attachment from {}: {e}", fingerprint_hex(&from));
+            }
         }
     }
 
@@ -1500,7 +2180,7 @@ impl Node {
             return;
         };
         let size = bundle.wire_len();
-        if !l.out_bytes.take(size as f64, now_ms) {
+        if !l.out_bytes.take(size as f64, now_ms) && !bundle.is_urgent() {
             debug!("link {link}: pacing; deferring {} bytes", size);
             return;
         }
@@ -1554,6 +2234,28 @@ impl Node {
             } else {
                 inner.stats.bytes_out += n;
             }
+        }
+    }
+}
+
+/// Waits until `pick` accepts an event or `deadline` passes.
+async fn wait_event<T>(
+    rx: &mut broadcast::Receiver<Event>,
+    deadline: tokio::time::Instant,
+    pick: impl Fn(&Event) -> Option<T>,
+) -> std::result::Result<T, String> {
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Ok(e)) => {
+                if let Some(v) = pick(&e) {
+                    return Ok(v);
+                }
+            }
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                return Err("event stream closed".into());
+            }
+            Err(_) => return Err("timed out".into()),
         }
     }
 }

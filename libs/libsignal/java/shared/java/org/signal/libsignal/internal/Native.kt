@@ -1893,6 +1893,10 @@ internal object Native {
 
   @JvmStatic
   @Throws(Exception::class)
+  public external fun MeshIdentity_FromBackup(passphrase: String, blob: ByteArray): ObjectHandle
+
+  @JvmStatic
+  @Throws(Exception::class)
   public external fun MeshIdentity_FromIdentityKeyPair(
     keyPair: ByteArray,
     registrationId: Int,
@@ -1966,6 +1970,10 @@ internal object Native {
   public external fun MeshNode_DetachLink(node: ObjectHandle, link: Long): Unit
 
   @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_ExportBackup(node: ObjectHandle, passphrase: String): ByteArray
+
+  @JvmStatic
   public external fun MeshNode_Fingerprint(node: ObjectHandle): ByteArray
 
   @JvmStatic
@@ -1980,10 +1988,21 @@ internal object Native {
   public external fun MeshNode_Groups(node: ObjectHandle): Array<ByteArray>
 
   @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_ImportBackup(
+    node: ObjectHandle,
+    passphrase: String,
+    blob: ByteArray,
+  ): Unit
+
+  @JvmStatic
   public external fun MeshNode_LinkRead(node: ObjectHandle, link: Long, timeoutMs: Int): ByteArray
 
   @JvmStatic
   public external fun MeshNode_LinkWrite(node: ObjectHandle, link: Long, frame: ByteArray): Boolean
+
+  @JvmStatic
+  public external fun MeshNode_Nearby(node: ObjectHandle): ByteArray
 
   @JvmStatic
   @Throws(Exception::class)
@@ -1996,6 +2015,25 @@ internal object Native {
 
   @JvmStatic
   public external fun MeshNode_NextEvent(node: ObjectHandle, timeoutMs: Int): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_PrepareAttachment(
+    node: ObjectHandle,
+    to: ByteArray,
+    kind: Int,
+    name: String,
+    mime: String,
+    data: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_PrepareCallSignal(
+    node: ObjectHandle,
+    to: ByteArray,
+    data: ByteArray,
+  ): ByteArray
 
   @JvmStatic
   @Throws(Exception::class)
@@ -2032,6 +2070,28 @@ internal object Native {
   @JvmStatic
   @Throws(Exception::class)
   public external fun MeshNode_SafetyNumber(node: ObjectHandle, fingerprint: ByteArray): String
+
+  @JvmStatic
+  public external fun MeshNode_SelfTest(node: ObjectHandle, timeoutMs: Int): String
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SendAttachment(
+    node: ObjectHandle,
+    to: ByteArray,
+    kind: Int,
+    name: String,
+    mime: String,
+    data: ByteArray,
+  ): ByteArray
+
+  @JvmStatic
+  @Throws(Exception::class)
+  public external fun MeshNode_SendCallSignal(
+    node: ObjectHandle,
+    to: ByteArray,
+    data: ByteArray,
+  ): ByteArray
 
   @JvmStatic
   @Throws(Exception::class)
