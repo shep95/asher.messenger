@@ -1265,13 +1265,6 @@ public class WhisperServerService extends Application<WhisperServerConfiguration
     environment.jersey().register(new AuthValueFactoryProvider.Binder<>(AuthenticatedDevice.class));
     environment.jersey().register(new TimestampResponseFilter());
 
-    if (!config.getExternalRequestFilterConfiguration().paths().isEmpty()) {
-      // The servlet filter above never sees requests tunnelled over the authenticated websocket
-      webSocketEnvironment.jersey().register(new ExternalRequestPathFilter(
-          config.getExternalRequestFilterConfiguration().permittedInternalRanges(),
-          config.getExternalRequestFilterConfiguration().paths()));
-    }
-
     ///
     WebSocketEnvironment<AuthenticatedDevice> webSocketEnvironment = new WebSocketEnvironment<>(environment,
         config.getWebSocketConfiguration(), Duration.ofMillis(90000));
@@ -1292,6 +1285,14 @@ public class WhisperServerService extends Application<WhisperServerConfiguration
     webSocketEnvironment.jersey().register(new MetricsApplicationEventListener(TrafficSource.WEBSOCKET, clientReleaseManager));
     webSocketEnvironment.jersey().register(new KeepAliveController(redisMessageAvailabilityManager));
     webSocketEnvironment.jersey().register(new TimestampResponseFilter());
+
+    if (!config.getExternalRequestFilterConfiguration().paths().isEmpty()) {
+      // The servlet filter registered on the HTTP environment never sees requests tunnelled over the authenticated
+      // websocket, so enforce the same path restriction here
+      webSocketEnvironment.jersey().register(new ExternalRequestPathFilter(
+          config.getExternalRequestFilterConfiguration().permittedInternalRanges(),
+          config.getExternalRequestFilterConfiguration().paths()));
+    }
 
     final PersistentTimer persistentTimer = new PersistentTimer(rateLimitersCluster, clock);
 

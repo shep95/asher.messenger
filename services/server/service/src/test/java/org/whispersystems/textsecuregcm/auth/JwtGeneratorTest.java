@@ -8,8 +8,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTVerifier;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.auth0.jwt.exceptions.IncorrectClaimException;
+import com.auth0.jwt.exceptions.TokenExpiredException;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -27,12 +29,13 @@ class JwtGeneratorTest {
     final JwtGenerator jwtGenerator = new JwtGenerator(SECRET, clock);
     final String token = jwtGenerator.generateJwt(AUD, SUB, _ -> {});
 
-    final DecodedJWT decoded = JWT.require(Algorithm.HMAC256(SECRET))
+    final DecodedJWT decoded = ((JWTVerifier.BaseVerification) JWT.require(Algorithm.HMAC256(SECRET))
         .withAudience(AUD)
-        .withSubject(SUB)
-        .build().verify(token);
+        .withSubject(SUB))
+        .build(clock).verify(token);
     assertThat(decoded.getIssuedAt()).isEqualTo(Instant.EPOCH);
-    assertThat(decoded.getClaims()).containsOnlyKeys("aud", "sub", "iat");
+    assertThat(decoded.getExpiresAtAsInstant()).isEqualTo(Instant.EPOCH.plus(JwtGenerator.TOKEN_LIFETIME));
+    assertThat(decoded.getClaims()).containsOnlyKeys("aud", "sub", "iat", "exp");
   }
 
   @Test
@@ -43,14 +46,28 @@ class JwtGeneratorTest {
         .withClaim("number", 17)
         .withClaim("string", "abc"));
 
-    final DecodedJWT decoded = JWT.require(Algorithm.HMAC256(SECRET))
+    final DecodedJWT decoded = ((JWTVerifier.BaseVerification) JWT.require(Algorithm.HMAC256(SECRET))
         .withAudience(AUD)
         .withSubject(SUB)
         .withClaim("number", 17)
-        .withClaim("string", "abc")
-        .build().verify(token);
+        .withClaim("string", "abc"))
+        .build(clock).verify(token);
     assertThat(decoded.getIssuedAt()).isEqualTo(Instant.EPOCH);
-    assertThat(decoded.getClaims()).containsOnlyKeys("aud", "sub", "iat", "number", "string");
+    assertThat(decoded.getClaims()).containsOnlyKeys("aud", "sub", "iat", "exp", "number", "string");
+  }
+
+  @Test
+  public void expiredToken() {
+    final TestClock clock = TestClock.pinned(Instant.EPOCH);
+    final JwtGenerator jwtGenerator = new JwtGenerator(SECRET, clock);
+    final String token = jwtGenerator.generateJwt(AUD, SUB, _ -> {});
+
+    final TestClock verifierClock = TestClock.pinned(Instant.EPOCH.plus(JwtGenerator.TOKEN_LIFETIME).plusSeconds(1));
+    assertThatExceptionOfType(TokenExpiredException.class).isThrownBy(
+        () -> ((JWTVerifier.BaseVerification) JWT.require(Algorithm.HMAC256(SECRET))
+            .withAudience(AUD)
+            .withSubject(SUB))
+            .build(verifierClock).verify(token));
   }
 
   @Test
