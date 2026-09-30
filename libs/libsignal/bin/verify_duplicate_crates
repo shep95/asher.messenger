@@ -1,0 +1,71 @@
+#!/bin/bash
+
+#
+# Copyright 2021 Signal Messenger, LLC.
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+
+# To keep code size down, we try to avoid depending on multiple versions of crates.
+#
+# Sometimes we decide it's okay for certain dependencies.
+# You can use the `cargo tree` command below to see where they come from,
+# and then document them here.
+#
+# block-buffer, digest: tungstenite's sha1 is unlikely to be updated, also waiting on argon2/blake2
+# cpufeatures: tungstenite's sha1 is unlikely to be updated
+# crypto-common: tungstenite's sha1 is unlikely to be updated, also waiting on argon2/blake2
+# getrandom, rand_core, rand: unfortunately ecosystem updates are slow
+# jni, jni-sys: used directly by us but also by rustls-platform-verifier on Android (update available)
+# sha1: tungstenite's sha1 is unlikely to be updated
+# thiserror: minimal and highly inlinable, most of the code is synthesized at the use site
+EXPECTED="
+block-buffer v0.10.4
+block-buffer v0.12.1
+cpufeatures v0.2.17
+cpufeatures v0.3.0
+crypto-common v0.1.7
+crypto-common v0.2.2
+digest v0.10.7
+digest v0.11.3
+getrandom v0.2.17
+getrandom v0.3.4
+getrandom v0.4.3
+jni v0.21.1
+jni v0.22.4
+jni-sys v0.3.1
+jni-sys v0.4.1
+rand v0.9.4
+rand v0.10.2
+rand_core v0.6.4
+rand_core v0.9.5
+rand_core v0.10.1
+sha1 v0.10.6
+sha1 v0.11.0
+thiserror v1.0.69
+thiserror v2.0.18"
+
+check_cargo_tree() {
+    # Only check the mobile targets, where we care most about code size.
+    cargo tree \
+        -p libsignal-node -p libsignal-jni -p libsignal-ffi \
+        --quiet --duplicates --edges normal,no-proc-macro \
+        --all-features --locked \
+        --target aarch64-apple-ios \
+        --target armv7-linux-androideabi \
+        --target aarch64-linux-android \
+        "$@"
+}
+
+ACTUAL="$(check_cargo_tree --depth 0 | sort -u -V)"
+if [[ "${ACTUAL}" != "${EXPECTED}" ]]; then
+    cat <<EOF
+----- EXPECTED -----
+${EXPECTED}
+
+------ ACTUAL ------
+${ACTUAL}
+
+EOF
+    check_cargo_tree
+    exit 1
+fi
