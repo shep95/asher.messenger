@@ -927,11 +927,16 @@ pub const PROD: Env<'static> = Env {
             ws_config: RECOMMENDED_WS_CONFIG,
             params: ENDPOINT_PARAMS_SVR2_2026Q3_PROD,
         },
-        previous: Some(EnclaveEndpoint {
-            domain_config: DOMAIN_CONFIG_SVR2,
-            ws_config: RECOMMENDED_WS_CONFIG,
-            params: ENDPOINT_PARAMS_SVR2_2026Q2_PROD,
-        }),
+        // Signal's older enclave generation does not exist in a brand deployment.
+        previous: if brand::SVR2_HOST.is_some() {
+            None
+        } else {
+            Some(EnclaveEndpoint {
+                domain_config: DOMAIN_CONFIG_SVR2,
+                ws_config: RECOMMENDED_WS_CONFIG,
+                params: ENDPOINT_PARAMS_SVR2_2026Q2_PROD,
+            })
+        },
     },
     svr_b: SvrBEnv {
         current: [
@@ -940,19 +945,27 @@ pub const PROD: Env<'static> = Env {
                 ws_config: RECOMMENDED_WS_CONFIG,
                 params: ENDPOINT_PARAMS_SVRB_2026Q3_PROD,
             }),
-            Some(EnclaveEndpoint {
-                domain_config: DOMAIN_CONFIG_SVRB_PROD,
-                ws_config: RECOMMENDED_WS_CONFIG,
-                params: ENDPOINT_PARAMS_SVRB_2026Q2_PROD,
-            }),
+            if brand::SVRB_HOST.is_some() {
+                None
+            } else {
+                Some(EnclaveEndpoint {
+                    domain_config: DOMAIN_CONFIG_SVRB_PROD,
+                    ws_config: RECOMMENDED_WS_CONFIG,
+                    params: ENDPOINT_PARAMS_SVRB_2026Q2_PROD,
+                })
+            },
             None,
         ],
         previous: [
-            Some(EnclaveEndpoint {
-                domain_config: DOMAIN_CONFIG_SVRB_PROD,
-                ws_config: RECOMMENDED_WS_CONFIG,
-                params: ENDPOINT_PARAMS_SVRB_2026Q1_PROD,
-            }),
+            if brand::SVRB_HOST.is_some() {
+                None
+            } else {
+                Some(EnclaveEndpoint {
+                    domain_config: DOMAIN_CONFIG_SVRB_PROD,
+                    ws_config: RECOMMENDED_WS_CONFIG,
+                    params: ENDPOINT_PARAMS_SVRB_2026Q1_PROD,
+                })
+            },
             None,
             None,
         ],

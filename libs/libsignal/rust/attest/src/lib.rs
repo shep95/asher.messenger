@@ -9,6 +9,7 @@
 use libsignal_core::LogSafeDisplay;
 use snow::error::{InitStage, PatternProblem, Prerequisite, StateProblem};
 
+mod brand;
 pub mod cds2;
 pub mod client_connection;
 pub mod constants;

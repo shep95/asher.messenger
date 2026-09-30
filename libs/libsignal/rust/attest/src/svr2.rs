@@ -62,9 +62,18 @@ impl RaftConfig {
 
 /// Lookup the group id constant associated with the `mrenclave`
 pub fn lookup_groupid(mrenclave: &[u8]) -> Option<u64> {
-    EXPECTED_RAFT_CONFIG_SVR2
-        .get(&mrenclave)
-        .map(|config| config.group_id)
+    lookup_raft_config(mrenclave).map(|config| config.group_id)
+}
+
+/// Lookup the expected raft config for `mrenclave`, including a brand enclave compiled in through
+/// `LIBSIGNAL_BRAND_SVR2_MRENCLAVE` / `LIBSIGNAL_BRAND_SVR2_RAFT_GROUP_ID`.
+pub(crate) fn lookup_raft_config(mrenclave: &[u8]) -> Option<&'static RaftConfig> {
+    if let Some((brand_mrenclave, brand_config)) = crate::brand::svr2() {
+        if brand_mrenclave == mrenclave {
+            return Some(brand_config);
+        }
+    }
+    EXPECTED_RAFT_CONFIG_SVR2.get(&mrenclave).copied()
 }
 
 // Must only be used for SVR2 bridging code that does
@@ -75,12 +84,9 @@ pub fn new_handshake_with_raft_config_lookup(
     current_time: std::time::SystemTime,
 ) -> Result<Handshake> {
     let expected_raft_config =
-        EXPECTED_RAFT_CONFIG_SVR2
-            .get(&mrenclave)
-            .copied()
-            .ok_or(Error::AttestationDataError {
-                reason: format!("unknown mrenclave {:?}", mrenclave),
-            })?;
+        lookup_raft_config(mrenclave).ok_or(Error::AttestationDataError {
+            reason: format!("unknown mrenclave {:?}", mrenclave),
+        })?;
     new_handshake(
         mrenclave,
         attestation_msg,

@@ -163,6 +163,16 @@ fn verify_full_tree_head(
 
     // 2. Verify the signatures in TreeHead.signature.
     {
+        // The log signature is only checked alongside each configured auditor key below. In a
+        // mode that has associated keys, an empty key list would therefore skip signature
+        // verification altogether; treat that as a misconfiguration rather than a pass.
+        if config.mode.has_associated_keys() && config.mode.get_associated_keys().iter().len() == 0
+        {
+            return Err(Error::BadData(
+                "key transparency deployment mode requires at least one auditor key".to_string(),
+            ));
+        }
+
         for (key, head) in
             &tree_head
                 .to_single_signature_tree_heads(config)

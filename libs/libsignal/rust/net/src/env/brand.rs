@@ -35,10 +35,20 @@
 //! | `LIBSIGNAL_BRAND_SVRB_RAFT_GROUP_ID` | Decimal raft group id of the brand's SVR-B cluster. |
 //! | `LIBSIGNAL_BRAND_KEYTRANS_SIGNING_KEY` | 64 hex chars: key-transparency log signing key. |
 //! | `LIBSIGNAL_BRAND_KEYTRANS_VRF_KEY` | 64 hex chars: key-transparency VRF public key. |
+//! | `LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_1..3` | 64 hex chars each: third-party auditor keys (at least one is required with the keys above). |
+//! | `LIBSIGNAL_BRAND_ALLOW_PLATFORM_ROOTS` | `1` to allow overriding a host without `LIBSIGNAL_BRAND_ROOT_CA_DER` (platform trust store). Off by default: the build fails instead. |
 //!
 //! Overriding a host also disables Signal's static-IP DNS fallback and the
 //! censorship-circumvention reflectors for that host, since neither applies to
-//! a third-party deployment.
+//! a third-party deployment. Overriding the SVR2 or SVR-B host also drops
+//! Signal's older ("previous") enclave endpoints for that service.
+//!
+//! Consistency is enforced at compile time: the two key-transparency keys must
+//! be set together and with at least one auditor key (the verifier only checks
+//! the log signature alongside auditor signatures, so an empty auditor list
+//! would skip signature verification entirely), and an enclave measurement
+//! must come with its raft group id (the bridge looks the group id up by
+//! measurement when deriving PIN hashes).
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -59,6 +69,12 @@ const SVR2_RAFT_GROUP_ID_DEC: Option<&str> = option_env!("LIBSIGNAL_BRAND_SVR2_R
 const SVRB_RAFT_GROUP_ID_DEC: Option<&str> = option_env!("LIBSIGNAL_BRAND_SVRB_RAFT_GROUP_ID");
 const KEYTRANS_SIGNING_KEY_HEX: Option<&str> = option_env!("LIBSIGNAL_BRAND_KEYTRANS_SIGNING_KEY");
 const KEYTRANS_VRF_KEY_HEX: Option<&str> = option_env!("LIBSIGNAL_BRAND_KEYTRANS_VRF_KEY");
+const KEYTRANS_AUDITOR_KEY_1_HEX: Option<&str> =
+    option_env!("LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_1");
+const KEYTRANS_AUDITOR_KEY_2_HEX: Option<&str> =
+    option_env!("LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_2");
+const KEYTRANS_AUDITOR_KEY_3_HEX: Option<&str> =
+    option_env!("LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_3");
 
 /// `true` if any host is overridden, i.e. this is a brand build.
 pub const ENABLED: bool =
@@ -204,6 +220,35 @@ pub const SVRB_RAFT_CONFIG: &RaftConfig = match SVRB_RAFT_GROUP_ID_DEC {
 pub const KEYTRANS_ENABLED: bool =
     KEYTRANS_SIGNING_KEY_HEX.is_some() || KEYTRANS_VRF_KEY_HEX.is_some();
 
+const _: () = assert!(
+    !KEYTRANS_ENABLED || (KEYTRANS_SIGNING_KEY_HEX.is_some() && KEYTRANS_VRF_KEY_HEX.is_some()),
+    "LIBSIGNAL_BRAND_KEYTRANS_SIGNING_KEY and LIBSIGNAL_BRAND_KEYTRANS_VRF_KEY must be set together"
+);
+const _: () = assert!(
+    !KEYTRANS_ENABLED || KEYTRANS_AUDITOR_KEY_1_HEX.is_some(),
+    "brand key transparency needs LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_1: without an auditor key the tree-head signature is never checked"
+);
+const _: () = assert!(
+    KEYTRANS_AUDITOR_KEY_2_HEX.is_none() || KEYTRANS_AUDITOR_KEY_1_HEX.is_some(),
+    "LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_2 requires _1"
+);
+const _: () = assert!(
+    KEYTRANS_AUDITOR_KEY_3_HEX.is_none() || KEYTRANS_AUDITOR_KEY_2_HEX.is_some(),
+    "LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_3 requires _2"
+);
+const _: () = assert!(
+    KEYTRANS_AUDITOR_KEY_1_HEX.is_none() || KEYTRANS_ENABLED,
+    "LIBSIGNAL_BRAND_KEYTRANS_AUDITOR_KEY_* require the brand signing and VRF keys"
+);
+const _: () = assert!(
+    SVR2_MRENCLAVE_HEX.is_none() || SVR2_RAFT_GROUP_ID_DEC.is_some(),
+    "LIBSIGNAL_BRAND_SVR2_MRENCLAVE requires LIBSIGNAL_BRAND_SVR2_RAFT_GROUP_ID"
+);
+const _: () = assert!(
+    SVRB_MRENCLAVE_HEX.is_none() || SVRB_RAFT_GROUP_ID_DEC.is_some(),
+    "LIBSIGNAL_BRAND_SVRB_MRENCLAVE requires LIBSIGNAL_BRAND_SVRB_RAFT_GROUP_ID"
+);
+
 const KEYTRANS_SIGNING_KEY_BYTES: [u8; 32] = hex_32_or(KEYTRANS_SIGNING_KEY_HEX, [0; 32]);
 const KEYTRANS_VRF_KEY_BYTES: [u8; 32] = hex_32_or(KEYTRANS_VRF_KEY_HEX, [0; 32]);
 
@@ -220,10 +265,24 @@ pub const KEYTRANS_VRF_KEY: &[u8; 32] = match KEYTRANS_VRF_KEY_HEX {
 };
 
 /// Key-transparency auditor keys for production. A brand log has no Signal auditors.
-pub const KEYTRANS_AUDITOR_KEYS: &[&[u8; 32]] = if KEYTRANS_ENABLED {
-    &[]
-} else {
+const KEYTRANS_AUDITOR_KEY_1_BYTES: [u8; 32] = hex_32_or(KEYTRANS_AUDITOR_KEY_1_HEX, [0; 32]);
+const KEYTRANS_AUDITOR_KEY_2_BYTES: [u8; 32] = hex_32_or(KEYTRANS_AUDITOR_KEY_2_HEX, [0; 32]);
+const KEYTRANS_AUDITOR_KEY_3_BYTES: [u8; 32] = hex_32_or(KEYTRANS_AUDITOR_KEY_3_HEX, [0; 32]);
+
+/// Key-transparency auditor keys for production: the brand's auditors when the brand keys are set
+/// (never empty, see the assertions above), otherwise Signal's.
+pub const KEYTRANS_AUDITOR_KEYS: &[&[u8; 32]] = if !KEYTRANS_ENABLED {
     super::KEYTRANS_AUDITOR_KEY_MATERIAL_PROD
+} else if KEYTRANS_AUDITOR_KEY_3_HEX.is_some() {
+    &[
+        &KEYTRANS_AUDITOR_KEY_1_BYTES,
+        &KEYTRANS_AUDITOR_KEY_2_BYTES,
+        &KEYTRANS_AUDITOR_KEY_3_BYTES,
+    ]
+} else if KEYTRANS_AUDITOR_KEY_2_HEX.is_some() {
+    &[&KEYTRANS_AUDITOR_KEY_1_BYTES, &KEYTRANS_AUDITOR_KEY_2_BYTES]
+} else {
+    &[&KEYTRANS_AUDITOR_KEY_1_BYTES]
 };
 
 #[cfg(test)]
@@ -259,5 +318,11 @@ mod test {
             certs(CHAT_HOST),
             RootCertificates::FromStaticDers(_)
         ));
+    }
+
+    #[test]
+    fn auditor_keys_are_never_empty() {
+        // An empty auditor list would make the key-transparency verifier skip the log signature.
+        assert!(!KEYTRANS_AUDITOR_KEYS.is_empty());
     }
 }
