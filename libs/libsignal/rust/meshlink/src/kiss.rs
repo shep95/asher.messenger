@@ -105,6 +105,10 @@ impl RadioConfig {
 
 /// Incremental KISS decoder for a byte stream.
 #[derive(Default)]
+/// Longest KISS payload accepted; a stream that never closes a frame cannot
+/// grow memory past this.
+pub const MAX_KISS_FRAME: usize = 8192;
+
 pub struct Decoder {
     in_frame: bool,
     escaped: bool,
@@ -156,6 +160,13 @@ impl Decoder {
             }
             if b == FESC {
                 self.escaped = true;
+                continue;
+            }
+            if self.buf.len() >= MAX_KISS_FRAME {
+                // Oversized or unterminated frame: drop it and resynchronise.
+                self.in_frame = false;
+                self.command = None;
+                self.buf.clear();
                 continue;
             }
             self.buf.push(b);
