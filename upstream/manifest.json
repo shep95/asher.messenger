@@ -1,14 +1,98 @@
 {
-  "Signal-Server": {"path": "services/server", "url": "https://github.com/signalapp/Signal-Server.git", "branch": "main", "commit": "bdf3e1aea1b83e6ce14530ba515501c15bade3ad", "commit_date": "2026-09-25T11:41:18-07:00", "commit_subject": "accept multiple webauthn origins"},
-  "registration-service": {"path": "services/registration", "url": "https://github.com/signalapp/registration-service.git", "branch": "main", "commit": "ad789041aaa389368de76dc65fab7be5b11ae9ef", "commit_date": "2026-08-03T17:50:17-04:00", "commit_subject": "Revert \"Bump the minor-java-dependencies group with 7 updates\""},
-  "storage-service": {"path": "services/storage", "url": "https://github.com/signalapp/storage-service.git", "branch": "main", "commit": "764a10526e23f3ec198b932d72fee5705f8a582b", "commit_date": "2026-08-20T15:23:42-07:00", "commit_subject": "update path to .java-version"},
-  "ContactDiscoveryService-Icelake": {"path": "services/cdsi", "url": "https://github.com/signalapp/ContactDiscoveryService-Icelake.git", "branch": "main", "commit": "3fad25e943a866b24438e69dc0efa1cfded23128", "commit_date": "2026-07-31T10:28:42-07:00", "commit_subject": "Replace generated enclave binaries with ones built from main."},
-  "SecureValueRecovery2": {"path": "services/svr2", "url": "https://github.com/signalapp/SecureValueRecovery2.git", "branch": "main", "commit": "d961a4912c2a50aa59d05f60343684b659603242", "commit_date": "2026-08-20T10:07:32-07:00", "commit_subject": "Enclave release."},
-  "Signal-Calling-Service": {"path": "services/calling", "url": "https://github.com/signalapp/Signal-Calling-Service.git", "branch": "main", "commit": "56da39e6509cbd90f6fd89c14754ec50530ea58d", "commit_date": "2026-09-25T09:35:09-07:00", "commit_subject": "Bump version to v141"},
-  "Signal-TLS-Proxy": {"path": "services/tls-proxy", "url": "https://github.com/signalapp/Signal-TLS-Proxy.git", "branch": "main", "commit": "cc41daab1f38f7c01de833875065f46435914151", "commit_date": "2026-07-20T09:34:23-04:00", "commit_subject": "Bump certbot/certbot from `6bb19cf` to `34ee91d`"},
-  "libsignal": {"path": "libs/libsignal", "url": "https://github.com/signalapp/libsignal.git", "branch": "main", "commit": "e8cc2dddd578859b4a029c9c94670b24ce2b616a", "commit_date": "2026-09-22T13:16:12-07:00", "commit_subject": "swift: Guard BackupJsonExporterTests as sim-only"},
-  "ringrtc": {"path": "libs/ringrtc", "url": "https://github.com/signalapp/ringrtc.git", "branch": "main", "commit": "a1d2ffed1de6ac5b22458a3dced8374513cc44f8", "commit_date": "2026-09-04T15:55:10-07:00", "commit_subject": "Bump version to v2.72.0"},
-  "Signal-Desktop": {"path": "clients/desktop", "url": "https://github.com/signalapp/Signal-Desktop.git", "branch": "main", "commit": "abe80d32445e53b047b42d10c5b751c4fbfbbfc0", "commit_date": "2026-09-23T15:29:30-07:00", "commit_subject": "v8.31.0-alpha.1"},
-  "Signal-iOS": {"path": "clients/ios", "url": "https://github.com/signalapp/Signal-iOS.git", "branch": "main", "commit": "06fb42bbf4402c738fc6d37dcb2828ba6ec0ce9f", "commit_date": "2026-09-23T17:20:19-04:00", "commit_subject": "Update translations"},
-  "Signal-Android": {"path": "clients/android", "url": "https://github.com/signalapp/Signal-Android.git", "branch": "main", "commit": "32f37f397c25c5a0228d5d60fd756fc9045c4c77", "commit_date": "2026-09-29T16:29:10-03:00", "commit_subject": "Bump version to 8.29.2"}
+  "Signal-Server": {
+    "path": "services/server",
+    "url": "https://github.com/signalapp/Signal-Server.git",
+    "branch": "main",
+    "commit": "bdf3e1aea1b83e6ce14530ba515501c15bade3ad",
+    "commit_date": "2026-09-25T11:41:18-07:00",
+    "commit_subject": "accept multiple webauthn origins"
+  },
+  "registration-service": {
+    "path": "services/registration",
+    "url": "https://github.com/signalapp/registration-service.git",
+    "branch": "main",
+    "commit": "ad789041aaa389368de76dc65fab7be5b11ae9ef",
+    "commit_date": "2026-08-03T17:50:17-04:00",
+    "commit_subject": "Revert \"Bump the minor-java-dependencies group with 7 updates\""
+  },
+  "storage-service": {
+    "path": "services/storage",
+    "url": "https://github.com/signalapp/storage-service.git",
+    "branch": "main",
+    "commit": "764a10526e23f3ec198b932d72fee5705f8a582b",
+    "commit_date": "2026-08-20T15:23:42-07:00",
+    "commit_subject": "update path to .java-version"
+  },
+  "ContactDiscoveryService-Icelake": {
+    "path": "services/cdsi",
+    "url": "https://github.com/signalapp/ContactDiscoveryService-Icelake.git",
+    "branch": "main",
+    "commit": "3fad25e943a866b24438e69dc0efa1cfded23128",
+    "commit_date": "2026-07-31T10:28:42-07:00",
+    "commit_subject": "Replace generated enclave binaries with ones built from main."
+  },
+  "SecureValueRecovery2": {
+    "path": "services/svr2",
+    "url": "https://github.com/signalapp/SecureValueRecovery2.git",
+    "branch": "main",
+    "commit": "d961a4912c2a50aa59d05f60343684b659603242",
+    "commit_date": "2026-08-20T10:07:32-07:00",
+    "commit_subject": "Enclave release."
+  },
+  "Signal-Calling-Service": {
+    "path": "services/calling",
+    "url": "https://github.com/signalapp/Signal-Calling-Service.git",
+    "branch": "main",
+    "commit": "56da39e6509cbd90f6fd89c14754ec50530ea58d",
+    "commit_date": "2026-09-25T09:35:09-07:00",
+    "commit_subject": "Bump version to v141"
+  },
+  "Signal-TLS-Proxy": {
+    "path": "services/tls-proxy",
+    "url": "https://github.com/signalapp/Signal-TLS-Proxy.git",
+    "branch": "main",
+    "commit": "cc41daab1f38f7c01de833875065f46435914151",
+    "commit_date": "2026-07-20T09:34:23-04:00",
+    "commit_subject": "Bump certbot/certbot from `6bb19cf` to `34ee91d`"
+  },
+  "libsignal": {
+    "path": "libs/libsignal",
+    "url": "https://github.com/signalapp/libsignal.git",
+    "branch": "main",
+    "commit": "e8cc2dddd578859b4a029c9c94670b24ce2b616a",
+    "commit_date": "2026-09-22T13:16:12-07:00",
+    "commit_subject": "swift: Guard BackupJsonExporterTests as sim-only"
+  },
+  "ringrtc": {
+    "path": "libs/ringrtc",
+    "url": "https://github.com/signalapp/ringrtc.git",
+    "branch": "main",
+    "commit": "a1d2ffed1de6ac5b22458a3dced8374513cc44f8",
+    "commit_date": "2026-09-04T15:55:10-07:00",
+    "commit_subject": "Bump version to v2.72.0"
+  },
+  "Signal-Desktop": {
+    "path": "clients/desktop",
+    "url": "https://github.com/signalapp/Signal-Desktop.git",
+    "branch": "main",
+    "commit": "abe80d32445e53b047b42d10c5b751c4fbfbbfc0",
+    "commit_date": "2026-09-23T15:29:30-07:00",
+    "commit_subject": "v8.31.0-alpha.1"
+  },
+  "Signal-iOS": {
+    "path": "clients/ios",
+    "url": "https://github.com/signalapp/Signal-iOS.git",
+    "branch": "main",
+    "commit": "06fb42bbf4402c738fc6d37dcb2828ba6ec0ce9f",
+    "commit_date": "2026-09-23T17:20:19-04:00",
+    "commit_subject": "Update translations"
+  },
+  "Signal-Android": {
+    "path": "clients/android",
+    "url": "https://github.com/signalapp/Signal-Android.git",
+    "branch": "main",
+    "commit": "32f37f397c25c5a0228d5d60fd756fc9045c4c77",
+    "commit_date": "2026-09-29T16:29:10-03:00",
+    "commit_subject": "Bump version to 8.29.2"
+  }
 }

@@ -33,33 +33,43 @@ use crate::chat::RECOMMENDED_CHAT_WS_CONFIG;
 use crate::connect_state::ServiceName;
 use crate::enclave::{Cdsi, EnclaveEndpoint, EndpointParams, MrEnclave, SvrSgx};
 
+pub mod brand;
+
 const DEFAULT_HTTPS_PORT: NonZeroU16 = nonzero!(443_u16);
 pub const TIMESTAMP_HEADER_NAME: &str = "x-signal-timestamp";
 pub(crate) const ALERT_HEADER_NAME: &str = "x-signal-alert";
 pub(crate) const CONNECTION_INVALIDATED_CLOSE_CODE: u16 = 4401;
 pub(crate) const CONNECTED_ELSEWHERE_CLOSE_CODE: u16 = 4409;
 
+const CHAT_STATIC_IPS_V4: &[Ipv4Addr] =
+    &[ip_addr!(v4, "76.223.66.180"), ip_addr!(v4, "15.197.251.99")];
+const CHAT_STATIC_IPS_V6: &[Ipv6Addr] = &[
+    ip_addr!(v6, "2600:9000:a507:ab6d:575d:9d9f:64af:7a5a"),
+    ip_addr!(v6, "2600:9000:a61f:527c:8e4a:4b48:bbfd:c9bb"),
+];
+
 const DOMAIN_CONFIG_CHAT: DomainConfig = DomainConfig {
-    ip_v4: &[ip_addr!(v4, "76.223.66.180"), ip_addr!(v4, "15.197.251.99")],
-    ip_v6: &[
-        ip_addr!(v6, "2600:9000:a507:ab6d:575d:9d9f:64af:7a5a"),
-        ip_addr!(v6, "2600:9000:a61f:527c:8e4a:4b48:bbfd:c9bb"),
-    ],
+    ip_v4: brand::ip_v4(brand::CHAT_HOST, CHAT_STATIC_IPS_V4),
+    ip_v6: brand::ip_v6(brand::CHAT_HOST, CHAT_STATIC_IPS_V6),
     connect: ConnectionConfig {
         // Keeping the service names in sync makes it so we don't have to carefully track which
         // config we're using.
         service: ServiceName("chat"),
-        hostname: "grpc.chat.signal.org",
+        hostname: brand::host("grpc.chat.signal.org", brand::CHAT_HOST),
         port: DEFAULT_HTTPS_PORT,
-        cert: SIGNAL_ROOT_CERTIFICATES,
+        cert: brand::certs(brand::CHAT_HOST),
         min_tls_version: Some(SslVersion::TLS1_3),
         http_version: Some(HttpVersion::Http2),
         confirmation_header_name: Some(TIMESTAMP_HEADER_NAME),
         // This won't use H2, but we still want it as a fallback.
-        proxy: Some(ConnectionProxyConfig {
-            path_prefix: "/service",
-            configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
-        }),
+        proxy: if brand::CHAT_HOST.is_some() {
+            None
+        } else {
+            Some(ConnectionProxyConfig {
+                path_prefix: "/service",
+                configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
+            })
+        },
     },
 };
 
@@ -87,22 +97,29 @@ const DOMAIN_CONFIG_CHAT_STAGING: DomainConfig = DomainConfig {
     },
 };
 
+const CDSI_STATIC_IPS_V4: &[Ipv4Addr] = &[ip_addr!(v4, "40.122.45.194")];
+const CDSI_STATIC_IPS_V6: &[Ipv6Addr] = &[ip_addr!(v6, "2603:1030:7::1")];
+
 const DOMAIN_CONFIG_CDSI: DomainConfig = DomainConfig {
     connect: ConnectionConfig {
         service: ServiceName("cdsi"),
-        hostname: "cdsi.signal.org",
+        hostname: brand::host("cdsi.signal.org", brand::CDSI_HOST),
         port: DEFAULT_HTTPS_PORT,
-        cert: SIGNAL_ROOT_CERTIFICATES,
+        cert: brand::certs(brand::CDSI_HOST),
         min_tls_version: Some(SslVersion::TLS1_3),
         http_version: Some(HttpVersion::Http1_1),
         confirmation_header_name: None,
-        proxy: Some(ConnectionProxyConfig {
-            path_prefix: "/cdsi",
-            configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
-        }),
+        proxy: if brand::CDSI_HOST.is_some() {
+            None
+        } else {
+            Some(ConnectionProxyConfig {
+                path_prefix: "/cdsi",
+                configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
+            })
+        },
     },
-    ip_v4: &[ip_addr!(v4, "40.122.45.194")],
-    ip_v6: &[ip_addr!(v6, "2603:1030:7::1")],
+    ip_v4: brand::ip_v4(brand::CDSI_HOST, CDSI_STATIC_IPS_V4),
+    ip_v6: brand::ip_v6(brand::CDSI_HOST, CDSI_STATIC_IPS_V6),
 };
 
 const DOMAIN_CONFIG_CDSI_STAGING: DomainConfig = DomainConfig {
@@ -123,38 +140,45 @@ const DOMAIN_CONFIG_CDSI_STAGING: DomainConfig = DomainConfig {
     ip_v6: &[ip_addr!(v6, "2603:1030:7::732")],
 };
 
+const SVR2_STATIC_IPS_V4: &[Ipv4Addr] = &[
+    ip_addr!(v4, "20.236.21.158"),
+    ip_addr!(v4, "20.104.52.125"),
+    ip_addr!(v4, "20.9.45.98"),
+    ip_addr!(v4, "20.66.40.69"),
+    ip_addr!(v4, "20.119.62.85"),
+    ip_addr!(v4, "20.65.43.198"),
+    ip_addr!(v4, "13.84.216.212"),
+];
+const SVR2_STATIC_IPS_V6: &[Ipv6Addr] = &[
+    ip_addr!(v6, "2603:1030:20e:33::6"),
+    ip_addr!(v6, "2603:1030:408:3::1d"),
+    ip_addr!(v6, "2603:1030:b:2a::12"),
+    ip_addr!(v6, "2603:1030:803:4::65"),
+    ip_addr!(v6, "2a01:111:f100:3000::a83e:1208"),
+    ip_addr!(v6, "2603:1030:c04:1e::31c"),
+    ip_addr!(v6, "2603:1030:f00::17"),
+];
+
 const DOMAIN_CONFIG_SVR2: DomainConfig = DomainConfig {
     connect: ConnectionConfig {
         service: ServiceName("svr2"),
-        hostname: "svr2.signal.org",
+        hostname: brand::host("svr2.signal.org", brand::SVR2_HOST),
         port: DEFAULT_HTTPS_PORT,
-        cert: SIGNAL_ROOT_CERTIFICATES,
+        cert: brand::certs(brand::SVR2_HOST),
         min_tls_version: Some(SslVersion::TLS1_3),
         http_version: Some(HttpVersion::Http1_1),
         confirmation_header_name: None,
-        proxy: Some(ConnectionProxyConfig {
-            path_prefix: "/svr2",
-            configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
-        }),
+        proxy: if brand::SVR2_HOST.is_some() {
+            None
+        } else {
+            Some(ConnectionProxyConfig {
+                path_prefix: "/svr2",
+                configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
+            })
+        },
     },
-    ip_v4: &[
-        ip_addr!(v4, "20.236.21.158"),
-        ip_addr!(v4, "20.104.52.125"),
-        ip_addr!(v4, "20.9.45.98"),
-        ip_addr!(v4, "20.66.40.69"),
-        ip_addr!(v4, "20.119.62.85"),
-        ip_addr!(v4, "20.65.43.198"),
-        ip_addr!(v4, "13.84.216.212"),
-    ],
-    ip_v6: &[
-        ip_addr!(v6, "2603:1030:20e:33::6"),
-        ip_addr!(v6, "2603:1030:408:3::1d"),
-        ip_addr!(v6, "2603:1030:b:2a::12"),
-        ip_addr!(v6, "2603:1030:803:4::65"),
-        ip_addr!(v6, "2a01:111:f100:3000::a83e:1208"),
-        ip_addr!(v6, "2603:1030:c04:1e::31c"),
-        ip_addr!(v6, "2603:1030:f00::17"),
-    ],
+    ip_v4: brand::ip_v4(brand::SVR2_HOST, SVR2_STATIC_IPS_V4),
+    ip_v6: brand::ip_v6(brand::SVR2_HOST, SVR2_STATIC_IPS_V6),
 };
 
 const DOMAIN_CONFIG_SVR2_STAGING: DomainConfig = DomainConfig {
@@ -217,38 +241,45 @@ const DOMAIN_CONFIG_SVRB_STAGING: DomainConfig = DomainConfig {
     ],
 };
 
+const SVRB_STATIC_IPS_V4: &[Ipv4Addr] = &[
+    ip_addr!(v4, "4.151.136.48"),
+    ip_addr!(v4, "20.232.191.209"),
+    ip_addr!(v4, "135.119.74.80"),
+    ip_addr!(v4, "172.200.87.186"),
+    ip_addr!(v4, "20.63.12.55"),
+    ip_addr!(v4, "20.66.41.177"),
+    ip_addr!(v4, "20.114.45.6"),
+];
+const SVRB_STATIC_IPS_V6: &[Ipv6Addr] = &[
+    ip_addr!(v6, "2603:1030:20c:6::166"),
+    ip_addr!(v6, "2603:1030:408:6::e5"),
+    ip_addr!(v6, "2603:1030:7:5::22"),
+    ip_addr!(v6, "2a01:111:f100:4001::4625:a047"),
+    ip_addr!(v6, "2a01:111:f100:3000::a83e:14da"),
+    ip_addr!(v6, "2603:1030:c02:5::632"),
+    ip_addr!(v6, "2603:1030:f00:3::27"),
+];
+
 const DOMAIN_CONFIG_SVRB_PROD: DomainConfig = DomainConfig {
     connect: ConnectionConfig {
         service: ServiceName("svrb"),
-        hostname: "svrb.signal.org",
+        hostname: brand::host("svrb.signal.org", brand::SVRB_HOST),
         port: DEFAULT_HTTPS_PORT,
-        cert: SIGNAL_ROOT_CERTIFICATES,
+        cert: brand::certs(brand::SVRB_HOST),
         min_tls_version: Some(SslVersion::TLS1_3),
         http_version: Some(HttpVersion::Http1_1),
         confirmation_header_name: None,
-        proxy: Some(ConnectionProxyConfig {
-            path_prefix: "/svrb",
-            configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
-        }),
+        proxy: if brand::SVRB_HOST.is_some() {
+            None
+        } else {
+            Some(ConnectionProxyConfig {
+                path_prefix: "/svrb",
+                configs: [PROXY_CONFIG_F_PROD, PROXY_CONFIG_G],
+            })
+        },
     },
-    ip_v4: &[
-        ip_addr!(v4, "4.151.136.48"),
-        ip_addr!(v4, "20.232.191.209"),
-        ip_addr!(v4, "135.119.74.80"),
-        ip_addr!(v4, "172.200.87.186"),
-        ip_addr!(v4, "20.63.12.55"),
-        ip_addr!(v4, "20.66.41.177"),
-        ip_addr!(v4, "20.114.45.6"),
-    ],
-    ip_v6: &[
-        ip_addr!(v6, "2603:1030:20c:6::166"),
-        ip_addr!(v6, "2603:1030:408:6::e5"),
-        ip_addr!(v6, "2603:1030:7:5::22"),
-        ip_addr!(v6, "2a01:111:f100:4001::4625:a047"),
-        ip_addr!(v6, "2a01:111:f100:3000::a83e:14da"),
-        ip_addr!(v6, "2603:1030:c02:5::632"),
-        ip_addr!(v6, "2603:1030:f00:3::27"),
-    ],
+    ip_v4: brand::ip_v4(brand::SVRB_HOST, SVRB_STATIC_IPS_V4),
+    ip_v6: brand::ip_v6(brand::SVRB_HOST, SVRB_STATIC_IPS_V6),
 };
 
 pub const PROXY_CONFIG_F_PROD: ProxyConfig = ProxyConfig {
@@ -357,18 +388,18 @@ pub(crate) const ENDPOINT_PARAMS_SVRB_2026Q3_STAGING: EndpointParams<'static, Sv
 
 pub(crate) const ENDPOINT_PARAMS_SVR2_2026Q3_PROD: EndpointParams<'static, SvrSgx> =
     EndpointParams {
-        mr_enclave: MrEnclave::new(attest::constants::ENCLAVE_ID_SVR2_2026Q3_PROD),
-        raft_config: attest::constants::RAFT_CONFIG_SVR2_2026Q3_PROD,
+        mr_enclave: MrEnclave::new(brand::SVR2_MRENCLAVE),
+        raft_config: brand::SVR2_RAFT_CONFIG,
     };
 
 pub(crate) const ENDPOINT_PARAMS_SVRB_2026Q3_PROD: EndpointParams<'static, SvrSgx> =
     EndpointParams {
-        mr_enclave: MrEnclave::new(attest::constants::ENCLAVE_ID_SVRB_2026Q3_PROD),
-        raft_config: attest::constants::RAFT_CONFIG_SVRB_2026Q3_PROD,
+        mr_enclave: MrEnclave::new(brand::SVRB_MRENCLAVE),
+        raft_config: brand::SVRB_RAFT_CONFIG,
     };
 
 pub(crate) const ENDPOINT_PARAMS_CDSI_PROD: EndpointParams<'static, Cdsi> = EndpointParams {
-    mr_enclave: MrEnclave::new(attest::constants::ENCLAVE_ID_CDSI_PROD),
+    mr_enclave: MrEnclave::new(brand::CDSI_MRENCLAVE),
     raft_config: (),
 };
 
@@ -399,9 +430,9 @@ pub(crate) const KEYTRANS_AUDITOR_KEY_MATERIAL_PROD: &[&[u8; 32]] = &[
 ];
 
 pub(crate) const KEYTRANS_CONFIG_PROD: KeyTransConfig = KeyTransConfig {
-    signing_key_material: KEYTRANS_SIGNING_KEY_MATERIAL_PROD,
-    vrf_key_material: KEYTRANS_VRF_KEY_MATERIAL_PROD,
-    auditor_key_material: KEYTRANS_AUDITOR_KEY_MATERIAL_PROD,
+    signing_key_material: brand::KEYTRANS_SIGNING_KEY,
+    vrf_key_material: brand::KEYTRANS_VRF_KEY,
+    auditor_key_material: brand::KEYTRANS_AUDITOR_KEYS,
 };
 
 /// Configuration for a target network resource, like `chat.signal.org`.
@@ -927,7 +958,11 @@ pub const PROD: Env<'static> = Env {
         ],
     },
     keytrans_config: KEYTRANS_CONFIG_PROD,
-    reflector_providers: || &*REFLECTOR_PROVIDERS_PROD,
+    reflector_providers: if brand::ENABLED {
+        || &[]
+    } else {
+        || &*REFLECTOR_PROVIDERS_PROD
+    },
 };
 
 pub mod constants {
