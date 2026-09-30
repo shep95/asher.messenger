@@ -28,7 +28,8 @@ describes a brand (name, bundle ids, domains, server keys, root CA) and
 | `services/tls-proxy` | signalapp/Signal-TLS-Proxy | Censorship-circumvention TLS proxy |
 | `libs/libsignal` | signalapp/libsignal | Protocol, zkgroup, attestation and the network stack used by all clients |
 | `libs/ringrtc` | signalapp/ringrtc | WebRTC-based calling library |
-| `libs/libsignal/rust/meshlink` | — | Offline store-carry-forward transport (BLE / LoRa / serial / gateway links), see `docs/offline-mesh.md` |
+| `libs/libsignal/rust/meshlink` | — | Offline store-carry-forward transport (BLE / LoRa / serial / TCP links), `meshlinkd` gateway daemon, app bridge; see `docs/offline-mesh.md` |
+| `web/landing` | — | Product site (static, Vercel); live at https://asher-delta.vercel.app |
 | `brands/` | — | Brand profiles (`signal-upstream` parity profile, `asher`) |
 | `tools/` | — | `brand/apply.py`, `sync-upstream.sh`, `fetch-submodules.sh`, `server/gen-keys.sh` |
 | `deploy/server/<brand>/` | — | Generated server config skeletons |
@@ -104,9 +105,13 @@ that are not the internet: phone-to-phone Bluetooth, LoRa radios (RNode/KISS),
 serial cables and satellite gateways. Identity is the device's Signal identity
 key fingerprint, prekeys travel as signed contact cards (QR code or beacon),
 and delivery is store-carry-forward with multi-hop relay, so messages cross
-gaps in coverage and time without a server. Encryption is unchanged. Groups,
-storage and discovery still need the server. Design, test coverage, per-client
-integration seams and limits: `docs/offline-mesh.md`.
+gaps in coverage and time without a server. Encryption is unchanged; the apps
+keep their own Signal sessions and reach the transport through libsignal's
+bridge. Small pairwise groups and in-person safety numbers replace the group
+server and key transparency; storage service, discovery, attachments and
+calls still need the server. `meshlinkd` runs on a Raspberry Pi or a server
+as a relay or satellite gateway. Design, threat model, test coverage,
+per-client status and limits: `docs/offline-mesh.md`.
 
 ## Maintenance
 

@@ -177,3 +177,14 @@ Nothing here is hidden; each item is a documented dependency. "Brand" says what 
 `tools/security/scan.sh` runs every scanner above; `tools/security/osvmatch.py`
 matches Maven coordinates against a local clone of the GitHub Advisory
 Database. Re-run both after `tools/sync-upstream.sh`.
+
+## 7. Offline mesh transport
+
+The `meshlink` transport added after this audit was reviewed against the
+same lens: every input from a neighbour is bounded before it is trusted,
+acknowledgements are authenticated by a hash commitment, contact cards are
+signed over every field, plaintexts are padded, and there is no code-download
+or remote-control surface. The threat table, the limits and the tests are in
+`docs/offline-mesh.md` §5-§7. The platform link code (BLE, serial, TCP) was
+written but could not be compiled or exercised here; treat it as unreviewed
+until it has run on devices.
