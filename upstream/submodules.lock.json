@@ -1,0 +1,70 @@
+{
+  "services/server": {
+    "spam-filter": {
+      "url": "REDACTED",
+      "commit": "3b145808d664632042b084764666a87cadface26"
+    }
+  },
+  "services/cdsi": {
+    "c/SipHash": {
+      "url": "https://github.com/veorq/SipHash",
+      "commit": null
+    },
+    "c/noise-c": {
+      "url": "https://github.com/signalapp/noise-c.git",
+      "commit": "6d940358181c0b1d9355521aebd0d5dc6ca0d0f9"
+    },
+    "c/libsodium": {
+      "url": "https://github.com/jedisct1/libsodium",
+      "commit": "d24faf56214469b354b01c8ba36257e04737101e"
+    }
+  },
+  "services/svr2": {
+    "enclave/protobuf": {
+      "url": "https://github.com/protocolbuffers/protobuf.git",
+      "commit": "dab4d24d44eea0f21d6a21a548ee2b8c22b37f4f"
+    },
+    "enclave/noise-c": {
+      "url": "https://github.com/signalapp/noise-c.git",
+      "commit": "6d940358181c0b1d9355521aebd0d5dc6ca0d0f9"
+    },
+    "enclave/SipHash": {
+      "url": "https://github.com/veorq/SipHash",
+      "commit": "68c8a7cb776b4b697c548aba25707713a4c085de"
+    },
+    "enclave/googletest": {
+      "url": "https://github.com/google/googletest",
+      "commit": "52eb8108c5bdec04579160ae17225d66034bd723"
+    },
+    "enclave/libsodium": {
+      "url": "https://github.com/jedisct1/libsodium",
+      "commit": "d24faf56214469b354b01c8ba36257e04737101e"
+    },
+    "docker/aws-nitro-enclaves-nsm-api": {
+      "url": "https://github.com/aws/aws-nitro-enclaves-nsm-api.git",
+      "commit": "8ec7eac72bbb2097f1058ee32c13e1ff232f13e8"
+    },
+    "enclave/boringssl": {
+      "url": "https://boringssl.googlesource.com/boringssl",
+      "commit": "eb895133fba7bb3c5eb962d0f1eab54c49979efe"
+    },
+    "enclave/tinycbor": {
+      "url": "https://github.com/intel/tinycbor",
+      "commit": "c0aad2fb2137a31b9845fbaae3653540c410f215"
+    },
+    "enclave/rapidjson": {
+      "url": "https://github.com/Tencent/rapidjson",
+      "commit": "24b5e7a8b27f42fa16b96fc70aade9106cf7102f"
+    }
+  },
+  "clients/ios": {
+    "Pods": {
+      "url": "https://github.com/signalapp/Signal-Pods.git",
+      "commit": "0d3a7b414f9f9dcb2bedd825ae2c4e0c4ae993fe"
+    },
+    "SignalServiceKit/tests/MessageBackup/Signal-Message-Backup-Tests": {
+      "url": "https://github.com/signalapp/Signal-Message-Backup-Tests",
+      "commit": "a0f900243210efbedc72f0907c5d2f140385daa4"
+    }
+  }
+}

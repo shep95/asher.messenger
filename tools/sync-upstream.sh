@@ -45,6 +45,21 @@ for name in $names; do
   rm -rf "${ROOT:?}/$path"; mkdir -p "$ROOT/$path"
   tar -C "$WORK/$name" --exclude=.git -cf - . | tar -C "$ROOT/$path" -xf -
   git -C "$WORK/$name" ls-files -z | (cd "$ROOT/$path" && xargs -0 git add -f --) || true
+  # record submodule pins (gitlinks) so tools/fetch-submodules.sh can fetch the exact commits
+  python3 - "$ROOT/upstream/submodules.lock.json" "$path" "$WORK/$name" <<'PY'
+import json,os,subprocess,sys
+lock_path,comp,repo=sys.argv[1:]; lock=json.load(open(lock_path)) if os.path.exists(lock_path) else {}
+gm=os.path.join(repo,'.gitmodules'); entries={}
+if os.path.exists(gm):
+    for line in subprocess.check_output(['git','config','-f',gm,'--get-regexp',r'^submodule\..*\.path$'],text=True).splitlines():
+        key,path=line.split(' ',1); sub=key[len('submodule.'):-len('.path')]
+        url=subprocess.check_output(['git','config','-f',gm,'--get',f'submodule.{sub}.url'],text=True).strip()
+        tree=subprocess.check_output(['git','-C',repo,'ls-tree','HEAD',path],text=True).strip()
+        entries[path]={"url":url,"commit":tree.split()[2] if tree else None}
+if entries: lock[comp]=entries
+else: lock.pop(comp,None)
+json.dump(lock,open(lock_path,'w'),indent=2); open(lock_path,'a').write("\n")
+PY
   git -C "$ROOT" add -A "$path"
   python3 - "$MANIFEST" "$name" "$new_commit" "$new_date" "$new_subject" <<'PY'
 import json,sys

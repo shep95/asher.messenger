@@ -25,9 +25,11 @@ is currently applied and the few free-text literals it rewrote.
 | `hosts.sfu`, `sfu_test`, `sfu_staging` | clients | Group-call SFUs (`services/calling`). |
 | `hosts.updates`, `updates2` | clients | Static assets (badges, emoji, desktop updates). |
 | `hosts.content_proxy`, `status` | android, ios, desktop | Link-preview proxy; DNS name probed for outage detection. |
+| `hosts.debug_logs_url` | android | Where user-initiated debug logs are uploaded (`https://debuglogs.org` upstream). |
 | `hosts.captcha_registration_url`, `captcha_challenge_url` | clients | Full URLs of the captcha pages. |
 | `link_domains.me/group/art/link/tube/donations` | android, ios, desktop | Universal-link hosts (usernames, group invites, sticker packs, call links, proxies, donations). |
 | `android.application_id`, `archives_base_name`, `maps_key`, `giphy_api_key`, `disable_static_ips` | android | Package id, APK base name, API keys; `disable_static_ips` empties Signal's hard-coded IP fallbacks. |
+| `android.censorship_circumvention` | android | `false` (default for brands) disables domain fronting through Google/Fastly reflectors that forward to Signal's servers. Set `true` only if you operate your own reflectors and edit `SignalServiceNetworkAccess.kt`. |
 | `ios.bundle_id_prefix`, `team_id`, `merchant_id` | ios, server | `SIGNAL_BUNDLEID_PREFIX` (app is `<prefix>.signal`), Apple team, Apple Pay merchant. |
 | `desktop.package_name`, `description`, `desktop_name`, `app_id`, `executable_name`, `startup_wm_class`, `updates_url`, `updates_public_key`, `app_image_updates_public_key` | desktop | electron-builder identity and auto-update feed/keys. |
 | `server.webauthn_relying_party_id`, `attachments_domain` | server | WebAuthn RP and GCS signed-URL domain in the generated config. |
@@ -37,7 +39,8 @@ is currently applied and the few free-text literals it rewrote.
 | `crypto.generic_server_public_params` | clients | Public half of `callingZkConfig`. |
 | `crypto.backup_server_public_params` | clients | Public half of `chatZkConfig`. |
 | `crypto.svr2_mrenclave`, `svr2_mrenclave_legacy`, `ios_svr2_enclaves[]`, `cdsi_mrenclave`, `svrb_mrenclave` | clients, libsignal | Enclave measurements of your CDSI/SVR builds. |
-| `crypto.svr2_raft_group_id`, `svrb_raft_group_id`, `keytrans_signing_key`, `keytrans_vrf_key` | libsignal | Optional; `null` keeps Signal's compiled values. |
+| `crypto.svr2_raft_group_id`, `svrb_raft_group_id` | libsignal | Required together with the matching MRENCLAVE (libsignal refuses to build otherwise). |
+| `crypto.keytrans_signing_key`, `keytrans_vrf_key`, `keytrans_auditor_keys[]` | libsignal | Set all three together (at least one auditor key). Without an auditor the log signature would never be verified, so libsignal refuses that configuration at build time. `null` keeps Signal's keys, which fail closed against a brand server. |
 | `integrations.stripe_publishable_key`, `default_currencies` | clients | Donations. |
 
 ## Optional assets
@@ -47,6 +50,14 @@ is currently applied and the few free-text literals it rewrote.
   `keytool -importcert -noprompt -alias root -file root-ca.pem -keystore whisper.store -storetype BKS -storepass whisper -providerclass org.bouncycastle.jce.provider.BouncyCastleProvider -providerpath bcprov-jdk18on.jar`
 * `assets/android/mipmap-*/ic_launcher*.png`: launcher icons, copied over
   the upstream ones.
+
+## Desktop build expiry
+
+`clients/desktop` refuses to run once `buildExpiration` passes, and a packaged
+build with the checked-in `buildExpiration: 0` is expired on first launch.
+`pnpm generate` runs `scripts/get-expire-time.mjs`, which stamps
+`config/local-production.json` with creation + 90 days; make sure every
+release build runs it and ships auto-updates within that window.
 
 ## What apply.py does not do
 

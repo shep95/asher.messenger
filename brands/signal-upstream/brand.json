@@ -35,7 +35,8 @@
     "content_proxy": "contentproxy.signal.org",
     "status": "uptime.signal.org",
     "captcha_registration_url": "https://signalcaptchas.org/registration/generate.html",
-    "captcha_challenge_url": "https://signalcaptchas.org/challenge/generate.html"
+    "captcha_challenge_url": "https://signalcaptchas.org/challenge/generate.html",
+    "debug_logs_url": "https://debuglogs.org"
   },
   "link_domains": {
     "me": "signal.me",
@@ -50,7 +51,8 @@
     "archives_base_name": "Signal",
     "maps_key": "AIzaSyCSx9xea86GwDKGznCAULE9Y5a8b-TfN9U",
     "giphy_api_key": "3o6ZsYH6U6Eri53TXy",
-    "disable_static_ips": false
+    "disable_static_ips": false,
+    "censorship_circumvention": true
   },
   "ios": {
     "bundle_id_prefix": "org.whispersystems",
@@ -92,7 +94,8 @@
     "svr2_raft_group_id": null,
     "svrb_raft_group_id": null,
     "keytrans_signing_key": null,
-    "keytrans_vrf_key": null
+    "keytrans_vrf_key": null,
+    "keytrans_auditor_keys": []
   },
   "integrations": {
     "stripe_publishable_key": "pk_live_6cmGZopuTsV8novGgJJW9JpC00vLIgtQ1D",

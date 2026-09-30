@@ -35,7 +35,8 @@
     "content_proxy": "contentproxy.asher.chat",
     "status": "uptime.asher.chat",
     "captcha_registration_url": "https://captcha.asher.chat/registration/generate.html",
-    "captcha_challenge_url": "https://captcha.asher.chat/challenge/generate.html"
+    "captcha_challenge_url": "https://captcha.asher.chat/challenge/generate.html",
+    "debug_logs_url": "https://debuglogs.asher.chat"
   },
   "link_domains": {
     "me": "asher.me",
@@ -50,7 +51,8 @@
     "archives_base_name": "Asher",
     "maps_key": "REPLACE_ME",
     "giphy_api_key": "REPLACE_ME",
-    "disable_static_ips": true
+    "disable_static_ips": true,
+    "censorship_circumvention": false
   },
   "ios": {
     "bundle_id_prefix": "chat.asher",
@@ -90,7 +92,8 @@
     "svr2_raft_group_id": null,
     "svrb_raft_group_id": null,
     "keytrans_signing_key": null,
-    "keytrans_vrf_key": null
+    "keytrans_vrf_key": null,
+    "keytrans_auditor_keys": []
   },
   "integrations": {
     "stripe_publishable_key": "REPLACE_ME",
