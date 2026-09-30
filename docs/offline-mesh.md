@@ -22,7 +22,11 @@ and what still has to be done on each device platform.
 | Delivering a message while the recipient is offline | Server-side message queue. | Every node that sees a bundle **carries** it until it expires or is acknowledged, and hands it to every new neighbour. Carry stores persist across reboots. |
 | Reaching someone out of radio range | TCP to a data centre. | **Multi-hop relay** through nodes that cannot read the traffic, fragmentation for LoRa MTUs, TCP links to gateways. |
 | Groups | Group server (zkgroup credentials, sender keys). | **Pairwise mesh groups**: one encrypted copy per member, invites and card shares so members can reach each other. Small groups (up to 32). |
-| Storage service, contact discovery, attachments, calls | Server. | **Not provided.** |
+| Attachments | CDN upload, server-issued pointers. | **Chunked transfer** inside the mesh: a manifest plus 2 KiB chunks, reassembled and SHA-256-verified by the receiver, up to 4 MiB per attachment (voice notes, photos, small files). |
+| Calls | Server for signalling, TURN for media. | **Signalling over the mesh** (urgent, 90 s TTL bundles carrying the app's own ringrtc offer/answer/ICE messages); **media over the LAN** with ICE host candidates, so two devices on one Wi-Fi call each other with no server. |
+| Contact discovery | Server-side directory. | The **nearby table**: every card heard in the last 24 h, with direct neighbours flagged, offered in Settings to add with one tap. |
+| Storage service (sync and recovery of contacts, groups, state) | Server. | An **encrypted backup** of identity and mesh state (Argon2id, AES-256-GCM-SIV) the user exports as a file and restores on a new install. Not multi-device sync. |
+| Key transparency | Server-audited log. | Safety numbers compared in person (above). |
 
 ## 2. How it maps to the research's four layers
 
@@ -244,7 +248,7 @@ unoptimised debug builds:
 | Per-bundle state | 74-byte header + payload in the store; 24 bytes per remembered id |
 
 The radio, not the node, is the limit: LoRa at SF10 carries a few hundred
-bytes per second; BLE tens of kB/s. Text works; attachments do not (4 kB
+bytes per second; BLE tens of kB/s. Text works everywhere; attachments only make sense on LAN, BLE and gateway links (4 kB
 bundle cap, deliberate).
 
 ## 7. What is tested
@@ -342,16 +346,19 @@ own prekey stores so first messages decrypt.
 
 | Piece | Android | iOS | Desktop |
 |---|---|---|---|
-| Bridge declarations | generated `Native.kt` | generated `signal_ffi.h` | generated `Native.d.ts` |
-| Identity from the app's ACI key, prekeys installed | written, uncompiled | written, uncompiled | written, standalone type-check |
+| Builds against the vendored libsignal (mesh symbols) | `gradle.properties` `libsignalClientPath` -> included build; `MESH_BUILD.md` | Podfile path pod + SignalFfi search path hook; `MESH_BUILD.md` | `package.json` `file:` dependency + `scripts/build-libsignal.sh` |
+| Identity from the app's ACI key, prekeys installed | written | written | written |
 | Mesh contacts table + recipient convention (fingerprint bytes as UUID) | written | written | written |
 | Encrypt/decrypt with the app's stores | written | written | written |
 | Event pump, incoming insert, outbox hook in the send path | written | written | written |
-| BLE link (shared GATT UUIDs) | GATT server + client | CoreBluetooth both roles | Web Bluetooth |
+| Wi-Fi/LAN link (`_asher-mesh._tcp`, u16 framing, port 7788) | NSD + sockets | Network.framework + Bonjour | TCP in main + hand-written mDNS |
+| BLE link (shared GATT UUIDs) | GATT server + client | CoreBluetooth both roles | Web Bluetooth (central) |
 | Radio link | USB CDC-ACM + KISS | RNode BLE serial + KISS | Web Serial + KISS |
-| Gateway link | (via radio/BLE) | (via radio/BLE) | TCP to `meshlinkd` |
+| Gateway link | via LAN/radio/BLE | via LAN/radio/BLE | TCP to `meshlinkd` |
+| Attachments (4 MiB, chunked) | send + receive through the normal attachment path | send + receive through the attachment manager | send + receive through the attachment migrations |
+| Calls: signalling over the mesh, media over LAN | `SignalCallManager` hook, TURN skipped, `CallMessageProcessor` | `MessageSender` hook, `handleMeshCallMessage`, host-only ICE | `calling` service hook, `handleCallingMessage` |
+| Nearby list, self-test, encrypted backup export/restore | in Mesh settings | in Mesh settings | in Preferences > Mesh |
 | Scene indicator states Mesh/Carrying | wired | wired | wired |
-| Settings (toggle, my QR, scan/paste card, contacts, stats) | written | written | written |
 
 Two conventions the platform code settled on, both local to a device and
 invisible on the wire: (1) the app's Signal session for a mesh contact is
@@ -362,11 +369,18 @@ fingerprint-to-contact mapping always goes through the mesh contacts table,
 never by parsing the id back. Desktop's Web Bluetooth is central-only, so a
 Desktop and a phone connect with the phone as peripheral.
 
-None of the platform code could be compiled in this environment (no Android
-SDK, no Xcode, no Desktop dependency install beyond a standalone type-check of
-the new TypeScript, which passed, and 16 unit tests for its decoders). It is written against the
-bridge names above and must be built and run on real devices; the first
-build will surface mismatches. See `docs/patches.md` for the file lists.
+The end-to-end test that needs no hardware: two devices on one Wi-Fi (or a
+phone hotspot) discover each other over `_asher-mesh._tcp`, exchange cards
+from the Nearby list, and message, send a photo and call. On a single device,
+Settings > Mesh > "Run self-test" drives the node over an in-memory pipe and
+prints a PASS/FAIL report per check.
+
+Android and iOS could not be compiled in this environment (no Android SDK,
+no Xcode); their code is written against the generated declarations and each
+platform's `MESH_BUILD.md` gives the exact build steps. Desktop's status is in
+`clients/desktop/MESH_BUILD.md`. Ringrtc's behaviour with an empty ICE server
+list and host-only candidates, and NSD/Bonjour on current OS versions, were
+verified by reading, not by running. See `docs/patches.md` for the file lists.
 
 ## 10. Gateway daemon
 
