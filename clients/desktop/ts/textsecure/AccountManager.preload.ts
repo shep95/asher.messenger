@@ -1248,6 +1248,11 @@ export default class AccountManager extends EventTarget {
         response.aci.getServiceIdString(),
         '#doCreateAccount'
       );
+      if (!response.pni) {
+        // libsignal 0.103: null for an account without a phone number, which
+        // the E164 registration above never produces.
+        throw new Error('#doCreateAccount: registration response has no PNI');
+      }
       ourPni = normalizePni(
         response.pni.getServiceIdString(),
         '#doCreateAccount'

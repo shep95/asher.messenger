@@ -36,3 +36,6 @@ java/server/src/main/resources/*.dll
 Brewfile.lock.json
 
 __pycache__
+
+# built by clients/desktop/scripts/build-libsignal.sh
+/node/prebuilds

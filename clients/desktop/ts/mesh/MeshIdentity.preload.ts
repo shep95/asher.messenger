@@ -67,7 +67,10 @@ async function installPreKeys(
       typeof KyberPreKeyRecord._fromNativeHandle
     >[0]
   );
-  const existing = await signalProtocolStore.loadKyberPreKey(ourAci, kyber.id());
+  const existing = await signalProtocolStore.loadKyberPreKey(
+    ourAci,
+    kyber.id()
+  );
   if (!existing) {
     // Last resort: the card's Kyber key is reused by every initiator (there is
     // no server handing out one-time keys), so it must not be deleted after
@@ -88,6 +91,42 @@ async function installPreKeys(
   );
 }
 
+/**
+ * A fresh mesh identity from this device's ACI identity key pair. Its
+ * fingerprint is a hash of that key, so it is the same every time; the
+ * prekeys on the card are new, which is why the result is persisted.
+ */
+export async function deriveMeshIdentityFromAci(
+  ourAci: AciString
+): Promise<NativeMeshIdentity> {
+  const keyPair = signalProtocolStore.getIdentityKeyPair(ourAci);
+  strictAssert(keyPair, 'deriveMeshIdentityFromAci: no ACI identity key pair');
+  const registrationId =
+    await signalProtocolStore.getLocalRegistrationId(ourAci);
+  strictAssert(registrationId, 'deriveMeshIdentityFromAci: no registration id');
+  return NativeMeshIdentity.fromIdentityKeyPair(
+    keyPair.serialize(),
+    registrationId,
+    meshDisplayName()
+  );
+}
+
+/** True when an identity export is stored (the node has run before). */
+export function hasStoredMeshIdentity(): boolean {
+  const stored = itemStorage.get('meshIdentity');
+  return stored != null && stored.byteLength > 0;
+}
+
+/** Replaces the stored identity export (encrypted backup restore). */
+export async function storeMeshIdentity(
+  identity: NativeMeshIdentity
+): Promise<void> {
+  await itemStorage.put(
+    'meshIdentity',
+    new Uint8Array(identity.export()) as Uint8Array<ArrayBuffer>
+  );
+}
+
 /** Imports the stored identity or derives one from the ACI key pair. */
 export async function loadOrCreateMeshIdentity(
   ourAci: AciString
@@ -104,17 +143,7 @@ export async function loadOrCreateMeshIdentity(
   }
 
   if (!identity) {
-    const keyPair = signalProtocolStore.getIdentityKeyPair(ourAci);
-    strictAssert(keyPair, 'loadOrCreateMeshIdentity: no ACI identity key pair');
-    const registrationId =
-      await signalProtocolStore.getLocalRegistrationId(ourAci);
-    strictAssert(registrationId, 'loadOrCreateMeshIdentity: no registration id');
-
-    identity = NativeMeshIdentity.fromIdentityKeyPair(
-      keyPair.serialize(),
-      registrationId,
-      meshDisplayName()
-    );
+    identity = await deriveMeshIdentityFromAci(ourAci);
     const exported = identity.export();
     await itemStorage.put(
       'meshIdentity',

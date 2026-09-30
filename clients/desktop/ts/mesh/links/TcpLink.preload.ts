@@ -63,10 +63,10 @@ export class TcpLinkManager {
     return link;
   }
 
-  /** Dials a gateway (`host:port`). */
-  async connect(host: string, port: number): Promise<void> {
+  /** Dials a gateway (`host:port`) or a LAN peer found by mDNS. */
+  async connect(host: string, port: number, label?: string): Promise<void> {
     const socketId = await ipc.tcpConnect(host, port);
-    this.#attach(socketId, `gateway ${host}:${port}`);
+    this.#attach(socketId, label ?? `gateway ${host}:${port}`);
     log.info(`connected to ${host}:${port} as socket ${socketId}`);
   }
 

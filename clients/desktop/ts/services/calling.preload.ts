@@ -54,6 +54,7 @@ import {
   ServerPublicParams,
 } from '@signalapp/libsignal-client/zkgroup.js';
 import { Aci } from '@signalapp/libsignal-client';
+import { getMeshRouter } from '../mesh/meshRouter.std.ts';
 import {
   CanvasVideoRenderer,
   GumVideoCapturer,
@@ -3574,6 +3575,18 @@ class CallingClass {
     try {
       const proto = callingMessageToProto(message, urgency);
       const protoBytes = Proto.CallMessage.encode(proto);
+
+      const meshRouter = getMeshRouter();
+      if (meshRouter?.shouldRoute(conversation.id)) {
+        // Offline mesh contact (ts/mesh, flag `mesh.transport`): the
+        // CallMessage rides the mesh (MeshNode_PrepareCallSignal) instead of
+        // the server; RingRTC then negotiates ICE host candidates over the
+        // LAN. Mesh contacts have no server account, so there is no fallback.
+        log.info('handleOutgoingSignaling: routing call message over the mesh');
+        await meshRouter.sendCallSignal(conversation.id, protoBytes);
+        return true;
+      }
+
       const protoBase64 = Bytes.toBase64(protoBytes);
 
       const job = await conversationJobQueue.add({

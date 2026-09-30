@@ -12,7 +12,9 @@ import type {
   MeshContactStateType,
   MeshDeviceChoiceType,
   MeshLinkStateType,
+  MeshNearbyStateType,
   MeshStatsStateType,
+  MeshTransferStateType,
 } from '../state/ducks/mesh.std.ts';
 
 // Labels are plain English for now, like SceneIndicator: the mesh strings
@@ -41,7 +43,29 @@ export type PropsType = Readonly<{
   onPickSerialPort: (id: string | null) => void;
   onPickBluetoothDevice: (id: string | null) => void;
   lastError: string | undefined;
+  /** `MeshNode_Nearby`: cards seen in the last 24 h, most recent first. */
+  nearby: ReadonlyArray<MeshNearbyStateType>;
+  onAddNearby: (fingerprintHex: string) => Promise<void>;
+  /** Incoming attachment transfers in flight. */
+  transfers: ReadonlyArray<MeshTransferStateType & { transferHex: string }>;
+  /** `MeshNode_SelfTest`; resolves with the multi-line report. */
+  onRunSelfTest: () => Promise<string>;
+  /** Resolves with the saved path, or undefined when the dialog was cancelled. */
+  onExportBackup: (passphrase: string) => Promise<string | undefined>;
+  /** Resolves with the restored file's path, or undefined when cancelled. */
+  onRestoreBackup: (passphrase: string) => Promise<string | undefined>;
 }>;
+
+function formatLastSeen(lastSeenAt: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - lastSeenAt) / 1000));
+  if (seconds < 60) {
+    return 'just now';
+  }
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)} min ago`;
+  }
+  return `${Math.round(seconds / 3600)} h ago`;
+}
 
 function DeviceChooser({
   title,
@@ -69,7 +93,11 @@ function DeviceChooser({
           </li>
         ))}
       </ul>
-      <AxoButton.Root variant="implied-secondary" size="sm" onClick={() => onPick(null)}>
+      <AxoButton.Root
+        variant="implied-secondary"
+        size="sm"
+        onClick={() => onPick(null)}
+      >
         Cancel
       </AxoButton.Root>
     </div>
@@ -99,10 +127,21 @@ export function PreferencesMesh({
   onPickSerialPort,
   onPickBluetoothDevice,
   lastError,
+  nearby,
+  onAddNearby,
+  transfers,
+  onRunSelfTest,
+  onExportBackup,
+  onRestoreBackup,
 }: PropsType): JSX.Element {
   const [pastedCard, setPastedCard] = useState('');
   const [addError, setAddError] = useState<string | undefined>();
   const [isBusy, setIsBusy] = useState(false);
+  const [nearbyError, setNearbyError] = useState<string | undefined>();
+  const [selfTestReport, setSelfTestReport] = useState<string | undefined>();
+  const [isSelfTesting, setIsSelfTesting] = useState(false);
+  const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [backupStatus, setBackupStatus] = useState<string | undefined>();
 
   const run = useCallback(async (task: () => Promise<void>) => {
     setIsBusy(true);
@@ -122,6 +161,62 @@ export function PreferencesMesh({
       setAddError(error instanceof Error ? error.message : String(error));
     }
   }, [onAddCard, pastedCard]);
+
+  const addNearby = useCallback(
+    async (peerFingerprintHex: string) => {
+      setNearbyError(undefined);
+      try {
+        await onAddNearby(peerFingerprintHex);
+      } catch (error) {
+        setNearbyError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [onAddNearby]
+  );
+
+  const runSelfTest = useCallback(async () => {
+    setIsSelfTesting(true);
+    setSelfTestReport(undefined);
+    // Let the button repaint before the synchronous native call parks the
+    // renderer thread for up to 15 s.
+    await new Promise(resolve => {
+      setTimeout(resolve, 50);
+    });
+    let report: string;
+    try {
+      report = await onRunSelfTest();
+    } catch (error) {
+      report = `FAIL self-test could not run: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    setSelfTestReport(report);
+    setIsSelfTesting(false);
+  }, [onRunSelfTest]);
+
+  const exportBackup = useCallback(async () => {
+    setBackupStatus(undefined);
+    try {
+      const path = await onExportBackup(backupPassphrase);
+      setBackupStatus(path ? `Saved to ${path}` : 'Export cancelled');
+      if (path) {
+        setBackupPassphrase('');
+      }
+    } catch (error) {
+      setBackupStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [backupPassphrase, onExportBackup]);
+
+  const restoreBackup = useCallback(async () => {
+    setBackupStatus(undefined);
+    try {
+      const path = await onRestoreBackup(backupPassphrase);
+      setBackupStatus(path ? `Restored from ${path}` : 'Restore cancelled');
+      if (path) {
+        setBackupPassphrase('');
+      }
+    } catch (error) {
+      setBackupStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [backupPassphrase, onRestoreBackup]);
 
   return (
     <>
@@ -201,7 +296,9 @@ export function PreferencesMesh({
                 type="text"
                 value={gatewayAddress}
                 placeholder="gateway.example:48120"
-                onChange={event => onGatewayAddressChange(event.currentTarget.value)}
+                onChange={event =>
+                  onGatewayAddressChange(event.currentTarget.value)
+                }
               />{' '}
               <AxoButton.Root
                 variant="subtle-secondary"
@@ -214,7 +311,9 @@ export function PreferencesMesh({
               </AxoButton.Root>
             </p>
             <p>
-              <label htmlFor="mesh-listen">Listen on LAN port (empty = off)</label>{' '}
+              <label htmlFor="mesh-listen">
+                Listen on LAN port (empty = off)
+              </label>{' '}
               <input
                 id="mesh-listen"
                 type="number"
@@ -260,8 +359,8 @@ export function PreferencesMesh({
               />
             ) : null}
             <p>
-              {links.length} link{links.length === 1 ? '' : 's'}, {neighbourCount}{' '}
-              neighbour{neighbourCount === 1 ? '' : 's'}
+              {links.length} link{links.length === 1 ? '' : 's'},{' '}
+              {neighbourCount} neighbour{neighbourCount === 1 ? '' : 's'}
             </p>
             <ul>
               {links.map(link => (
@@ -275,16 +374,129 @@ export function PreferencesMesh({
       ) : null}
 
       {isRunning ? (
+        <SettingsRow title="Nearby">
+          <div className="Preferences--internal--result">
+            <p>
+              Devices whose card reached this one in the last 24 hours, over any
+              link. Peers on the same Wi-Fi are found automatically (mDNS{' '}
+              <code>_asher-mesh._tcp</code>) when LAN listening is on.
+            </p>
+            {nearby.length === 0 ? <p>Nobody nearby yet.</p> : null}
+            <ul>
+              {nearby.map(peer => (
+                <li key={peer.fingerprintHex}>
+                  {peer.name || 'Unnamed'} <code>{peer.fingerprintHex}</code>{' '}
+                  {peer.direct ? <strong>direct</strong> : null}{' '}
+                  <small>{formatLastSeen(peer.lastSeenAt)}</small>{' '}
+                  {peer.isContact ? (
+                    <small>contact</small>
+                  ) : (
+                    <AxoButton.Root
+                      variant="subtle-secondary"
+                      size="sm"
+                      onClick={() => addNearby(peer.fingerprintHex)}
+                    >
+                      Add
+                    </AxoButton.Root>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {nearbyError ? <p>{nearbyError}</p> : null}
+          </div>
+        </SettingsRow>
+      ) : null}
+
+      {isRunning ? (
         <SettingsRow title="Mesh contacts">
           <div className="Preferences--internal--result">
             {contacts.length === 0 ? <p>No mesh contacts yet.</p> : null}
             <ul>
               {contacts.map(contact => (
                 <li key={contact.fingerprintHex}>
-                  {contact.name || 'Unnamed'} <code>{contact.fingerprintHex}</code>
+                  {contact.name || 'Unnamed'}{' '}
+                  <code>{contact.fingerprintHex}</code>
                 </li>
               ))}
             </ul>
+            {transfers.length > 0 ? (
+              <ul>
+                {transfers.map(transfer => (
+                  <li key={transfer.transferHex}>
+                    Receiving from <code>{transfer.fromHex.slice(0, 8)}</code>:{' '}
+                    {transfer.received}/{transfer.total} chunks
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </SettingsRow>
+      ) : null}
+
+      {isRunning ? (
+        <SettingsRow title="Encrypted backup">
+          <div className="Preferences--internal--result">
+            <p>
+              Contacts, groups and carried messages, encrypted with a passphrase
+              (<code>.asherbackup</code>). Restore merges them into this device;
+              a backup made under another identity is refused.
+            </p>
+            <p>
+              <label htmlFor="mesh-backup-passphrase">Passphrase</label>{' '}
+              <input
+                id="mesh-backup-passphrase"
+                type="password"
+                autoComplete="off"
+                value={backupPassphrase}
+                onChange={event =>
+                  setBackupPassphrase(event.currentTarget.value)
+                }
+              />
+            </p>
+            <p>
+              <AxoButton.Root
+                variant="subtle-secondary"
+                size="sm"
+                pending={isBusy}
+                disabled={backupPassphrase.length === 0}
+                onClick={() => run(exportBackup)}
+              >
+                Export encrypted mesh backup
+              </AxoButton.Root>{' '}
+              <AxoButton.Root
+                variant="subtle-secondary"
+                size="sm"
+                pending={isBusy}
+                disabled={backupPassphrase.length === 0}
+                onClick={() => run(restoreBackup)}
+              >
+                Restore
+              </AxoButton.Root>
+            </p>
+            {backupStatus ? <p>{backupStatus}</p> : null}
+          </div>
+        </SettingsRow>
+      ) : null}
+
+      {isRunning ? (
+        <SettingsRow title="Self-test">
+          <div className="Preferences--internal--result">
+            <p>
+              Runs two in-process nodes over an in-memory link and exchanges
+              cards and a text both ways. No radio, no network. The app pauses
+              for up to 15 seconds while it runs.
+            </p>
+            <AxoButton.Root
+              variant="strong-secondary"
+              size="sm"
+              pending={isSelfTesting}
+              onClick={runSelfTest}
+            >
+              Run self-test
+            </AxoButton.Root>
+            {selfTestReport ? (
+              <pre className="PreferencesMesh__report">{selfTestReport}</pre>
+            ) : null}
           </div>
         </SettingsRow>
       ) : null}

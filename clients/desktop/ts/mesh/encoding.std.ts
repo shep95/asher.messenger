@@ -87,6 +87,17 @@ export class WireReader {
     return new Uint8Array(this.#take(len));
   }
 
+  /** u32 length-prefixed bytes (copied); attachment payloads use this. */
+  bytes32(): Uint8Array {
+    const len = this.u32();
+    return new Uint8Array(this.#take(len));
+  }
+
+  /** u16 length-prefixed UTF-8 string. */
+  string(): string {
+    return new TextDecoder().decode(this.bytes());
+  }
+
   finish(): void {
     if (this.remaining !== 0) {
       throw new MeshWireError(`${this.remaining} trailing bytes`);
@@ -121,7 +132,28 @@ export type MeshEvent =
   | { kind: 'contact'; fingerprint: Bytes16 }
   | { kind: 'delivered'; bundleId: Bytes16 }
   | { kind: 'neighbour'; link: bigint; fingerprint: Bytes16 }
-  | { kind: 'linkClosed'; link: bigint };
+  | { kind: 'linkClosed'; link: bigint }
+  /** Tag 9: one more chunk of an incoming attachment arrived. */
+  | {
+      kind: 'attachmentProgress';
+      from: Bytes16;
+      transfer: Bytes16;
+      received: number;
+      total: number;
+    }
+  /** Tag 10: a complete attachment, verified against its manifest hash. */
+  | {
+      kind: 'attachment';
+      from: Bytes16;
+      transfer: Bytes16;
+      /** `MeshAttachmentKind`: 1 file, 2 image, 3 voice note. */
+      attachmentKind: number;
+      name: string;
+      mime: string;
+      data: Uint8Array;
+    }
+  /** Tag 11: the peer's serialized call signalling message (opaque to the core). */
+  | { kind: 'callSignal'; from: Bytes16; bundleId: Bytes16; data: Uint8Array };
 
 /**
  * Decodes one event from `MeshNode_NextEvent`. An empty buffer means the
@@ -178,6 +210,34 @@ export function decodeMeshEvent(data: Uint8Array): MeshEvent | undefined {
     case MeshEventTag.LinkClosed:
       event = { kind: 'linkClosed', link: r.u64() };
       break;
+    case MeshEventTag.AttachmentProgress:
+      event = {
+        kind: 'attachmentProgress',
+        from: r.fixed(16),
+        transfer: r.fixed(16),
+        received: r.u32(),
+        total: r.u32(),
+      };
+      break;
+    case MeshEventTag.Attachment:
+      event = {
+        kind: 'attachment',
+        from: r.fixed(16),
+        transfer: r.fixed(16),
+        attachmentKind: r.u8(),
+        name: r.string(),
+        mime: r.string(),
+        data: r.bytes32(),
+      };
+      break;
+    case MeshEventTag.CallSignal:
+      event = {
+        kind: 'callSignal',
+        from: r.fixed(16),
+        bundleId: r.fixed(16),
+        data: r.bytes(),
+      };
+      break;
     default:
       throw new MeshWireError(`unknown event tag ${tag}`);
   }
@@ -215,6 +275,36 @@ export function decodeMeshGroupCreate(data: Uint8Array): {
     groupId: new Uint8Array(data.subarray(0, 16)),
     prepared: decodeMeshPrepared(data.subarray(16)),
   };
+}
+
+export type MeshNearbyEntry = Readonly<{
+  fingerprint: Bytes16;
+  name: string;
+  /** Seconds since the epoch when the card was last seen. */
+  lastSeenSecs: number;
+  /** True when the peer is a current neighbour (one hop away). */
+  direct: boolean;
+}>;
+
+/**
+ * `MeshNode_Nearby`: `u16 count` then per entry
+ * `[fingerprint 16][name u16-len][lastSeenSecs u64][direct u8]`, most recent
+ * first (the order is kept).
+ */
+export function decodeMeshNearby(data: Uint8Array): Array<MeshNearbyEntry> {
+  const r = new WireReader(data);
+  const count = r.u16();
+  const entries: Array<MeshNearbyEntry> = [];
+  for (let i = 0; i < count; i += 1) {
+    entries.push({
+      fingerprint: r.fixed(16),
+      name: r.string(),
+      lastSeenSecs: Number(r.u64()),
+      direct: r.u8() !== 0,
+    });
+  }
+  r.finish();
+  return entries;
 }
 
 export type MeshStats = Readonly<{

@@ -15,6 +15,16 @@ export type MeshTcpEvents = Readonly<{
   onAccepted: (socketId: number, peer: string) => void;
 }>;
 
+/** A peer advertised on the LAN (app/mesh_channel.main.ts, mDNS). */
+export type MeshLanPeerType = Readonly<{
+  fingerprintHex: string;
+  port: number;
+  host: string;
+  /** Addresses to try, IPv4 first; the datagram's source when none advertised. */
+  addresses: ReadonlyArray<string>;
+  from: string;
+}>;
+
 export type MeshDeviceEvents = Readonly<{
   onSerialPorts: (choices: ReadonlyArray<MeshDeviceChoiceType>) => void;
   onBluetoothDevices: (choices: ReadonlyArray<MeshDeviceChoiceType>) => void;
@@ -56,6 +66,55 @@ export function subscribeTcp(events: MeshTcpEvents): () => void {
     ipcRenderer.off(MeshIpc.TcpClosed, onClosed);
     ipcRenderer.off(MeshIpc.TcpAccepted, onAccepted);
   };
+}
+
+/**
+ * Starts the mDNS responder/querier. `port` is our TCP listen port; without
+ * it we only browse. Rejects when the multicast socket cannot be bound.
+ */
+export function mdnsStart(
+  fingerprintHex: string,
+  port: number | undefined
+): Promise<void> {
+  return ipcRenderer.invoke(MeshIpc.MdnsStart, fingerprintHex, port ?? null);
+}
+
+export function mdnsStop(): Promise<void> {
+  return ipcRenderer.invoke(MeshIpc.MdnsStop);
+}
+
+export function subscribeMdns(
+  onPeer: (peer: MeshLanPeerType) => void
+): () => void {
+  const handler = (_event: IpcRendererEvent, peer: MeshLanPeerType) =>
+    onPeer(peer);
+  ipcRenderer.on(MeshIpc.MdnsPeer, handler);
+  return () => {
+    ipcRenderer.off(MeshIpc.MdnsPeer, handler);
+  };
+}
+
+/** Save dialog + write; resolves with the path, or undefined when cancelled. */
+export async function saveBackupFile(
+  bytes: Uint8Array,
+  defaultName: string
+): Promise<string | undefined> {
+  const result: { canceled: true } | { canceled: false; filePath: string } =
+    await ipcRenderer.invoke(MeshIpc.BackupSave, bytes, defaultName);
+  return result.canceled ? undefined : result.filePath;
+}
+
+/** Open dialog + read; resolves with the bytes, or undefined when cancelled. */
+export async function openBackupFile(): Promise<
+  { filePath: string; bytes: Uint8Array } | undefined
+> {
+  const result:
+    | { canceled: true }
+    | { canceled: false; filePath: string; bytes: Uint8Array } =
+    await ipcRenderer.invoke(MeshIpc.BackupOpen);
+  return result.canceled
+    ? undefined
+    : { filePath: result.filePath, bytes: new Uint8Array(result.bytes) };
 }
 
 /** Installs the serial/bluetooth choosers in main for this window. */

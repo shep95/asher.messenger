@@ -6,12 +6,13 @@ import { assert } from 'chai';
 import {
   decodeMeshEvent,
   decodeMeshGroupCreate,
+  decodeMeshNearby,
   decodeMeshPrepared,
   decodeMeshStats,
   linkKey,
   MeshWireError,
 } from '../../mesh/encoding.std.ts';
-import { MeshEventTag } from '../../mesh/constants.std.ts';
+import { MeshAttachmentKind, MeshEventTag } from '../../mesh/constants.std.ts';
 
 // A tiny mirror of meshlink's wire writer so the tests build fixtures the
 // same way the Rust bridge does (big-endian, u16 length prefixes).
@@ -27,11 +28,23 @@ class Writer {
     return this.u8(v >> 8).u8(v);
   }
 
+  u32(v: number): this {
+    return this.u16(v >>> 16).u16(v & 0xffff);
+  }
+
   u64(v: bigint): this {
     for (let shift = 56n; shift >= 0n; shift -= 8n) {
       this.u8(Number((v >> shift) & 0xffn));
     }
     return this;
+  }
+
+  lenBytes32(v: Uint8Array): this {
+    return this.u32(v.length).fixed(v);
+  }
+
+  string(v: string): this {
+    return this.lenBytes(new TextEncoder().encode(v));
   }
 
   fixed(v: Uint8Array): this {
@@ -109,7 +122,11 @@ describe('mesh/encoding', () => {
     assert.strictEqual(groupMessage?.kind, 'groupMessage');
 
     const invite = decodeMeshEvent(
-      new Writer().u8(MeshEventTag.GroupInvite).fixed(id(1)).fixed(id(2)).finish()
+      new Writer()
+        .u8(MeshEventTag.GroupInvite)
+        .fixed(id(1))
+        .fixed(id(2))
+        .finish()
     );
     assert.strictEqual(invite?.kind, 'groupInvite');
 
@@ -146,10 +163,123 @@ describe('mesh/encoding', () => {
     }
   });
 
+  it('decodes AttachmentProgress (tag 9)', () => {
+    const event = decodeMeshEvent(
+      new Writer()
+        .u8(MeshEventTag.AttachmentProgress)
+        .fixed(id(1))
+        .fixed(id(2))
+        .u32(3)
+        .u32(1400)
+        .finish()
+    );
+    assert.strictEqual(event?.kind, 'attachmentProgress');
+    if (event?.kind !== 'attachmentProgress') {
+      return;
+    }
+    assert.deepEqual(event.from, id(1));
+    assert.deepEqual(event.transfer, id(2));
+    assert.strictEqual(event.received, 3);
+    assert.strictEqual(event.total, 1400);
+  });
+
+  it('decodes Attachment (tag 10) with a u32 data length', () => {
+    const data = new Uint8Array(70_000).fill(0xab);
+    const event = decodeMeshEvent(
+      new Writer()
+        .u8(MeshEventTag.Attachment)
+        .fixed(id(3))
+        .fixed(id(4))
+        .u8(MeshAttachmentKind.VoiceNote)
+        .string('note.aac')
+        .string('audio/aac')
+        .lenBytes32(data)
+        .finish()
+    );
+    assert.strictEqual(event?.kind, 'attachment');
+    if (event?.kind !== 'attachment') {
+      return;
+    }
+    assert.deepEqual(event.from, id(3));
+    assert.deepEqual(event.transfer, id(4));
+    assert.strictEqual(event.attachmentKind, 3);
+    assert.strictEqual(event.name, 'note.aac');
+    assert.strictEqual(event.mime, 'audio/aac');
+    assert.strictEqual(event.data.length, 70_000);
+    assert.strictEqual(event.data[69_999], 0xab);
+
+    // Empty name and mime are allowed (the receiver picks a default).
+    const bare = decodeMeshEvent(
+      new Writer()
+        .u8(MeshEventTag.Attachment)
+        .fixed(id(3))
+        .fixed(id(4))
+        .u8(MeshAttachmentKind.File)
+        .string('')
+        .string('')
+        .lenBytes32(Uint8Array.of(1))
+        .finish()
+    );
+    assert.strictEqual(bare?.kind, 'attachment');
+    if (bare?.kind === 'attachment') {
+      assert.strictEqual(bare.name, '');
+      assert.strictEqual(bare.mime, '');
+    }
+  });
+
+  it('decodes CallSignal (tag 11)', () => {
+    const payload = Uint8Array.from([0x0a, 0x02, 0x08, 0x01]);
+    const event = decodeMeshEvent(
+      new Writer()
+        .u8(MeshEventTag.CallSignal)
+        .fixed(id(5))
+        .fixed(id(6))
+        .lenBytes(payload)
+        .finish()
+    );
+    assert.strictEqual(event?.kind, 'callSignal');
+    if (event?.kind !== 'callSignal') {
+      return;
+    }
+    assert.deepEqual(event.from, id(5));
+    assert.deepEqual(event.bundleId, id(6));
+    assert.deepEqual(event.data, payload);
+  });
+
+  it('decodes the nearby list in order', () => {
+    const list = decodeMeshNearby(
+      new Writer()
+        .u16(2)
+        .fixed(id(7))
+        .string('Ada')
+        .u64(1_700_000_000n)
+        .u8(1)
+        .fixed(id(8))
+        .string('')
+        .u64(1_699_999_000n)
+        .u8(0)
+        .finish()
+    );
+    assert.lengthOf(list, 2);
+    assert.deepEqual(list[0]?.fingerprint, id(7));
+    assert.strictEqual(list[0]?.name, 'Ada');
+    assert.strictEqual(list[0]?.lastSeenSecs, 1_700_000_000);
+    assert.isTrue(list[0]?.direct);
+    assert.strictEqual(list[1]?.name, '');
+    assert.isFalse(list[1]?.direct);
+
+    assert.lengthOf(decodeMeshNearby(new Writer().u16(0).finish()), 0);
+    assert.throws(
+      () => decodeMeshNearby(new Writer().u16(1).fixed(id(1)).finish()),
+      MeshWireError
+    );
+  });
+
   it('rejects unknown tags, truncation and trailing bytes', () => {
     assert.throws(() => decodeMeshEvent(Uint8Array.of(99)), MeshWireError);
     assert.throws(
-      () => decodeMeshEvent(new Writer().u8(MeshEventTag.Contact).u8(1).finish()),
+      () =>
+        decodeMeshEvent(new Writer().u8(MeshEventTag.Contact).u8(1).finish()),
       MeshWireError
     );
     assert.throws(

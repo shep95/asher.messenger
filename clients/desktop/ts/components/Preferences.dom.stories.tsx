@@ -570,6 +570,8 @@ export default {
         },
         showToast: action('showToast'),
       }),
+    isMeshAvailable: false,
+    renderMeshPane: () => <div />,
     renderNotificationProfilesCreateFlow,
     renderNotificationProfilesHome,
     renderProfileEditor,

@@ -103,7 +103,10 @@ export type MeshNativeFunctions = {
     maxBytesPerSec: number,
     maxFramesPerSec: number
   ) => LinkIdType;
-  MeshNode_DetachLink: (node: Wrapper<MeshNodeHandle>, link: LinkIdType) => void;
+  MeshNode_DetachLink: (
+    node: Wrapper<MeshNodeHandle>,
+    link: LinkIdType
+  ) => void;
   MeshNode_LinkWrite: (
     node: Wrapper<MeshNodeHandle>,
     link: LinkIdType,
@@ -154,6 +157,52 @@ export type MeshNativeFunctions = {
   MeshNode_Flush: (node: Wrapper<MeshNodeHandle>) => void;
 };
 
+/**
+ * v3 additions (MESH_CONTRACT_V3): attachments, call signalling, nearby
+ * discovery, encrypted backup and the loopback self-test. Resolved lazily so a
+ * libsignal build that predates them still runs text over the mesh; each
+ * call fails with the name of the missing function instead.
+ */
+export type MeshNativeV3Functions = {
+  /** `kind`: 1 file, 2 image, 3 voice note. Returns a prepared list. */
+  MeshNode_PrepareAttachment: (
+    node: Wrapper<MeshNodeHandle>,
+    to: Uint8Array,
+    kind: number,
+    name: string,
+    mime: string,
+    data: Uint8Array
+  ) => NativeBytes;
+  /** Returns a prepared list with one entry (TTL 90 s, high priority). */
+  MeshNode_PrepareCallSignal: (
+    node: Wrapper<MeshNodeHandle>,
+    to: Uint8Array,
+    data: Uint8Array
+  ) => NativeBytes;
+  /** Encoded nearby list; see `decodeMeshNearby`. */
+  MeshNode_Nearby: (node: Wrapper<MeshNodeHandle>) => NativeBytes;
+  /** "ASHB" v1 blob: identity export + full snapshot, passphrase-encrypted. */
+  MeshNode_ExportBackup: (
+    node: Wrapper<MeshNodeHandle>,
+    passphrase: string
+  ) => NativeBytes;
+  /** Merges contacts, groups and bundles; identity must match the node's. */
+  MeshNode_ImportBackup: (
+    node: Wrapper<MeshNodeHandle>,
+    passphrase: string,
+    blob: Uint8Array
+  ) => void;
+  MeshIdentity_FromBackup: (
+    passphrase: string,
+    blob: Uint8Array
+  ) => MeshIdentityHandle;
+  /** Human-readable multi-line "PASS ..." / "FAIL ..." report; never throws for a test failure. */
+  MeshNode_SelfTest: (
+    node: Wrapper<MeshNodeHandle>,
+    timeoutMs: number
+  ) => string;
+};
+
 const REQUIRED_FUNCTIONS: ReadonlyArray<keyof MeshNativeFunctions> = [
   'MeshIdentity_FromIdentityKeyPair',
   'MeshIdentity_Import',
@@ -192,6 +241,16 @@ const REQUIRED_FUNCTIONS: ReadonlyArray<keyof MeshNativeFunctions> = [
   'MeshNode_Flush',
 ];
 
+const V3_FUNCTIONS: ReadonlyArray<keyof MeshNativeV3Functions> = [
+  'MeshNode_PrepareAttachment',
+  'MeshNode_PrepareCallSignal',
+  'MeshNode_Nearby',
+  'MeshNode_ExportBackup',
+  'MeshNode_ImportBackup',
+  'MeshIdentity_FromBackup',
+  'MeshNode_SelfTest',
+];
+
 let resolved: MeshNativeFunctions | undefined;
 
 function missingFunctions(): Array<string> {
@@ -221,6 +280,26 @@ export function getMeshNative(): MeshNativeFunctions {
   }
   resolved = LibsignalNative as unknown as MeshNativeFunctions;
   return resolved;
+}
+
+/** The v3 functions this build carries; `[]` means all of them. */
+export function missingMeshV3Functions(): Array<string> {
+  const candidate = LibsignalNative as unknown as Record<string, unknown>;
+  return V3_FUNCTIONS.filter(name => typeof candidate[name] !== 'function');
+}
+
+/** One v3 function, or a clear error naming it when the build lacks it. */
+export function getMeshNativeV3<K extends keyof MeshNativeV3Functions>(
+  name: K
+): MeshNativeV3Functions[K] {
+  const candidate = LibsignalNative as unknown as Record<string, unknown>;
+  const fn = candidate[name];
+  if (typeof fn !== 'function') {
+    throw new Error(
+      `This libsignal build does not include meshlink v3 (missing Native.${name})`
+    );
+  }
+  return fn as MeshNativeV3Functions[K];
 }
 
 /** Copies bridge bytes (which may be a pooled Buffer) into a plain array. */
@@ -254,6 +333,13 @@ export class NativeMeshIdentity {
     return new NativeMeshIdentity(getMeshNative().MeshIdentity_Import(data));
   }
 
+  /** Recovers the identity inside an encrypted backup (needed before `MeshNode_New`). */
+  static fromBackup(passphrase: string, blob: Uint8Array): NativeMeshIdentity {
+    return new NativeMeshIdentity(
+      getMeshNativeV3('MeshIdentity_FromBackup')(passphrase, blob)
+    );
+  }
+
   export(): Uint8Array {
     return toBytes(getMeshNative().MeshIdentity_Export(this));
   }
@@ -284,7 +370,9 @@ export class NativeMeshContactCard {
   }
 
   static decode(data: Uint8Array): NativeMeshContactCard {
-    return new NativeMeshContactCard(getMeshNative().MeshContactCard_Decode(data));
+    return new NativeMeshContactCard(
+      getMeshNative().MeshContactCard_Decode(data)
+    );
   }
 
   static fromBase64(text: string): NativeMeshContactCard {
@@ -445,5 +533,52 @@ export class NativeMeshNode {
 
   flush(): void {
     getMeshNative().MeshNode_Flush(this);
+  }
+
+  // ---- v3 ------------------------------------------------------------------
+
+  /** Encoded prepared list: the manifest first, then the chunks, in order. */
+  prepareAttachment(
+    to: Uint8Array,
+    kind: number,
+    name: string,
+    mime: string,
+    data: Uint8Array
+  ): Uint8Array {
+    return toBytes(
+      getMeshNativeV3('MeshNode_PrepareAttachment')(
+        this,
+        to,
+        kind,
+        name,
+        mime,
+        data
+      )
+    );
+  }
+
+  /** Encoded prepared list with one entry. */
+  prepareCallSignal(to: Uint8Array, data: Uint8Array): Uint8Array {
+    return toBytes(
+      getMeshNativeV3('MeshNode_PrepareCallSignal')(this, to, data)
+    );
+  }
+
+  /** Encoded nearby list (`decodeMeshNearby`). */
+  nearby(): Uint8Array {
+    return toBytes(getMeshNativeV3('MeshNode_Nearby')(this));
+  }
+
+  exportBackup(passphrase: string): Uint8Array {
+    return toBytes(getMeshNativeV3('MeshNode_ExportBackup')(this, passphrase));
+  }
+
+  importBackup(passphrase: string, blob: Uint8Array): void {
+    getMeshNativeV3('MeshNode_ImportBackup')(this, passphrase, blob);
+  }
+
+  /** Blocks the calling thread for up to `timeoutMs`; diagnostics only. */
+  selfTest(timeoutMs: number): string {
+    return getMeshNativeV3('MeshNode_SelfTest')(this, timeoutMs);
   }
 }

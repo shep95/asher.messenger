@@ -74,7 +74,21 @@ export const MeshEventTag = {
   Delivered: 6,
   Neighbour: 7,
   LinkClosed: 8,
+  // v3 (MESH_CONTRACT_V3): attachments and call signalling.
+  AttachmentProgress: 9,
+  Attachment: 10,
+  CallSignal: 11,
 } as const;
+
+/** `kind` byte of `MeshNode_PrepareAttachment` / the Attachment event. */
+export const MeshAttachmentKind = {
+  File: 1,
+  Image: 2,
+  VoiceNote: 3,
+} as const;
+
+/** `MeshNode_PrepareAttachment` refuses more (`MeshError::TooLarge`). */
+export const MESH_MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 /** libsignal ciphertext types carried in a message bundle. */
 export const MESH_MESSAGE_TYPE_WHISPER = 2;
@@ -94,8 +108,25 @@ export const MESH_MAX_FRAMES_PER_LINK_PER_TICK = 32;
 /** Folder under userData that holds the node's persisted carry store. */
 export const MESH_STATE_DIRNAME = 'mesh';
 
-/** Default LAN port when the user turns on listening. */
-export const MESH_DEFAULT_TCP_PORT = 48120;
+/**
+ * Default LAN port when the user turns on listening; the same on every
+ * platform (MESH_CONTRACT_V3) so a phone can dial a laptop it found by mDNS.
+ */
+export const MESH_DEFAULT_TCP_PORT = 7788;
+
+/**
+ * DNS-SD service every platform advertises on the LAN (Android NsdManager,
+ * iOS Bonjour, Desktop's own responder in app/mesh_channel.main.ts). The TXT
+ * record carries `fp=<fingerprint hex>`.
+ */
+export const MESH_MDNS_SERVICE_TYPE = '_asher-mesh._tcp';
+export const MESH_MDNS_DOMAIN = 'local';
+export const MESH_MDNS_GROUP = '224.0.0.251';
+export const MESH_MDNS_PORT = 5353;
+export const MESH_MDNS_TTL_SECS = 120;
+/** How often we re-announce and re-query while running. */
+export const MESH_MDNS_ANNOUNCE_INTERVAL_MS = 60_000;
+export const MESH_MDNS_QUERY_INTERVAL_MS = 30_000;
 
 /**
  * IPC channels between the preload (where libsignal and the node live) and
@@ -110,6 +141,10 @@ export const MeshIpc = {
   TcpStopListening: 'mesh:tcp:stop-listening',
   TcpClose: 'mesh:tcp:close',
   DevicesEnable: 'mesh:devices:enable',
+  MdnsStart: 'mesh:mdns:start',
+  MdnsStop: 'mesh:mdns:stop',
+  BackupSave: 'mesh:backup:save',
+  BackupOpen: 'mesh:backup:open',
   // renderer -> main (send)
   TcpSend: 'mesh:tcp:send',
   SerialPick: 'mesh:serial:pick',
@@ -118,6 +153,7 @@ export const MeshIpc = {
   TcpFrame: 'mesh:tcp:frame',
   TcpClosed: 'mesh:tcp:closed',
   TcpAccepted: 'mesh:tcp:accepted',
+  MdnsPeer: 'mesh:mdns:peer',
   SerialPorts: 'mesh:serial:ports',
   BluetoothDevices: 'mesh:bluetooth:devices',
 } as const;

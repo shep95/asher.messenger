@@ -95,6 +95,9 @@ allowBuilds:
   '@parcel/watcher@2.5.6': true
   '@signalapp/libsignal-client@0.100.0': true # duplicate for @signalapp/mock-server
   '@signalapp/libsignal-client@0.101.2': true
+  # Vendored build with the meshlink bridge (file:../../libs/libsignal/node,
+  # built by scripts/build-libsignal.sh); its install script only prints a hint.
+  '@signalapp/libsignal-client@0.103.1': true
   '@signalapp/ringrtc@2.72.0': true
   '@signalapp/sqlcipher@4.1.0': true
   '@signalapp/windows-ucv@1.0.1': true

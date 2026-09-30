@@ -14,76 +14,110 @@ import { getMesh, getMeshContacts } from '../selectors/mesh.std.ts';
 
 import type { JSX } from 'react';
 
-export const SmartPreferencesMesh = memo(function SmartPreferencesMesh(): JSX.Element {
-  const items = useSelector(getItems);
-  const mesh = useSelector(getMesh);
-  const contacts = useSelector(getMeshContacts);
+export const SmartPreferencesMesh = memo(
+  function SmartPreferencesMesh(): JSX.Element {
+    const items = useSelector(getItems);
+    const mesh = useSelector(getMesh);
+    const contacts = useSelector(getMeshContacts);
 
-  const isEnabled = isMeshTransportEnabledFromItems(items);
-  const links = useMemo(() => Object.values(mesh.links), [mesh.links]);
-  const neighbourCount = Object.keys(mesh.neighbours).length;
+    const isEnabled = isMeshTransportEnabledFromItems(items);
+    const links = useMemo(() => Object.values(mesh.links), [mesh.links]);
+    const neighbourCount = Object.keys(mesh.neighbours).length;
+    const transfers = useMemo(
+      () =>
+        Object.entries(mesh.transfersById).map(([transferHex, progress]) => ({
+          transferHex,
+          ...progress,
+        })),
+      [mesh.transfersById]
+    );
 
-  const onToggle = useCallback((enabled: boolean) => {
-    drop(meshService.setEnabled(enabled));
-  }, []);
+    const onToggle = useCallback((enabled: boolean) => {
+      drop(meshService.setEnabled(enabled));
+    }, []);
 
-  const onGatewayAddressChange = useCallback((value: string) => {
-    drop(itemStorage.put('meshGatewayAddress', value || undefined));
-  }, []);
+    const onGatewayAddressChange = useCallback((value: string) => {
+      drop(itemStorage.put('meshGatewayAddress', value || undefined));
+    }, []);
 
-  const onConnectGateway = useCallback(async () => {
-    const address = itemStorage.get('meshGatewayAddress');
-    if (address) {
-      await meshService.connectGateway(address);
-    }
-  }, []);
+    const onConnectGateway = useCallback(async () => {
+      const address = itemStorage.get('meshGatewayAddress');
+      if (address) {
+        await meshService.connectGateway(address);
+      }
+    }, []);
 
-  const onListenPortChange = useCallback((value: number | undefined) => {
-    drop(itemStorage.put('meshListenPort', value));
-    if (value) {
-      drop(meshService.listen(value));
-    } else {
-      drop(meshService.stopListening());
-    }
-  }, []);
+    const onListenPortChange = useCallback((value: number | undefined) => {
+      drop(itemStorage.put('meshListenPort', value));
+      if (value) {
+        drop(meshService.listen(value));
+      } else {
+        drop(meshService.stopListening());
+      }
+    }, []);
 
-  const onAddCard = useCallback(async (cardBase64: string) => {
-    await meshService.addContactFromBase64(cardBase64);
-  }, []);
+    const onAddCard = useCallback(async (cardBase64: string) => {
+      await meshService.addContactFromBase64(cardBase64);
+    }, []);
 
-  const onOpenRadio = useCallback(() => meshService.openRadio(), []);
-  const onOpenBluetooth = useCallback(() => meshService.openBluetooth(), []);
-  const onPickSerialPort = useCallback((id: string | null) => {
-    meshService.pickSerialPort(id);
-  }, []);
-  const onPickBluetoothDevice = useCallback((id: string | null) => {
-    meshService.pickBluetoothDevice(id);
-  }, []);
+    const onAddNearby = useCallback(async (fingerprintHex: string) => {
+      await meshService.addNearbyContact(fingerprintHex);
+    }, []);
 
-  return (
-    <PreferencesMesh
-      isEnabled={isEnabled}
-      isRunning={mesh.isRunning}
-      onToggle={onToggle}
-      fingerprintHex={mesh.fingerprintHex}
-      cardBase64={mesh.cardBase64}
-      contacts={contacts}
-      links={links}
-      neighbourCount={neighbourCount}
-      stats={mesh.stats}
-      gatewayAddress={items.meshGatewayAddress ?? ''}
-      onGatewayAddressChange={onGatewayAddressChange}
-      onConnectGateway={onConnectGateway}
-      listenPort={items.meshListenPort}
-      onListenPortChange={onListenPortChange}
-      onAddCard={onAddCard}
-      onOpenRadio={onOpenRadio}
-      onOpenBluetooth={onOpenBluetooth}
-      serialPortChoices={mesh.serialPortChoices}
-      bluetoothDeviceChoices={mesh.bluetoothDeviceChoices}
-      onPickSerialPort={onPickSerialPort}
-      onPickBluetoothDevice={onPickBluetoothDevice}
-      lastError={mesh.lastError}
-    />
-  );
-});
+    const onRunSelfTest = useCallback(
+      async () => meshService.runSelfTest(),
+      []
+    );
+
+    const onExportBackup = useCallback(
+      (passphrase: string) => meshService.exportBackup(passphrase),
+      []
+    );
+    const onRestoreBackup = useCallback(
+      (passphrase: string) => meshService.restoreBackup(passphrase),
+      []
+    );
+
+    const onOpenRadio = useCallback(() => meshService.openRadio(), []);
+    const onOpenBluetooth = useCallback(() => meshService.openBluetooth(), []);
+    const onPickSerialPort = useCallback((id: string | null) => {
+      meshService.pickSerialPort(id);
+    }, []);
+    const onPickBluetoothDevice = useCallback((id: string | null) => {
+      meshService.pickBluetoothDevice(id);
+    }, []);
+
+    return (
+      <PreferencesMesh
+        isEnabled={isEnabled}
+        isRunning={mesh.isRunning}
+        onToggle={onToggle}
+        fingerprintHex={mesh.fingerprintHex}
+        cardBase64={mesh.cardBase64}
+        contacts={contacts}
+        links={links}
+        neighbourCount={neighbourCount}
+        stats={mesh.stats}
+        gatewayAddress={items.meshGatewayAddress ?? ''}
+        onGatewayAddressChange={onGatewayAddressChange}
+        onConnectGateway={onConnectGateway}
+        listenPort={items.meshListenPort}
+        onListenPortChange={onListenPortChange}
+        onAddCard={onAddCard}
+        onOpenRadio={onOpenRadio}
+        onOpenBluetooth={onOpenBluetooth}
+        serialPortChoices={mesh.serialPortChoices}
+        bluetoothDeviceChoices={mesh.bluetoothDeviceChoices}
+        onPickSerialPort={onPickSerialPort}
+        onPickBluetoothDevice={onPickBluetoothDevice}
+        lastError={mesh.lastError}
+        nearby={mesh.nearby}
+        onAddNearby={onAddNearby}
+        transfers={transfers}
+        onRunSelfTest={onRunSelfTest}
+        onExportBackup={onExportBackup}
+        onRestoreBackup={onRestoreBackup}
+      />
+    );
+  }
+);

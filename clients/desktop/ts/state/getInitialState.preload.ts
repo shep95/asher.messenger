@@ -9,6 +9,7 @@ import { getEmptyState as backupsEmptyState } from './ducks/backups.preload.ts';
 import { getEmptyState as badgesEmptyState } from './ducks/badges.preload.ts';
 import { getEmptyState as callHistoryEmptyState } from './ducks/callHistory.preload.ts';
 import { getEmptyState as callingEmptyState } from './ducks/calling.preload.ts';
+import { getEmptyState as meshEmptyState } from './ducks/mesh.std.ts';
 import {
   getEmptyState as chatFoldersEmptyState,
   getInitialChatFoldersState,
@@ -173,6 +174,7 @@ function getEmptyState(): StateType {
     mediaGallery: mediaGalleryEmptyState(),
     megaphones: megaphonesEmptyState(),
     nav: navEmptyState(),
+    mesh: meshEmptyState(),
     network: networkEmptyState(),
     notificationProfiles: notificationProfilesEmptyState(),
     preferredReactions: preferredReactionsEmptyState(),

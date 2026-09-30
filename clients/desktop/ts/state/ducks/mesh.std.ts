@@ -32,6 +32,25 @@ export type MeshStatsStateType = ReadonlyDeep<Record<string, number>>;
 
 export type MeshDeviceChoiceType = ReadonlyDeep<{ id: string; label: string }>;
 
+/** One `MeshNode_Nearby` entry: a card seen on the mesh in the last 24 h. */
+export type MeshNearbyStateType = ReadonlyDeep<{
+  fingerprintHex: string;
+  name: string;
+  /** Milliseconds since the epoch. */
+  lastSeenAt: number;
+  /** A current neighbour (one hop away). */
+  direct: boolean;
+  /** Already a saved mesh contact. */
+  isContact: boolean;
+}>;
+
+/** An incoming attachment transfer (`Event.AttachmentProgress`). */
+export type MeshTransferStateType = ReadonlyDeep<{
+  fromHex: string;
+  received: number;
+  total: number;
+}>;
+
 export type MeshStateType = ReadonlyDeep<{
   isRunning: boolean;
   fingerprintHex: string | undefined;
@@ -46,6 +65,9 @@ export type MeshStateType = ReadonlyDeep<{
   serialPortChoices: ReadonlyArray<MeshDeviceChoiceType> | null;
   bluetoothDeviceChoices: ReadonlyArray<MeshDeviceChoiceType> | null;
   lastError: string | undefined;
+  nearby: ReadonlyArray<MeshNearbyStateType>;
+  /** transfer id (hex) -> progress; removed once complete. */
+  transfersById: Record<string, MeshTransferStateType>;
 }>;
 
 // Actions
@@ -62,6 +84,8 @@ const SET_STATS = 'mesh/SET_STATS';
 const SET_SERIAL_PORT_CHOICES = 'mesh/SET_SERIAL_PORT_CHOICES';
 const SET_BLUETOOTH_DEVICE_CHOICES = 'mesh/SET_BLUETOOTH_DEVICE_CHOICES';
 const SET_LAST_ERROR = 'mesh/SET_LAST_ERROR';
+const SET_NEARBY = 'mesh/SET_NEARBY';
+const SET_TRANSFER_PROGRESS = 'mesh/SET_TRANSFER_PROGRESS';
 
 type SetRunningAction = ReadonlyDeep<{
   type: typeof SET_RUNNING;
@@ -111,6 +135,14 @@ type SetLastErrorAction = ReadonlyDeep<{
   type: typeof SET_LAST_ERROR;
   payload: { lastError: string | undefined };
 }>;
+type SetNearbyAction = ReadonlyDeep<{
+  type: typeof SET_NEARBY;
+  payload: { nearby: ReadonlyArray<MeshNearbyStateType> };
+}>;
+type SetTransferProgressAction = ReadonlyDeep<{
+  type: typeof SET_TRANSFER_PROGRESS;
+  payload: { transferHex: string; progress: MeshTransferStateType | undefined };
+}>;
 
 export type MeshActionType = ReadonlyDeep<
   | SetRunningAction
@@ -125,6 +157,8 @@ export type MeshActionType = ReadonlyDeep<
   | SetSerialPortChoicesAction
   | SetBluetoothDeviceChoicesAction
   | SetLastErrorAction
+  | SetNearbyAction
+  | SetTransferProgressAction
 >;
 
 // Action Creators
@@ -192,6 +226,20 @@ function setMeshLastError(lastError: string | undefined): SetLastErrorAction {
   return { type: SET_LAST_ERROR, payload: { lastError } };
 }
 
+function setMeshNearby(
+  nearby: ReadonlyArray<MeshNearbyStateType>
+): SetNearbyAction {
+  return { type: SET_NEARBY, payload: { nearby } };
+}
+
+/** `undefined` progress (or received >= total) removes the entry. */
+function setMeshTransferProgress(
+  transferHex: string,
+  progress: MeshTransferStateType | undefined
+): SetTransferProgressAction {
+  return { type: SET_TRANSFER_PROGRESS, payload: { transferHex, progress } };
+}
+
 export const actions = {
   setMeshRunning,
   setMeshIdentity,
@@ -205,6 +253,8 @@ export const actions = {
   setMeshSerialPortChoices,
   setMeshBluetoothDeviceChoices,
   setMeshLastError,
+  setMeshNearby,
+  setMeshTransferProgress,
 };
 
 export const useMeshActions = (): BoundActionCreatorsMapObject<
@@ -226,6 +276,8 @@ export function getEmptyState(): MeshStateType {
     serialPortChoices: null,
     bluetoothDeviceChoices: null,
     lastError: undefined,
+    nearby: [],
+    transfersById: {},
   };
 }
 
@@ -248,7 +300,14 @@ export function reducer(
       }
       return action.payload.isRunning
         ? { ...state, isRunning: true }
-        : { ...state, isRunning: false, links: {}, neighbours: {} };
+        : {
+            ...state,
+            isRunning: false,
+            links: {},
+            neighbours: {},
+            nearby: [],
+            transfersById: {},
+          };
     case SET_IDENTITY:
       return {
         ...state,
@@ -274,7 +333,9 @@ export function reducer(
       };
     }
     case NEIGHBOUR_SEEN:
-      if (state.neighbours[action.payload.fingerprintHex] === action.payload.key) {
+      if (
+        state.neighbours[action.payload.fingerprintHex] === action.payload.key
+      ) {
         return state;
       }
       return {
@@ -320,6 +381,24 @@ export function reducer(
       return { ...state, bluetoothDeviceChoices: action.payload.choices };
     case SET_LAST_ERROR:
       return { ...state, lastError: action.payload.lastError };
+    case SET_NEARBY:
+      return { ...state, nearby: action.payload.nearby };
+    case SET_TRANSFER_PROGRESS: {
+      const { transferHex, progress } = action.payload;
+      if (!progress || progress.received >= progress.total) {
+        if (!(transferHex in state.transfersById)) {
+          return state;
+        }
+        return {
+          ...state,
+          transfersById: withoutKey(state.transfersById, transferHex),
+        };
+      }
+      return {
+        ...state,
+        transfersById: { ...state.transfersById, [transferHex]: progress },
+      };
+    }
     default:
       return state;
   }

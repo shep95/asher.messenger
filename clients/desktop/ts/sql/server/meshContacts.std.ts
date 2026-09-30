@@ -22,7 +22,7 @@ export type MeshContactType = Readonly<{
 type MeshContactRow = {
   fingerprint: string;
   conversationId: string;
-  card: Uint8Array;
+  card: Uint8Array<ArrayBuffer>;
   name: string;
   added_at: number;
 };
@@ -65,7 +65,10 @@ export function getMeshContactByConversationId(
 }
 
 /** Inserts or replaces the card/name; the conversation link never changes. */
-export function upsertMeshContact(db: WritableDB, contact: MeshContactType): void {
+export function upsertMeshContact(
+  db: WritableDB,
+  contact: MeshContactType
+): void {
   // Copy so the bound BLOB is a plain ArrayBuffer-backed Uint8Array.
   const card = new Uint8Array(contact.card);
   const [query, params] = sql`
